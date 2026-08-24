@@ -9,7 +9,7 @@ import {
   Trophy, Calendar, Users, BarChart3, Percent, Plus, Trash2, Upload,
   ChevronRight, ChevronLeft, Pencil, Check, X, Folder, Save, RefreshCw, ArrowLeft,
   Activity, AlertTriangle, Image as ImageIcon, Layers, Crown, History, Sparkles, Home as HomeIcon, Settings as SettingsIcon,
-  Award as AwardIcon, Eye, EyeOff
+  Award as AwardIcon, Eye, EyeOff, Sun, Moon, Video, ClipboardList
 } from 'lucide-react';
 import { supabase } from '../lib/supabaseClient';
 import { AuthProvider, useAuth } from '../lib/AuthContext';
@@ -167,41 +167,6 @@ function winProb(teamA, teamB, h2h) {
   return base;
 }
 
-// Generates 1-2 short pre-game blurbs for a matchup using data already on
-// hand — streaks, head-to-head history, and standings context — rather than
-// anything invented. Ordered roughly by how notable each angle is.
-function generateStorylines(home, away, h2hMatrix, playoffSpots) {
-  if (!home || !away) return [];
-  const candidates = [];
-  [{ t: home, opp: away }, { t: away, opp: home }].forEach(({ t, opp }) => {
-    if (t.streak.type === 'W' && t.streak.count >= 4) candidates.push({ priority: 3, text: `${t.displayName} rides a ${t.streak.count}-game winning streak into this one.` });
-    else if (t.streak.type === 'L' && t.streak.count >= 4) candidates.push({ priority: 3, text: `${t.displayName} looks to snap a ${t.streak.count}-game skid.` });
-  });
-  const h2h = h2hMatrix[home.id] && h2hMatrix[home.id][away.id];
-  if (h2h && (h2h.w + h2h.l) > 0) {
-    if (h2h.w === h2h.l) candidates.push({ priority: 2, text: `${home.displayName} and ${away.displayName} are even at ${h2h.w}-${h2h.l} in the season series.` });
-    else {
-      const homeLeads = h2h.w > h2h.l;
-      const leaderName = homeLeads ? home.displayName : away.displayName;
-      const hi = Math.max(h2h.w, h2h.l), lo = Math.min(h2h.w, h2h.l);
-      candidates.push({ priority: 2, text: `${leaderName} leads the season series ${hi}-${lo} coming in.` });
-    }
-  } else {
-    candidates.push({ priority: 1, text: `First meeting of the season between these two.` });
-  }
-  if (home.rank === 1 && away.rank === 2) candidates.push({ priority: 5, text: `First place is on the line — these two sit 1-2 in the standings.` });
-  else if (home.rank === 2 && away.rank === 1) candidates.push({ priority: 5, text: `First place is on the line — these two sit 1-2 in the standings.` });
-  if (playoffSpots) {
-    const bubbleHome = home.rank === playoffSpots || home.rank === playoffSpots + 1;
-    const bubbleAway = away.rank === playoffSpots || away.rank === playoffSpots + 1;
-    if (bubbleHome || bubbleAway) candidates.push({ priority: 4, text: `A playoff-race game — both teams are within a game of the cutoff.` });
-  }
-  if (Math.abs(home.rank - away.rank) === 1 && Math.abs(home.gb - away.gb) <= 0.5) {
-    candidates.push({ priority: 2, text: `Just ${Math.abs(home.gb - away.gb).toFixed(1) === '0.0' ? 'percentage points' : `${Math.abs(home.gb - away.gb).toFixed(1)} games`} separate these two in the standings.` });
-  }
-  return candidates.sort((a, b) => b.priority - a.priority).slice(0, 2).map(c => c.text);
-}
-
 function buildH2H(games) {
   const m = {};
   (games || []).forEach(g => {
@@ -293,6 +258,15 @@ function getSeriesLength(settings, round) {
     return settings.seriesLengths[settings.seriesLengths.length - 1] || (settings.seriesLength || 1);
   }
   return (settings && settings.seriesLength) || 1;
+}
+// Admin-customizable playoff round names (e.g. "Wild Card", "Semifinals"),
+// keyed by round number as a string since settings is a plain JSON object.
+// Falls back to "Round N" / "Final" for the last round when unset.
+function getPlayoffRoundName(settings, round, roundsCount) {
+  const custom = settings && settings.playoffRoundNames && settings.playoffRoundNames[String(round)];
+  if (custom && custom.trim()) return custom.trim();
+  if (roundsCount && round === roundsCount) return 'Final';
+  return `Round ${round}`;
 }
 
 // Play-in tournament: a single-elimination mini-bracket among bubble teams
@@ -1150,8 +1124,10 @@ function computeExtras(season, teamsById) {
   }).sort((a, b) => b.topScore - a.topScore);
   const highestSingleTeamScore = bestSingleTeamGames[0] || null;
   // Season sweeps: one team went a perfect X-0 against another this season.
+  // Uses every decided game (including forfeits) — a forfeit win still counts
+  // toward the sweep, unlike "notable" blowout/record stats above.
   const h2hCounts = {};
-  notable.forEach(g => {
+  withMeta.forEach(g => {
     const w = gameWinner(g);
     if (!w) return;
     const winnerId = w === 'home' ? g.homeTeamId : g.awayTeamId, loserId = w === 'home' ? g.awayTeamId : g.homeTeamId;
@@ -1183,25 +1159,6 @@ function computeExtras(season, teamsById) {
     if (gap < 3) return null;
     return { ...g, gap, winnerName: nameFor(winnerId, 'Unknown'), loserName: nameFor(loserId, 'Unknown'), winnerRank, loserRank };
   }).filter(Boolean).sort((a, b) => b.gap - a.gap);
-  // Rivalry index: among pairs who've played at least twice, whoever has the
-  // most even head-to-head split (closest to a 50/50 series) and the most
-  // meetings is the league's most competitive rivalry.
-  const pairGames = {};
-  notable.forEach(g => {
-    const key = [g.homeTeamId, g.awayTeamId].sort().join('|');
-    if (!pairGames[key]) pairGames[key] = { ids: [g.homeTeamId, g.awayTeamId].sort(), count: 0, winsA: 0, winsB: 0, totalMargin: 0 };
-    const p = pairGames[key];
-    p.count++; p.totalMargin += g.margin;
-    const w = gameWinner(g);
-    if (w) { const winnerId = w === 'home' ? g.homeTeamId : g.awayTeamId; if (winnerId === p.ids[0]) p.winsA++; else p.winsB++; }
-  });
-  const rivalryRanked = Object.values(pairGames).filter(p => p.count >= 2).map(p => ({
-    nameA: nameFor(p.ids[0], 'Unknown'), nameB: nameFor(p.ids[1], 'Unknown'),
-    count: p.count, winsA: p.winsA, winsB: p.winsB,
-    competitiveness: 1 - Math.abs(p.winsA - p.winsB) / p.count,
-    avgMargin: p.totalMargin / p.count,
-  })).sort((a, b) => b.competitiveness - a.competitiveness || b.count - a.count || a.avgMargin - b.avgMargin);
-
   return {
     highest: byTotalDesc[0] || null, lowest: byTotalAsc[0] || null,
     longest: byInningsDesc[0] || null, shortest: byInningsAsc[0] || null,
@@ -1209,7 +1166,6 @@ function computeExtras(season, teamsById) {
     highestSingleTeamScore,
     sweeps: sweeps.sort((a, b) => b.count - a.count).slice(0, 8),
     upsets: upsets.slice(0, 8),
-    rivalries: rivalryRanked.slice(0, 5),
     oneRunCount: notable.filter(g => g.margin === 1).length,
     xInnCount: notable.filter(g => (g.innings || std) > std).length,
     forfeitCount: withMeta.filter(g => g.isForfeit).length,
@@ -1896,7 +1852,7 @@ function MatchRow({ seed, team, bye, placeholder, score, isWinner, isDecided, od
   );
 }
 
-function SeriesMatchCard({ slotGames, teamsById, winsNeeded, seriesLength, standingsById, h2hMatrix, homeFieldBoost }) {
+function SeriesMatchCard({ slotGames, teamsById, winsNeeded, seriesLength, standingsById, h2hMatrix, homeFieldBoost, onOpenCompare }) {
   if (!slotGames || slotGames.length === 0) return <div className="rounded-lg overflow-hidden" style={{ border: `1px solid ${LINE}`, opacity: 0.5 }}><MatchRow placeholder /><MatchRow placeholder /></div>;
   if (slotGames.length === 1 && slotGames[0].isBye) {
     const home = teamsById[slotGames[0].homeTeamId];
@@ -1929,11 +1885,16 @@ function SeriesMatchCard({ slotGames, teamsById, winsNeeded, seriesLength, stand
     <div className="rounded-lg overflow-hidden" style={{ border: `1px solid ${LINE}` }}>
       <MatchRow team={higherTeam} score={showSeriesScore ? (wins[higherSeedId] || 0) : null} isWinner={decided === higherSeedId} odds={higherOdds} />
       <MatchRow team={lowerTeam} score={showSeriesScore ? (wins[lowerSeedId] || 0) : null} isWinner={decided === lowerSeedId} odds={lowerOdds} />
+      {onOpenCompare && higherTeam && lowerTeam && (
+        <button onClick={() => onOpenCompare(higherSeedId, lowerSeedId)} className="w-full flex items-center justify-center gap-1 py-1 text-[10px] font-semibold" style={{ background: PANEL, color: PRIMARY, borderTop: `1px solid ${LINE}` }}>
+          <BarChart3 size={11} /> Compare
+        </button>
+      )}
     </div>
   );
 }
 
-function PlayInBracket({ standings, settings, playInGames, teamsById, onStart, onClear, onOpenTeam }) {
+function PlayInBracket({ standings, settings, playInGames, teamsById, onStart, onClear, onOpenTeam, onOpenCompare }) {
   const { isLoggedIn } = useAuth();
   const playInTeams = settings.playInTeams || 0;
   if (playInTeams < 2) return null;
@@ -1990,6 +1951,11 @@ function PlayInBracket({ standings, settings, playInGames, teamsById, onStart, o
                     <div key={idx} className="rounded-lg overflow-hidden" style={{ border: `1px solid ${LINE}` }}>
                       <MatchRow team={home} score={g.played ? g.homeScore : null} isWinner={homeWin} />
                       <MatchRow team={away} bye={g.isBye} score={g.played && !g.isBye ? g.awayScore : null} isWinner={awayWin} />
+                      {onOpenCompare && home && away && !g.isBye && (
+                        <button onClick={() => onOpenCompare(g.homeTeamId, g.awayTeamId)} className="w-full flex items-center justify-center gap-1 py-1 text-[10px] font-semibold" style={{ background: PANEL, color: PRIMARY, borderTop: `1px solid ${LINE}` }}>
+                          <BarChart3 size={11} /> Compare
+                        </button>
+                      )}
                     </div>
                   );
                 }) : Array.from({ length: slotsInRound }).map((_, idx) => (
@@ -2007,7 +1973,7 @@ function PlayInBracket({ standings, settings, playInGames, teamsById, onStart, o
   );
 }
 
-function BracketView({ standings, settings, playoffGames, teamsById, onStart, onClear, onOpenTeam, h2hMatrix }) {
+function BracketView({ standings, settings, playoffGames, teamsById, onStart, onClear, onOpenTeam, h2hMatrix, onOpenCompare }) {
   const { isLoggedIn } = useAuth();
   const playoffSpots = settings.playoffSpots;
   const n = Math.min(playoffSpots, standings.length);
@@ -2074,7 +2040,7 @@ function BracketView({ standings, settings, playoffGames, teamsById, onStart, on
             const slotsInRound = nextPow2(n) / Math.pow(2, round);
             return (
               <div key={ri} className="flex flex-col justify-around gap-3 flex-shrink-0" style={{ minWidth: 150 }}>
-                <div className="text-[10px] uppercase font-bold mb-1" style={{ color: PRIMARY }}>{(round === 1 ? 'Round 1' : round === roundsCount ? 'Final' : `Round ${round}`)} <span style={{ color: CHALK_DIM, textTransform: 'none' }}>(Bo{getSeriesLength(settings, round)})</span></div>
+                <div className="text-[10px] uppercase font-bold mb-1" style={{ color: PRIMARY }}>{getPlayoffRoundName(settings, round, roundsCount)} <span style={{ color: CHALK_DIM, textTransform: 'none' }}>(Bo{getSeriesLength(settings, round)})</span></div>
                 {round === 1 && !hasPlayoffs ? previewRound1.map((m, idx) => (
                   <div key={idx} className="rounded-lg overflow-hidden" style={{ border: `1px solid ${LINE}` }}>
                     <MatchRow seed={m.s1} team={m.t1} bye={!m.t1} />
@@ -2082,7 +2048,7 @@ function BracketView({ standings, settings, playoffGames, teamsById, onStart, on
                   </div>
                 )) : round <= maxGeneratedRound
                   ? Array.from({ length: slotsInRound }).map((_, idx) => (
-                    <SeriesMatchCard key={idx} slotGames={roundGames.filter(gg => gg.bracketSlot === idx)} teamsById={teamsById} winsNeeded={seriesWinsNeeded(getSeriesLength(settings, round))} seriesLength={getSeriesLength(settings, round)} standingsById={standingsById} h2hMatrix={h2hMatrix} homeFieldBoost={settings.homeFieldBoost || 0} />
+                    <SeriesMatchCard key={idx} slotGames={roundGames.filter(gg => gg.bracketSlot === idx)} teamsById={teamsById} winsNeeded={seriesWinsNeeded(getSeriesLength(settings, round))} seriesLength={getSeriesLength(settings, round)} standingsById={standingsById} h2hMatrix={h2hMatrix} homeFieldBoost={settings.homeFieldBoost || 0} onOpenCompare={onOpenCompare} />
                   ))
                   : Array.from({ length: slotsInRound }).map((_, idx) => (
                     <div key={idx} className="rounded-lg overflow-hidden" style={{ border: `1px solid ${LINE}`, opacity: 0.5 }}><MatchRow placeholder /><MatchRow placeholder /></div>
@@ -2422,15 +2388,10 @@ function ChampionBanner({ team }) {
   );
 }
 
-function HomeView({ season, rounds, roundIdx, setRoundIdx, teamsById, settings, onOpenTeam, h2hMatrix, sport, onStartPlayoffs, onClearPlayoffs, onStartPlayIn, onClearPlayIn }) {
-  if (rounds.length === 0) {
-    return <div className="p-4"><Panel><p className="px-4 py-8 text-sm text-center" style={{ color: CHALK_DIM }}>Import a schedule to see round-by-round standings here.</p></Panel></div>;
+function HomeView({ season, teamsById, settings, onOpenTeam, h2hMatrix, sport, onStartPlayoffs, onClearPlayoffs, onStartPlayIn, onClearPlayIn, onOpenCompare }) {
+  if ((season.games || []).length === 0) {
+    return <div className="p-4"><Panel><p className="px-4 py-8 text-sm text-center" style={{ color: CHALK_DIM }}>Import a schedule to see standings and scores here.</p></Panel></div>;
   }
-  const round = rounds[roundIdx];
-  const asOf = computeStandingsThroughRound(season, teamsById, rounds, roundIdx).active;
-  const prevAsOf = roundIdx > 0 ? computeStandingsThroughRound(season, teamsById, rounds, roundIdx - 1).active : null;
-  const prevRankById = {};
-  if (prevAsOf) prevAsOf.forEach(t => { prevRankById[t.id] = t.rank; });
   const liveStandings = computeStandings(season, teamsById).active;
   const remaining = computeRemaining(season);
   const clinchElim = computeClinchElim(liveStandings, settings.playoffSpots, remaining);
@@ -2451,10 +2412,10 @@ function HomeView({ season, rounds, roundIdx, setRoundIdx, teamsById, settings, 
       <style>{`@keyframes lt-live-pulse { 0%, 100% { opacity: 1; } 50% { opacity: 0.3; } }`}</style>
       {season.championTeamId && <ChampionBanner team={teamsById[season.championTeamId]} />}
       {playInGames.length > 0 && (
-        <PlayInBracket standings={liveStandings} settings={settings} playInGames={playInGames} teamsById={teamsById} onStart={onStartPlayIn} onClear={onClearPlayIn} onOpenTeam={onOpenTeam} />
+        <PlayInBracket standings={liveStandings} settings={settings} playInGames={playInGames} teamsById={teamsById} onStart={onStartPlayIn} onClear={onClearPlayIn} onOpenTeam={onOpenTeam} onOpenCompare={onOpenCompare} />
       )}
       {playoffGames.length > 0 && (
-        <BracketView standings={seededStandings} settings={settings} playoffGames={playoffGames} teamsById={teamsById} onStart={onStartPlayoffs} onClear={onClearPlayoffs} onOpenTeam={onOpenTeam} h2hMatrix={h2hMatrix} />
+        <BracketView standings={seededStandings} settings={settings} playoffGames={playoffGames} teamsById={teamsById} onStart={onStartPlayoffs} onClear={onClearPlayoffs} onOpenTeam={onOpenTeam} h2hMatrix={h2hMatrix} onOpenCompare={onOpenCompare} />
       )}
       {(() => {
         const liveGames = (season.games || []).filter(g => g.isOngoing && !g.played);
@@ -2481,93 +2442,85 @@ function HomeView({ season, rounds, roundIdx, setRoundIdx, teamsById, settings, 
         );
       })()}
       {(() => {
-        const playedGames = (season.games || []).filter(g => g.played && !g.isPlayoff && !g.isPlayIn && !g.isForfeit);
-        const totalMargin = playedGames.reduce((s, g) => s + Math.abs(Number(g.homeScore) - Number(g.awayScore)), 0);
-        const avgMargin = playedGames.length ? totalMargin / playedGames.length : 0;
-        const leader = liveStandings[0];
+        // Scores: no round pagination — just the last played game, the next
+        // few upcoming, and (during playoffs) which series is currently on.
+        const allGames = sortGamesChronologically((season.games || []).filter(g => !g.isBye), settings.scheduleMode || 'date');
+        const playedGames = allGames.filter(g => g.played);
+        const upcomingGames = allGames.filter(g => !g.played && !g.isOngoing);
+        const previousGame = playedGames[playedGames.length - 1] || null;
+        const nextUpcoming = upcomingGames.slice(0, 4);
+        let scoresTitle = 'Scores';
+        if (playoffGames.length > 0) {
+          const curRound = Math.max(...playoffGames.map(g => g.playoffRound));
+          const roundsCount = Math.max(1, Math.log2(nextPow2(Math.max(1, Math.min(settings.playoffSpots, liveStandings.length)))));
+          scoresTitle = getPlayoffRoundName(settings, curRound, roundsCount);
+        } else if (playInGames.length > 0) {
+          scoresTitle = 'Play-In Tournament';
+        }
+        const GameLine = ({ g }) => {
+          const home = teamsById[g.homeTeamId], away = teamsById[g.awayTeamId];
+          const homeColor = home ? teamColor(home) : LINE, awayColor = away ? teamColor(away) : LINE;
+          return (
+            <div className="flex items-center gap-2 px-2 py-2 text-sm rounded" style={{ borderLeft: `3px solid ${awayColor}`, borderRight: `3px solid ${homeColor}`, borderBottom: `1px solid ${LINE}` }}>
+              <span className="flex-1 truncate flex items-center gap-1.5" style={{ color: CHALK }}>
+                {away && <TeamMark team={away} size={14} />}
+                {away ? away.name : g.awayScheduleName} <span style={{ color: CHALK_DIM }}>@</span> {home ? home.name : g.homeScheduleName}
+                {home && <TeamMark team={home} size={14} />}
+              </span>
+              {g.played
+                ? <span className="font-mono text-xs px-2 py-0.5 rounded font-bold" style={{ background: PANEL2, color: PRIMARY }}>{g.awayScore}–{g.homeScore}</span>
+                : <span className="text-[11px]" style={{ color: CHALK_DIM }}>{g.date || 'upcoming'}</span>}
+            </div>
+          );
+        };
         return (
           <Panel className="overflow-hidden" style={{ borderColor: PRIMARY }}>
-            <SectionTitle accent={PRIMARY}>League snapshot</SectionTitle>
-            <div className="grid grid-cols-3 gap-px" style={{ background: LINE }}>
-              <StatBox label="Games Played" value={playedGames.length} />
-              <StatBox label="Avg Margin" value={avgMargin.toFixed(1)} />
-              <StatBox label="Teams" value={liveStandings.length} />
-              <StatBox label="Leader" value={leader ? leader.displayName : '—'} color={leader ? teamColor(leader) : CHALK} />
-              <StatBox label="Spots Clinched" value={`${clinched.length}/${settings.playoffSpots}`} color={clinched.length > 0 ? WIN : CHALK} />
-              <StatBox label="Round" value={`${roundIdx + 1}/${rounds.length}`} />
+            <SectionTitle accent={PRIMARY}>{scoresTitle}</SectionTitle>
+            <div className="px-2 pb-3">
+              {previousGame && (
+                <>
+                  <div className="px-2 pb-1 text-[10px] uppercase font-bold" style={{ color: CHALK_DIM }}>Previous</div>
+                  <GameLine g={previousGame} />
+                </>
+              )}
+              {nextUpcoming.length > 0 && (
+                <>
+                  <div className="px-2 pt-2 pb-1 text-[10px] uppercase font-bold" style={{ color: CHALK_DIM }}>Upcoming</div>
+                  {nextUpcoming.map(g => <GameLine key={g.id} g={g} />)}
+                </>
+              )}
+              {!previousGame && nextUpcoming.length === 0 && <p className="px-2 py-3 text-sm" style={{ color: CHALK_DIM }}>No games yet.</p>}
             </div>
           </Panel>
         );
       })()}
-      <Panel className="overflow-hidden" style={{ borderColor: PRIMARY }}>
-        <SectionTitle accent={PRIMARY} right={
-          <div className="flex items-center gap-1">
-            <button onClick={() => setRoundIdx(Math.max(0, roundIdx - 1))} disabled={roundIdx === 0} className="p-1 rounded disabled:opacity-30" style={{ color: PRIMARY }}><ChevronLeft size={16} /></button>
-            <select value={roundIdx} onChange={e => setRoundIdx(Number(e.target.value))} className="bg-[#242424] border rounded px-2 py-1 text-xs" style={{ borderColor: LINE, color: CHALK }}>
-              {rounds.map((r, i) => <option style={{ background: PANEL2, color: CHALK }} key={i} value={i}>{settings.scheduleMode === 'round' && r.label !== '(unlabeled)' ? formatRoundLabel(r.label) : r.label}</option>)}
-            </select>
-            <button onClick={() => setRoundIdx(Math.min(rounds.length - 1, roundIdx + 1))} disabled={roundIdx === rounds.length - 1} className="p-1 rounded disabled:opacity-30" style={{ color: PRIMARY }}><ChevronRight size={16} /></button>
-          </div>
-        }>
-          {settings.scheduleMode === 'round' && round.label !== '(unlabeled)' ? formatRoundLabel(round.label) : round.label}
-        </SectionTitle>
-        <div className="px-2 pb-3">
-          {round.games.map(g => {
-            const home = teamsById[g.homeTeamId], away = teamsById[g.awayTeamId];
-            const homeColor = home ? teamColor(home) : LINE, awayColor = away ? teamColor(away) : LINE;
-            const stories = !g.played && !g.isBye ? generateStorylines(liveStandings.find(t => t.id === g.homeTeamId), liveStandings.find(t => t.id === g.awayTeamId), h2hMatrix, settings.playoffSpots) : [];
-            return (
-              <div key={g.id} className="rounded mb-1" style={{ borderBottom: `1px solid ${LINE}` }}>
-                <div className="flex items-center gap-2 px-2 py-2 text-sm" style={{ borderLeft: `3px solid ${awayColor}`, borderRight: `3px solid ${homeColor}` }}>
-                  <span className="flex-1 truncate flex items-center gap-1.5" style={{ color: CHALK }}>
-                    {away && <TeamMark team={away} size={14} />}
-                    {away ? away.name : g.awayScheduleName} <span style={{ color: CHALK_DIM }}>@</span> {home ? home.name : g.homeScheduleName}
-                    {home && <TeamMark team={home} size={14} />}
-                  </span>
-                  {g.played
-                    ? <span className="font-mono text-xs px-2 py-0.5 rounded" style={{ background: PANEL2, color: PRIMARY }}>{g.awayScore}–{g.homeScore}</span>
-                    : <span className="text-[11px]" style={{ color: CHALK_DIM }}>unplayed</span>}
-                </div>
-                {stories.length > 0 && (
-                  <div className="px-2 pb-2 space-y-0.5">
-                    {stories.map((s, i) => <p key={i} className="text-[11px] italic" style={{ color: CHALK_DIM }}>{s}</p>)}
-                  </div>
-                )}
-              </div>
-            );
-          })}
-        </div>
-      </Panel>
 
       <Panel>
-        <SectionTitle>Standings through this round</SectionTitle>
+        <SectionTitle>Standings</SectionTitle>
         <div className="overflow-x-auto px-2 pb-4">
           <table className="w-full text-sm" style={{ color: CHALK }}>
             <thead><tr className="text-[10px] uppercase" style={{ color: CHALK_DIM }}>
-              <th className="text-left px-2 py-1">#</th><th className="text-left px-2 py-1"></th><th className="text-left px-2 py-1">Team</th><th className="px-2 py-1">W-L</th><th className="px-2 py-1">GB</th>
+              <th className="text-left px-2 py-1">#</th><th className="text-left px-2 py-1">Team</th><th className="px-2 py-1">W-L</th><th className="px-2 py-1">PCT</th><th className="px-2 py-1">GB</th>
             </tr></thead>
             <tbody>
-              {asOf.map(t => {
-                const delta = prevRankById[t.id] != null ? prevRankById[t.id] - t.rank : null;
-                return (
-                  <tr key={t.id} style={{ borderTop: `1px solid ${LINE}` }}>
-                    <td className="px-2 py-1.5 font-mono">{t.rank}</td>
-                    <td className="px-2 py-1.5 text-xs font-mono" style={{ borderLeft: `3px solid ${teamColor(t)}` }}><MoveIndicator delta={delta} /></td>
-                    <td className="px-2 py-1.5 font-semibold">
-                      <button onClick={() => onOpenTeam(t.id)} className="flex items-center gap-2 text-left" style={{ color: CHALK }}>
-                        <TeamMark team={t} size={16} /> <span className="truncate max-w-[130px]">{t.displayName}</span>
-                        {(clinchSymbols[t.id] || []).map(s => <ClinchBadge key={s} symbol={s} />)}
-                      </button>
-                    </td>
-                    <td className="px-2 py-1.5 text-center font-mono">{t.w}-{t.l}</td>
-                    <td className="px-2 py-1.5 text-center font-mono">{t.gb === 0 ? '-' : t.gb.toFixed(1)}</td>
-                  </tr>
-                );
-              })}
+              {liveStandings.map(t => (
+                <tr key={t.id} style={{ borderTop: `1px solid ${LINE}` }}>
+                  <td className="px-2 py-1.5 font-mono" style={{ borderLeft: `3px solid ${teamColor(t)}` }}>{t.rank}</td>
+                  <td className="px-2 py-1.5 font-semibold">
+                    <button onClick={() => onOpenTeam(t.id)} className="flex items-center gap-2 text-left" style={{ color: CHALK }}>
+                      <TeamMark team={t} size={16} /> <span className="truncate max-w-[130px]">{t.displayName}</span>
+                      {(clinchSymbols[t.id] || []).map(s => <ClinchBadge key={s} symbol={s} />)}
+                    </button>
+                  </td>
+                  <td className="px-2 py-1.5 text-center font-mono">{t.w}-{t.l}</td>
+                  <td className="px-2 py-1.5 text-center font-mono">{t.pct.toFixed(3).replace(/^0/, '')}</td>
+                  <td className="px-2 py-1.5 text-center font-mono">{t.gb === 0 ? '-' : t.gb.toFixed(1)}</td>
+                </tr>
+              ))}
             </tbody>
           </table>
         </div>
-        {(asOf.some(t => (clinchSymbols[t.id] || []).length > 0)) && (
+        {(liveStandings.some(t => (clinchSymbols[t.id] || []).length > 0)) && (
           <p className="px-4 pb-4 text-[11px]" style={{ color: CHALK_DIM }}>
             <span style={{ color: WIN }}>x</span>-clinched playoff spot &nbsp; <span style={{ color: GOLD }}>y</span>-clinched #1 seed &nbsp; <span style={{ color: NEGATIVE }}>z</span>-eliminated
           </p>
@@ -2867,6 +2820,10 @@ function SettingsView({ settings, saveSettings, theme, saveTheme, sport, season,
                     return (
                       <label key={i} className="flex flex-col items-center gap-1" style={{ color: CHALK }}>
                         <span className="text-[10px] uppercase" style={{ color: CHALK_DIM }}>{roundNames(i)}</span>
+                        <input value={(settings.playoffRoundNames && settings.playoffRoundNames[String(round)]) || ''}
+                          onChange={e => saveSettings({ ...settings, playoffRoundNames: { ...(settings.playoffRoundNames || {}), [String(round)]: e.target.value } })}
+                          placeholder={getPlayoffRoundName({}, round, roundsCount)}
+                          className="w-24 bg-[#242424] border rounded px-1.5 py-1 text-center text-[11px]" style={{ borderColor: LINE, color: CHALK }} />
                         <div className="flex rounded overflow-hidden border" style={{ borderColor: LINE }}>
                           {[1, 3, 5, 7].map(n => (
                             <button key={n} onClick={() => {
@@ -3233,13 +3190,47 @@ function ScheduleView({ season, settings, saveScore, deleteGame, declareForfeit,
   const [liveForm, setLiveForm] = useState({ away: '0', home: '0', period: '1', half: 'top' });
   const [filter, setFilter] = useState('all');
   const [openLabel, setOpenLabel] = useState(null);
-  const games = season.games || [];
+  // Byes never appear on the schedule — there's no game to score, so they'd
+  // just be a dead row. advancePlayoffs/advancePlayIn still use the
+  // underlying isBye game objects in season.games to resolve slot winners;
+  // this only affects what's rendered here.
+  const games = (season.games || []).filter(g => !g.isBye);
+  const liveStandingsForSeeds = computeStandings(season, teamsById).active;
+  const seedByTeamId = {};
+  liveStandingsForSeeds.forEach((t, i) => { seedByTeamId[t.id] = i + 1; });
+  const maxPlayoffRound = games.filter(g => g.isPlayoff).reduce((m, g) => Math.max(m, g.playoffRound), 0);
+  // Total bracket depth (not just the highest round generated so far — later
+  // rounds don't exist as games yet while an earlier round is still being
+  // played, which would otherwise make round 1 look like the Final).
+  const totalPlayoffRounds = Math.max(maxPlayoffRound, Math.log2(nextPow2(Math.max(1, Math.min(settings.playoffSpots || 0, liveStandingsForSeeds.length) || maxPlayoffRound || 1))));
+  const seededTeamLabel = (teamId, scheduleName) => {
+    const t = teamsById[teamId];
+    const name = t ? t.name : (scheduleName || 'TBD');
+    const seed = teamId ? seedByTeamId[teamId] : null;
+    return seed ? `#${seed} ${name}` : name;
+  };
 
   const groups = [];
   const seenKeys = {};
   games.forEach(g => {
-    const gkey = roundGroupKey(g.date, scheduleMode);
-    if (!(gkey in seenKeys)) { seenKeys[gkey] = { key: gkey, label: g.date || 'Unlabeled', games: [], isPlayoff: !!g.isPlayoff, isPlayIn: !!g.isPlayIn }; groups.push(seenKeys[gkey]); }
+    const isPlayoff = !!g.isPlayoff, isPlayIn = !!g.isPlayIn;
+    let gkey, label, sortA = 0, sortB = 0;
+    if (isPlayoff || isPlayIn) {
+      // Group by series (round + bracket slot), not by round alone — each
+      // matchup gets its own header with both teams and seeds named, rather
+      // than lumping every Round 1 series under one generic "Playoffs R1".
+      const roundNum = isPlayoff ? g.playoffRound : g.playInRound;
+      gkey = `${isPlayoff ? 'po' : 'pi'}-${roundNum}-${g.bracketSlot}`;
+      const roundLabel = isPlayoff
+        ? getPlayoffRoundName(settings, roundNum, totalPlayoffRounds)
+        : (roundNum === 1 ? 'Play-In' : `Play-In Round ${roundNum}`);
+      label = `${isPlayoff ? 'Playoffs' : 'Play-In'} ${roundLabel} — ${seededTeamLabel(g.awayTeamId, g.awayScheduleName)} vs ${seededTeamLabel(g.homeTeamId, g.homeScheduleName)}`;
+      sortA = roundNum; sortB = g.bracketSlot;
+    } else {
+      gkey = roundGroupKey(g.date, scheduleMode);
+      label = g.date || 'Unlabeled';
+    }
+    if (!(gkey in seenKeys)) { seenKeys[gkey] = { key: gkey, label, games: [], isPlayoff, isPlayIn, sortA, sortB }; groups.push(seenKeys[gkey]); }
     seenKeys[gkey].games.push(g);
   });
   // Same fix as getOrderedRounds: sort by actual round/date number, not by
@@ -3247,7 +3238,7 @@ function ScheduleView({ season, settings, saveScore, deleteGame, declareForfeit,
   groups.sort((a, b) => {
     if (a.isPlayoff !== b.isPlayoff) return a.isPlayoff ? 1 : -1;
     if (a.isPlayIn !== b.isPlayIn) return a.isPlayIn ? 1 : -1;
-    if (a.isPlayoff || a.isPlayIn) return 0; // keep playoff/play-in groups in their generated order
+    if (a.isPlayoff || a.isPlayIn) return (a.sortA - b.sortA) || (a.sortB - b.sortB);
     return compareGameDates(a.label, b.label, scheduleMode);
   });
 
@@ -3730,7 +3721,7 @@ function StarLevelEditor({ value, onChange, disabled = false }) {
   );
 }
 
-function RosterPanel({ member, color, updatePlayerField, removePlayer, addPlayer, addPlayersBulk, teamOptions, onTrade }) {
+function RosterPanel({ member, color, updatePlayerField, removePlayer, addPlayer, addPlayersBulk, teamOptions, onTrade, onSuspend }) {
   const { isLoggedIn } = useAuth();
   const [name, setName] = useState('');
   const [starLevel, setStarLevel] = useState(null);
@@ -3779,8 +3770,9 @@ function RosterPanel({ member, color, updatePlayerField, removePlayer, addPlayer
               <div className="flex items-center gap-2 px-3 py-2">
                 <button onClick={() => setExpandedId(isOpen ? null : p.id)} className="flex-1 min-w-0 flex items-center gap-2 text-left">
                   {p.role && <span className="text-[10px] font-mono px-1 rounded flex-shrink-0" style={{ background: PANEL, color: CHALK_DIM }}>{p.role}</span>}
-                  <span className="text-sm font-semibold truncate" style={{ color: CHALK }}>{p.name}</span>
+                  <span className="text-sm font-semibold truncate" style={{ color: p.suspended ? NEGATIVE : CHALK }}>{p.name}</span>
                   {p.number && <span className="text-xs font-mono flex-shrink-0" style={{ color: CHALK_DIM }}>#{p.number}</span>}
+                  {p.suspended && <span className="text-[9px] uppercase font-bold px-1.5 py-0.5 rounded flex-shrink-0" style={{ background: `${NEGATIVE}22`, color: NEGATIVE }}>Suspended</span>}
                 </button>
                 <StarLevelEditor value={p.starLevel} onChange={v => updatePlayerField(p.id, 'starLevel', v)} disabled={!isLoggedIn} />
                 <button onClick={() => setExpandedId(isOpen ? null : p.id)} className="p-1 flex-shrink-0" style={{ color: CHALK_DIM }}><ChevronRight size={14} style={{ transform: isOpen ? 'rotate(90deg)' : 'none', transition: 'transform 0.15s' }} /></button>
@@ -3793,9 +3785,15 @@ function RosterPanel({ member, color, updatePlayerField, removePlayer, addPlayer
                     <div><div className="text-[10px] uppercase mb-1" style={{ color: CHALK_DIM }}>#</div><input value={p.number} onChange={e => updatePlayerField(p.id, 'number', e.target.value)} className="w-14 bg-[#242424] border rounded px-2 py-1 text-xs" style={{ borderColor: LINE, color: CHALK }} /></div>
                     <div><div className="text-[10px] uppercase mb-1" style={{ color: CHALK_DIM }}>Position</div><input value={p.position} onChange={e => updatePlayerField(p.id, 'position', e.target.value)} className="w-20 bg-[#242424] border rounded px-2 py-1 text-xs" style={{ borderColor: LINE, color: CHALK }} /></div>
                   </div>
-                  <div className="flex items-center justify-between gap-2">
+                  {p.suspended && p.suspensionReason && <p className="text-xs italic" style={{ color: NEGATIVE }}>Reason: {p.suspensionReason}</p>}
+                  <div className="flex items-center justify-between gap-2 flex-wrap">
                     {teamOptions && teamOptions.length > 0 && (
                       <button onClick={() => setTradingId(tradingId === p.id ? null : p.id)} className="text-xs flex items-center gap-1" style={{ color: PRIMARY }}><RefreshCw size={13} /> Trade</button>
+                    )}
+                    {onSuspend && (
+                      p.suspended
+                        ? <button onClick={() => onSuspend(p.id, false)} className="text-xs flex items-center gap-1" style={{ color: WIN }}><Check size={13} /> Lift suspension</button>
+                        : <button onClick={() => onSuspend(p.id, true, prompt(`Reason for suspending ${p.name}? (optional)`) || '')} className="text-xs flex items-center gap-1" style={{ color: GOLD }}><AlertTriangle size={13} /> Suspend</button>
                     )}
                     <button onClick={() => { if (confirm(`Remove ${p.name} from the roster?`)) removePlayer(p.id); }} className="text-xs flex items-center gap-1" style={{ color: NEGATIVE }}><Trash2 size={13} /> Remove</button>
                   </div>
@@ -3828,7 +3826,54 @@ function RosterPanel({ member, color, updatePlayerField, removePlayer, addPlayer
   );
 }
 
-function TeamPage({ season, settings, team, standingsRow, teamsById, h2hMatrix, championshipCount, onBack, onOpenGlobalHistory, onOpenCompare, updatePlayerField, removePlayer, addPlayer, addPlayersBulk, tradePlayer, updateMemberField }) {
+// Admin-only aggregate roster view: every team's roster (create/remove/trade/
+// suspend) in one place, so managing the league doesn't require opening each
+// team's page individually. Reuses RosterPanel per-team, same as TeamPage.
+function RosterManagementView({ season, teamsById, updatePlayerField, removePlayer, addPlayer, addPlayersBulk, tradePlayer, setPlayerSuspended }) {
+  const [openTeamId, setOpenTeamId] = useState(null);
+  return (
+    <div className="p-4 space-y-3">
+      <Panel className="overflow-hidden" style={{ borderColor: PRIMARY }}>
+        <SectionTitle accent={PRIMARY}>Roster management</SectionTitle>
+        <p className="px-4 pb-4 text-xs" style={{ color: CHALK_DIM }}>Create, trade, remove, and suspend players for any team in the season.</p>
+      </Panel>
+      {season.members.length === 0 && <Panel><p className="px-4 py-8 text-sm text-center" style={{ color: CHALK_DIM }}>No teams in this season yet — add some in the Teams tab.</p></Panel>}
+      {season.members.map(m => {
+        const gt = teamsById[m.teamId] || { id: m.teamId, name: m.scheduleName };
+        const color = teamColor(gt);
+        const isOpen = openTeamId === m.teamId;
+        const roster = m.roster || [];
+        const suspendedCount = roster.filter(p => p.suspended).length;
+        return (
+          <div key={m.teamId}>
+            <button onClick={() => setOpenTeamId(isOpen ? null : m.teamId)} className="w-full flex items-center gap-2 px-4 py-3 rounded-xl" style={{ background: PANEL, border: `1px solid ${LINE}` }}>
+              <TeamMark team={gt} size={20} />
+              <span className="flex-1 font-bold truncate text-left" style={{ color: CHALK }}>{gt.name || m.scheduleName}</span>
+              <span className="text-xs font-mono flex-shrink-0" style={{ color: CHALK_DIM }}>{roster.length} player{roster.length === 1 ? '' : 's'}</span>
+              {suspendedCount > 0 && <span className="text-[9px] uppercase font-bold px-1.5 py-0.5 rounded flex-shrink-0" style={{ background: `${NEGATIVE}22`, color: NEGATIVE }}>{suspendedCount} suspended</span>}
+              <ChevronRight size={16} style={{ color: CHALK_DIM, transform: isOpen ? 'rotate(90deg)' : 'none', transition: 'transform 0.15s', flexShrink: 0 }} />
+            </button>
+            {isOpen && (
+              <div className="mt-2">
+                <RosterPanel member={m} color={color}
+                  updatePlayerField={(pid, f, v) => updatePlayerField(m.teamId, pid, f, v)}
+                  removePlayer={(pid) => removePlayer(m.teamId, pid)}
+                  addPlayer={(n, s) => addPlayer(m.teamId, n, s)}
+                  addPlayersBulk={(rows) => addPlayersBulk(m.teamId, rows)}
+                  teamOptions={season.members.filter(mm => mm.teamId !== m.teamId).map(mm => ({ id: mm.teamId, name: (teamsById[mm.teamId] && teamsById[mm.teamId].name) || mm.scheduleName || 'Unknown team' }))}
+                  onTrade={(toTeamId, playerId) => tradePlayer(m.teamId, toTeamId, playerId)}
+                  onSuspend={(pid, susp, reason) => setPlayerSuspended(m.teamId, pid, susp, reason)}
+                />
+              </div>
+            )}
+          </div>
+        );
+      })}
+    </div>
+  );
+}
+
+function TeamPage({ season, settings, team, standingsRow, teamsById, h2hMatrix, championshipCount, onBack, onOpenGlobalHistory, onOpenCompare, updatePlayerField, removePlayer, addPlayer, addPlayersBulk, tradePlayer, updateMemberField, setPlayerSuspended }) {
   const { isLoggedIn } = useAuth();
   if (!team) return <div className="p-4"><button onClick={onBack} className="flex items-center gap-1 text-sm mb-3" style={{ color: CHALK_DIM }}><ArrowLeft size={14} /> Back</button><Panel><p className="px-4 py-8 text-sm text-center" style={{ color: CHALK_DIM }}>That team could not be found.</p></Panel></div>;
   const color = teamColor(team);
@@ -3990,28 +4035,19 @@ function TeamPage({ season, settings, team, standingsRow, teamsById, h2hMatrix, 
         </>
       )}
 
-      <RosterPanel member={member} color={color} updatePlayerField={(pid, f, v) => updatePlayerField(team.id, pid, f, v)} removePlayer={(pid) => removePlayer(team.id, pid)} addPlayer={(n, s) => addPlayer(team.id, n, s)} addPlayersBulk={(rows) => addPlayersBulk(team.id, rows)} teamOptions={season.members.filter(m => m.teamId !== team.id).map(m => ({ id: m.teamId, name: (teamsById[m.teamId] && teamsById[m.teamId].name) || m.scheduleName || 'Unknown team' }))} onTrade={(toTeamId, playerId) => tradePlayer(team.id, toTeamId, playerId)} />
+      <RosterPanel member={member} color={color} updatePlayerField={(pid, f, v) => updatePlayerField(team.id, pid, f, v)} removePlayer={(pid) => removePlayer(team.id, pid)} addPlayer={(n, s) => addPlayer(team.id, n, s)} addPlayersBulk={(rows) => addPlayersBulk(team.id, rows)} teamOptions={season.members.filter(m => m.teamId !== team.id).map(m => ({ id: m.teamId, name: (teamsById[m.teamId] && teamsById[m.teamId].name) || m.scheduleName || 'Unknown team' }))} onTrade={(toTeamId, playerId) => tradePlayer(team.id, toTeamId, playerId)} onSuspend={(pid, susp, reason) => setPlayerSuspended(team.id, pid, susp, reason)} />
 
       <Panel className="overflow-hidden" style={{ borderColor: color }}>
-        <SectionTitle accent={color} right={
-          <select value={member.rivalTeamId || ''} onChange={e => updateMemberField(team.id, 'rivalTeamId', e.target.value || null)} disabled={!isLoggedIn} className="bg-[#242424] border rounded px-2 py-1 text-[11px] disabled:opacity-50" style={{ borderColor: LINE, color: CHALK }}>
-            <option style={{ background: PANEL2, color: CHALK }} value="">No rival set</option>
-            {season.members.filter(m => m.teamId !== team.id).map(m => <option style={{ background: PANEL2, color: CHALK }} key={m.teamId} value={m.teamId}>Rival: {(teamsById[m.teamId] && teamsById[m.teamId].name) || m.scheduleName}</option>)}
-          </select>
-        }>Head-to-head</SectionTitle>
+        <SectionTitle accent={color}>Head-to-head</SectionTitle>
         <div className="px-2 pb-3">
           {h2hRows.length === 0 && <p className="px-2 py-3 text-sm" style={{ color: CHALK_DIM }}>No games played against anyone yet this season.</p>}
-          {h2hRows.map(r => {
-            const isRival = member.rivalTeamId === r.id;
-            return (
-              <div key={r.id} className="flex items-center gap-2 px-2 py-2 text-sm" style={{ borderBottom: `1px solid ${LINE}`, background: isRival ? `${GOLD}18` : 'transparent' }}>
-                {isRival && <Sparkles size={12} style={{ color: GOLD, flexShrink: 0 }} />}
-                <span className="flex-1 truncate" style={{ color: isRival ? GOLD : CHALK }}>{r.name}</span>
-                <span className="font-mono text-xs" style={{ color: r.w >= r.l ? WIN : NEGATIVE }}>{r.w}-{r.l}</span>
-                <span className="font-mono text-xs w-14 text-right" style={{ color: CHALK_DIM }}>{r.diff > 0 ? `+${r.diff}` : r.diff} rd</span>
-              </div>
-            );
-          })}
+          {h2hRows.map(r => (
+            <div key={r.id} className="flex items-center gap-2 px-2 py-2 text-sm" style={{ borderBottom: `1px solid ${LINE}` }}>
+              <span className="flex-1 truncate" style={{ color: CHALK }}>{r.name}</span>
+              <span className="font-mono text-xs" style={{ color: r.w >= r.l ? WIN : NEGATIVE }}>{r.w}-{r.l}</span>
+              <span className="font-mono text-xs w-14 text-right" style={{ color: CHALK_DIM }}>{r.diff > 0 ? `+${r.diff}` : r.diff} rd</span>
+            </div>
+          ))}
         </div>
       </Panel>
 
@@ -4058,9 +4094,9 @@ function CompareStatRow({ label, aVal, bVal, aBetter, bBetter, aColor, bColor })
   );
 }
 
-function ComparePage({ season, standingsAll, teamsById, h2hMatrix, initialTeamId, onBack, onOpenTeam }) {
+function ComparePage({ season, standingsAll, teamsById, h2hMatrix, initialTeamId, initialTeamBId, onBack, onOpenTeam }) {
   const [aId, setAId] = useState(initialTeamId || (season.members[0] && season.members[0].teamId) || '');
-  const [bId, setBId] = useState((season.members.find(m => m.teamId !== initialTeamId) || {}).teamId || '');
+  const [bId, setBId] = useState(initialTeamBId || (season.members.find(m => m.teamId !== initialTeamId) || {}).teamId || '');
   const teamA = standingsAll.find(t => t.id === aId);
   const teamB = standingsAll.find(t => t.id === bId);
   const colorA = teamA ? teamColor(teamA) : PRIMARY, colorB = teamB ? teamColor(teamB) : NEGATIVE;
@@ -4139,6 +4175,23 @@ function futuresConfidenceLabel(pct) {
   if (d < 25) return 'Lean';
   return 'Strong lean';
 }
+// Per-visitor local override for odds display format — never written to the
+// shared backend, just this browser's localStorage. Falls back to whatever
+// the admin set as the season default.
+function useLocalOddsFormat(adminDefault) {
+  const [override, setOverrideState] = useState(null);
+  useEffect(() => {
+    try {
+      const saved = localStorage.getItem('lt-odds-format');
+      if (saved === 'percent' || saved === 'american') setOverrideState(saved);
+    } catch (e) { /* localStorage unavailable */ }
+  }, []);
+  const setOverride = useCallback((fmt) => {
+    setOverrideState(fmt);
+    try { if (fmt) localStorage.setItem('lt-odds-format', fmt); else localStorage.removeItem('lt-odds-format'); } catch (e) { /* ignore */ }
+  }, []);
+  return [override || adminDefault, setOverride];
+}
 function FutureCard({ f, oddsFormat, decimals }) {
   const meta = FUTURES_CATEGORY_META[f.category] || { icon: Percent, label: 'Futures', color: PRIMARY };
   const Icon = meta.icon;
@@ -4188,7 +4241,7 @@ function FuturesPanel({ season, standings, teamsById, settings, h2hMatrix }) {
   useEffect(() => { setNonce(0); }, [roundLabel, season.id]);
 
   const selected = pool ? selectRoundFutures(pool, season.id, roundLabel, 5, nonce, 2) : [];
-  const oddsFormat = settings.oddsFormat || 'percent';
+  const [oddsFormat] = useLocalOddsFormat(settings.oddsFormat || 'percent');
   const decimals = settings.oddsDecimals ?? 1;
 
   return (
@@ -4207,7 +4260,7 @@ function FuturesPanel({ season, standings, teamsById, settings, h2hMatrix }) {
   );
 }
 
-function OddsView({ season, teamsById, standings, settings, onOpenTeam, h2hMatrix, onStartPlayoffs, onClearPlayoffs, onStartPlayIn, onClearPlayIn }) {
+function OddsView({ season, teamsById, standings, settings, onOpenTeam, h2hMatrix, onStartPlayoffs, onClearPlayoffs, onStartPlayIn, onClearPlayIn, onOpenCompare }) {
   const { isLoggedIn } = useAuth();
   const [sim, setSim] = useState(null);
   const [running, setRunning] = useState(false);
@@ -4215,7 +4268,7 @@ function OddsView({ season, teamsById, standings, settings, onOpenTeam, h2hMatri
   const [runningPlayoff, setRunningPlayoff] = useState(false);
   const [preview, setPreview] = useState(null);
   const decimals = settings.oddsDecimals ?? 1;
-  const oddsFormat = settings.oddsFormat || 'percent';
+  const [oddsFormat, setOddsFormat] = useLocalOddsFormat(settings.oddsFormat || 'percent');
   const remaining = (season.games || []).filter(g => !g.played && !g.isPlayoff && !g.isPlayIn && g.homeTeamId && g.awayTeamId);
   const remainingByTeam = computeRemaining(season);
   const clinchElim = computeClinchElim(standings, settings.playoffSpots, remainingByTeam);
@@ -4224,36 +4277,53 @@ function OddsView({ season, teamsById, standings, settings, onOpenTeam, h2hMatri
   const playInWinnerId = getPlayInWinner(playInGames);
   const seededStandings = buildMainBracketSeeds(standings, settings, playInWinnerId);
 
-  const runSim = () => { setRunning(true); setTimeout(() => { setSim(runSimulation(season, teamsById, settings.simRuns, settings.playoffSpots, h2hMatrix)); setRunning(false); }, 30); };
-  const runPlayoffSim = () => {
+  // Both simulations run automatically and are cached against a fingerprint
+  // of every played game's result plus the settings that feed the model —
+  // they only recompute when standings/scores (or those settings) actually
+  // change, not on every render or tab visit.
+  const simFingerprint = useMemo(() => {
+    const gamesSig = (season.games || []).map(g => `${g.id}:${g.played ? 1 : 0}:${g.awayScore}:${g.homeScore}:${g.isForfeit ? 1 : 0}:${g.winnerOverride || ''}`).join('|');
+    return [season.id, gamesSig, settings.simRuns, settings.playoffSpots, settings.homeFieldBoost, JSON.stringify(settings.seriesLengths || []), settings.seriesLength, settings.reseedPlayoffs ? 1 : 0].join('~');
+  }, [season, settings]);
+  useEffect(() => {
+    setRunning(true);
+    const t = setTimeout(() => { setSim(runSimulation(season, teamsById, settings.simRuns, settings.playoffSpots, h2hMatrix)); setRunning(false); }, 30);
+    return () => clearTimeout(t);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [simFingerprint]);
+  useEffect(() => {
+    if (standings.length < 2) { setPlayoffSim(null); return; }
     setRunningPlayoff(true);
-    setTimeout(() => {
+    const t = setTimeout(() => {
       setPlayoffSim(simulatePlayoffs(seededStandings, settings.playoffSpots, settings, h2hMatrix, settings.simRuns, settings.homeFieldBoost || 0, playoffGames));
       setRunningPlayoff(false);
     }, 30);
-  };
-  useEffect(() => { setSim(null); setPlayoffSim(null); setPreview(null); }, [season.id]);
+    return () => clearTimeout(t);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [simFingerprint]);
+  useEffect(() => { setPreview(null); }, [season.id]);
   const maxSeed = standings.length;
 
   return (
     <div className="p-4 space-y-4">
-      <PlayInBracket standings={standings} settings={settings} playInGames={playInGames} teamsById={teamsById} onStart={onStartPlayIn} onClear={onClearPlayIn} onOpenTeam={onOpenTeam} />
-      <BracketView standings={seededStandings} settings={settings} playoffGames={playoffGames} teamsById={teamsById} onStart={onStartPlayoffs} onClear={onClearPlayoffs} onOpenTeam={onOpenTeam} h2hMatrix={h2hMatrix} />
+      <div className="flex items-center justify-end gap-2">
+        <span className="text-[11px]" style={{ color: CHALK_DIM }}>Odds view (just for you):</span>
+        <div className="flex rounded overflow-hidden border" style={{ borderColor: LINE }}>
+          {['percent', 'american'].map(m => (
+            <button key={m} onClick={() => setOddsFormat(m)} className="px-2.5 py-1 text-xs font-semibold capitalize" style={{ background: oddsFormat === m ? PRIMARY : 'transparent', color: oddsFormat === m ? INK : CHALK_DIM }}>{m}</button>
+          ))}
+        </div>
+      </div>
+      <PlayInBracket standings={standings} settings={settings} playInGames={playInGames} teamsById={teamsById} onStart={onStartPlayIn} onClear={onClearPlayIn} onOpenTeam={onOpenTeam} onOpenCompare={onOpenCompare} />
+      <BracketView standings={seededStandings} settings={settings} playoffGames={playoffGames} teamsById={teamsById} onStart={onStartPlayoffs} onClear={onClearPlayoffs} onOpenTeam={onOpenTeam} h2hMatrix={h2hMatrix} onOpenCompare={onOpenCompare} />
       {isLoggedIn && <FuturesPanel season={season} standings={standings} teamsById={teamsById} settings={settings} h2hMatrix={h2hMatrix} />}
 
       <Panel>
-        <SectionTitle right={<button onClick={runPlayoffSim} disabled={runningPlayoff || standings.length < 2} className="text-[11px] font-bold flex items-center gap-1 disabled:opacity-40" style={{ color: PRIMARY }}><RefreshCw size={13} className={runningPlayoff ? 'animate-spin' : ''} /> {runningPlayoff ? 'Simulating…' : 'Run playoff simulation'}</button>}>
+        <SectionTitle right={runningPlayoff && <span className="text-[11px] flex items-center gap-1" style={{ color: CHALK_DIM }}><RefreshCw size={13} className="animate-spin" /> Recalculating…</span>}>
           Playoff series odds
         </SectionTitle>
         {!playoffSim ? (
-          <p className="px-4 pb-4 text-sm" style={{ color: CHALK_DIM }}>
-            Simulates the full bracket many times — each round played out game-by-game as {(() => {
-              const rc = Math.max(1, Math.log2(nextPow2(Math.min(settings.playoffSpots, standings.length) || 1)));
-              const parts = [];
-              for (let r = 1; r <= rc; r++) parts.push(`${r === rc ? 'the final' : `round ${r}`} Bo${getSeriesLength(settings, r)}`);
-              return parts.join(', ');
-            })()}, using regular-season and head-to-head strength plus a home-field edge of {settings.homeFieldBoost || 0} points per game{playoffGames.length > 0 ? ', resuming from the real series in progress.' : '.'}
-          </p>
+          <p className="px-4 pb-4 text-sm" style={{ color: CHALK_DIM }}>Not enough teams yet to simulate a bracket.</p>
         ) : (
           <div className="overflow-x-auto px-2 pb-4">
             <table className="text-sm" style={{ color: CHALK, minWidth: '100%' }}>
@@ -4331,10 +4401,10 @@ function OddsView({ season, teamsById, standings, settings, onOpenTeam, h2hMatri
       )}
 
       <Panel>
-        <SectionTitle right={<button onClick={runSim} disabled={running || standings.length < 2} className="text-[11px] font-bold flex items-center gap-1 disabled:opacity-40" style={{ color: PRIMARY }}><RefreshCw size={13} className={running ? 'animate-spin' : ''} /> {running ? 'Simulating…' : 'Run simulation'}</button>}>
+        <SectionTitle right={running && <span className="text-[11px] flex items-center gap-1" style={{ color: CHALK_DIM }}><RefreshCw size={13} className="animate-spin" /> Recalculating…</span>}>
           Playoff odds ({settings.playoffSpots} spot{settings.playoffSpots === 1 ? '' : 's'}, {settings.simRuns.toLocaleString()} runs)
         </SectionTitle>
-        {!sim ? <p className="px-4 pb-4 text-sm" style={{ color: CHALK_DIM }}>Run the simulation to project the {remaining.length} remaining games repeatedly, factoring in overall record, run differential, recent form, roster strength, and head-to-head history.</p> : (
+        {!sim ? <p className="px-4 pb-4 text-sm" style={{ color: CHALK_DIM }}>Not enough teams yet to simulate.</p> : (
           <div className="px-4 pb-4">
             <ResponsiveContainer width="100%" height={Math.max(160, standings.length * 34)}>
               <BarChart data={standings.map(t => ({ name: t.displayName, pct: sim[t.id] ? Number(sim[t.id].playoffPct.toFixed(decimals)) : 0, id: t.id }))} layout="vertical" margin={{ left: 8, right: 24 }}>
@@ -4623,20 +4693,6 @@ function ExtrasView({ extras, teamsById, leagueRecords, activityLog, season, sta
           <p className="px-4 pb-4 text-[11px]" style={{ color: CHALK_DIM }}>Based on final standings rank, not the rank at the time the game was actually played.</p>
         </Panel>
       )}
-      {extras.rivalries && extras.rivalries.length > 0 && (
-        <Panel className="overflow-hidden" style={{ borderColor: GOLD }}>
-          <SectionTitle accent={GOLD}>Rivalry index</SectionTitle>
-          <div className="px-2 pb-2">
-            {extras.rivalries.map((r, i) => (
-              <div key={i} className="flex items-center justify-between gap-2 px-2 py-2 text-sm" style={{ borderBottom: `1px solid ${LINE}` }}>
-                <span style={{ color: CHALK }}>{r.nameA} vs {r.nameB}</span>
-                <span className="font-mono text-xs" style={{ color: CHALK_DIM }}>{r.winsA}-{r.winsB} ({r.count} games)</span>
-              </div>
-            ))}
-          </div>
-          <p className="px-4 pb-4 text-[11px]" style={{ color: CHALK_DIM }}>Ranked by how even the head-to-head series is — the closer to a 50/50 split (with more meetings breaking ties), the bigger the rivalry.</p>
-        </Panel>
-      )}
       {extras.closest.length > 0 && (
         <Panel className="overflow-hidden" style={{ borderColor: GOLD }}>
           <SectionTitle accent={GOLD}>Nail-biters (1-run or tied)</SectionTitle>
@@ -4686,9 +4742,24 @@ function ExtrasView({ extras, teamsById, leagueRecords, activityLog, season, sta
         <Panel className="overflow-hidden" style={{ borderColor: GOLD }}>
           <SectionTitle accent={GOLD}>Recent activity</SectionTitle>
           <div className="px-2 pb-2 max-h-64 overflow-y-auto">
-            {activityLog.slice().reverse().slice(0, 20).map(a => (
-              <div key={a.id} className="px-2 py-2 text-sm" style={{ borderTop: `1px solid ${LINE}`, color: CHALK }}>{a.text}</div>
-            ))}
+            {activityLog.slice().reverse().slice(0, 20).map(a => {
+              const team = a.teamId ? teamsById[a.teamId] : null;
+              const toTeam = a.toTeamId ? teamsById[a.toTeamId] : null;
+              const icon = a.type === 'suspend' ? <AlertTriangle size={13} style={{ color: NEGATIVE, flexShrink: 0 }} />
+                : a.type === 'unsuspend' ? <Check size={13} style={{ color: WIN, flexShrink: 0 }} />
+                : a.type === 'add' ? <Plus size={13} style={{ color: WIN, flexShrink: 0 }} />
+                : a.type === 'remove' ? <Trash2 size={13} style={{ color: NEGATIVE, flexShrink: 0 }} />
+                : a.type === 'trade' ? <RefreshCw size={13} style={{ color: PRIMARY, flexShrink: 0 }} />
+                : null;
+              return (
+                <div key={a.id} className="flex items-center gap-2 px-2 py-2 text-sm" style={{ borderTop: `1px solid ${LINE}`, color: CHALK }}>
+                  {icon}
+                  {team && <TeamMark team={team} size={16} />}
+                  {toTeam && <><span style={{ color: CHALK_DIM }}>→</span><TeamMark team={toTeam} size={16} /></>}
+                  <span className="flex-1 min-w-0">{a.text}</span>
+                </div>
+              );
+            })}
           </div>
         </Panel>
       )}
@@ -4967,9 +5038,10 @@ function App() {
   const [league, setLeague] = useState(null);
   const [tab, setTab] = useState('home');
   const [prevTab, setPrevTab] = useState('home');
-  useEffect(() => { if (tab === 'teams' && !isLoggedIn) setTab('home'); }, [tab, isLoggedIn]);
+  useEffect(() => { if ((tab === 'teams' || tab === 'roster') && !isLoggedIn) setTab('home'); }, [tab, isLoggedIn]);
   const [selectedTeamId, setSelectedTeamId] = useState(null);
   const [compareInitialId, setCompareInitialId] = useState(null);
+  const [compareSecondId, setCompareSecondId] = useState(null);
   const [historyBack, setHistoryBack] = useState('leagues');
   const [historyTeamId, setHistoryTeamId] = useState(null);
   const [historyData, setHistoryData] = useState([]);
@@ -4979,6 +5051,21 @@ function App() {
   const [loadError, setLoadError] = useState(null);
   const [saveStatus, setSaveStatus] = useState('idle');
   const [theme, setTheme] = useState(DEFAULT_THEME);
+  // Per-visitor local light/dark override — never written to the shared
+  // backend, just this browser's localStorage. null means "use the site's
+  // theme as the admin set it."
+  const [localThemeMode, setLocalThemeModeState] = useState(null);
+  useEffect(() => {
+    try {
+      const saved = localStorage.getItem('lt-theme-mode');
+      if (saved === 'dark' || saved === 'light') setLocalThemeModeState(saved);
+    } catch (e) { /* localStorage unavailable */ }
+  }, []);
+  const setLocalThemeMode = useCallback((mode) => {
+    setLocalThemeModeState(mode);
+    try { if (mode) localStorage.setItem('lt-theme-mode', mode); else localStorage.removeItem('lt-theme-mode'); } catch (e) { /* ignore */ }
+  }, []);
+  const effectiveTheme = localThemeMode ? THEME_PRESETS[localThemeMode] : theme;
 
   useEffect(() => {
     (async () => {
@@ -4988,14 +5075,14 @@ function App() {
   }, []);
   useEffect(() => {
     const root = document.documentElement;
-    root.style.setProperty('--lt-chalk', theme.chalk || DEFAULT_THEME.chalk);
-    root.style.setProperty('--lt-chalk-dim', theme.chalkDim || DEFAULT_THEME.chalkDim);
-    root.style.setProperty('--lt-primary', theme.primary || DEFAULT_THEME.primary);
-    root.style.setProperty('--lt-ink', theme.ink || DEFAULT_THEME.ink);
-    root.style.setProperty('--lt-panel', theme.panel || DEFAULT_THEME.panel);
-    root.style.setProperty('--lt-panel2', theme.panel2 || DEFAULT_THEME.panel2);
-    root.style.setProperty('--lt-line', theme.line || DEFAULT_THEME.line);
-  }, [theme]);
+    root.style.setProperty('--lt-chalk', effectiveTheme.chalk || DEFAULT_THEME.chalk);
+    root.style.setProperty('--lt-chalk-dim', effectiveTheme.chalkDim || DEFAULT_THEME.chalkDim);
+    root.style.setProperty('--lt-primary', effectiveTheme.primary || DEFAULT_THEME.primary);
+    root.style.setProperty('--lt-ink', effectiveTheme.ink || DEFAULT_THEME.ink);
+    root.style.setProperty('--lt-panel', effectiveTheme.panel || DEFAULT_THEME.panel);
+    root.style.setProperty('--lt-panel2', effectiveTheme.panel2 || DEFAULT_THEME.panel2);
+    root.style.setProperty('--lt-line', effectiveTheme.line || DEFAULT_THEME.line);
+  }, [effectiveTheme]);
   const saveTheme = (next) => { setTheme(next); saveObj('theme', next); };
 
   const leagueRef = useRef(null);
@@ -5273,13 +5360,36 @@ function App() {
     });
     persistLeague({ ...league, seasons });
   };
-  const addPlayer = (teamId, name, starLevel) => updateMemberRoster(teamId, roster => [...roster, newPlayer(name, starLevel)]);
+  const logActivity = (entry) => {
+    if (!league || !activeSeason) return;
+    const logEntry = { id: uid('act'), at: Date.now(), ...entry };
+    const seasons = league.seasons.map(s => s.id === activeSeason.id ? { ...s, activityLog: [...(s.activityLog || []), logEntry] } : s);
+    persistLeague({ ...league, seasons });
+  };
+  const addPlayer = (teamId, name, starLevel) => {
+    updateMemberRoster(teamId, roster => [...roster, newPlayer(name, starLevel)]);
+    logActivity({ type: 'add', teamId, text: `${name} added to ${(teamsById[teamId] && teamsById[teamId].name) || 'a team'}` });
+  };
   const addPlayersBulk = (teamId, parsedRows) => updateMemberRoster(teamId, roster => [
     ...roster,
     ...parsedRows.filter(r => r.matched).map(r => ({ ...newPlayer(r.name, r.starLevel), number: r.number, position: r.position })),
   ]);
   const updatePlayerField = (teamId, playerId, field, value) => updateMemberRoster(teamId, roster => roster.map(p => p.id === playerId ? { ...p, [field]: value } : p));
-  const removePlayer = (teamId, playerId) => updateMemberRoster(teamId, roster => roster.filter(p => p.id !== playerId));
+  const removePlayer = (teamId, playerId) => {
+    const player = ((activeSeason && activeSeason.members.find(m => m.teamId === teamId)) || {}).roster?.find(p => p.id === playerId);
+    updateMemberRoster(teamId, roster => roster.filter(p => p.id !== playerId));
+    if (player) logActivity({ type: 'remove', teamId, text: `${player.name} removed from ${(teamsById[teamId] && teamsById[teamId].name) || 'a team'}` });
+  };
+  const setPlayerSuspended = (teamId, playerId, suspended, reason) => {
+    const player = ((activeSeason && activeSeason.members.find(m => m.teamId === teamId)) || {}).roster?.find(p => p.id === playerId);
+    updateMemberRoster(teamId, roster => roster.map(p => p.id === playerId ? { ...p, suspended, suspensionReason: suspended ? (reason || '') : '' } : p));
+    if (player) logActivity({
+      type: suspended ? 'suspend' : 'unsuspend', teamId,
+      text: suspended
+        ? `${player.name} (${(teamsById[teamId] && teamsById[teamId].name) || 'a team'}) suspended${reason ? ` — ${reason}` : ''}`
+        : `${player.name} (${(teamsById[teamId] && teamsById[teamId].name) || 'a team'}) suspension lifted`,
+    });
+  };
   const tradePlayer = (fromTeamId, toTeamId, playerId) => {
     if (!league || !activeSeason || fromTeamId === toTeamId) return;
     let movedPlayer = null;
@@ -5295,7 +5405,7 @@ function App() {
     const finalMembers = afterRemoval.map(m => m.teamId === toTeamId ? { ...m, roster: [...(m.roster || []), movedPlayer] } : m);
     const fromName = (teamsById[fromTeamId] && teamsById[fromTeamId].name) || 'a team';
     const toName = (teamsById[toTeamId] && teamsById[toTeamId].name) || 'a team';
-    const logEntry = { id: uid('act'), text: `${movedPlayer.name} traded from ${fromName} to ${toName}`, at: Date.now() };
+    const logEntry = { id: uid('act'), type: 'trade', teamId: fromTeamId, toTeamId, text: `${movedPlayer.name} traded from ${fromName} to ${toName}`, at: Date.now() };
     const seasons = league.seasons.map(s => s.id === activeSeason.id ? { ...s, members: finalMembers, activityLog: [...(s.activityLog || []), logEntry] } : s);
     persistLeague({ ...league, seasons });
   };
@@ -5574,8 +5684,8 @@ function App() {
   /* ---- navigation helpers ---- */
   const onOpenTeam = (teamId) => { setSelectedTeamId(teamId); setPrevTab(tab === 'team' || tab === 'compare' ? prevTab : tab); setTab('team'); };
   const backFromTeam = () => { setTab(prevTab); setSelectedTeamId(null); };
-  const onOpenCompare = (teamId) => { setCompareInitialId(teamId); setPrevTab(tab === 'team' || tab === 'compare' ? prevTab : tab); setTab('compare'); };
-  const backFromCompare = () => { setTab(prevTab); setCompareInitialId(null); };
+  const onOpenCompare = (teamId, teamBId) => { setCompareInitialId(teamId); setCompareSecondId(teamBId || null); setPrevTab(tab === 'team' || tab === 'compare' ? prevTab : tab); setTab('compare'); };
+  const backFromCompare = () => { setTab(prevTab); setCompareInitialId(null); setCompareSecondId(null); };
 
   /* ---- derived data ---- */
   const teamChampionshipCounts = useMemo(() => {
@@ -5647,11 +5757,13 @@ function App() {
     } else if (!activeSeasonPublic && !isLoggedIn) {
       body = <div className="p-4"><Panel><p className="px-4 py-8 text-sm text-center" style={{ color: CHALK_DIM }}>This season isn't public yet. Check back later, or log in if you're an admin.</p></Panel></div>;
     } else if (tab === 'home') {
-      body = <HomeView season={activeSeason} rounds={rounds} roundIdx={Math.min(roundIdx, Math.max(0, rounds.length - 1))} setRoundIdx={setRoundIdx} teamsById={teamsById} settings={activeSeason.settings} onOpenTeam={onOpenTeam} h2hMatrix={h2hMatrix} sport={sport} onStartPlayoffs={startPlayoffs} onClearPlayoffs={clearPlayoffs} onStartPlayIn={startPlayIn} onClearPlayIn={clearPlayIn} />;
+      body = <HomeView season={activeSeason} teamsById={teamsById} settings={activeSeason.settings} onOpenTeam={onOpenTeam} h2hMatrix={h2hMatrix} sport={sport} onStartPlayoffs={startPlayoffs} onClearPlayoffs={clearPlayoffs} onStartPlayIn={startPlayIn} onClearPlayIn={clearPlayIn} onOpenCompare={onOpenCompare} />;
     } else if (tab === 'standings') {
       body = <StandingsView standings={standings} updateMemberField={updateMemberField} season={activeSeason} settings={activeSeason.settings} movementById={movementById} onOpenTeam={onOpenTeam} />;
     } else if (tab === 'teams' && isLoggedIn) {
       body = <TeamsView season={activeSeason} teamsById={teamsById} teamsIndex={teamsIndex} addExistingTeam={addExistingTeamToSeason} createAndAddTeam={createAndAddTeamToSeason} updateMemberField={updateMemberField} updateGlobalTeamField={updateGlobalTeamField} removeMember={removeMember} onOpenTeam={onOpenTeam} importRosterSheet={importRosterSheet} addDivision={addDivision} updateDivision={updateDivision} removeDivision={removeDivision} assignMemberDivision={assignMemberDivision} />;
+    } else if (tab === 'roster' && isLoggedIn) {
+      body = <RosterManagementView season={activeSeason} teamsById={teamsById} updatePlayerField={updatePlayerField} removePlayer={removePlayer} addPlayer={addPlayer} addPlayersBulk={addPlayersBulk} tradePlayer={tradePlayer} setPlayerSuspended={setPlayerSuspended} />;
     } else if (tab === 'schedule') {
       body = <ScheduleView season={activeSeason} settings={activeSeason.settings} saveScore={saveScore} deleteGame={deleteGame} declareForfeit={declareForfeit} setWinnerOverride={setWinnerOverride} teamsById={teamsById} sport={sport} updateGameNotes={updateGameNotes} setGameOngoing={setGameOngoing} swapHomeAway={swapHomeAway} />;
     } else if (tab === 'stats') {
@@ -5659,7 +5771,7 @@ function App() {
     } else if (tab === 'awards') {
       body = <AwardsView league={league} season={activeSeason} standings={standings} teamsById={teamsById} addAwardDef={addAwardDef} updateAwardDef={updateAwardDef} removeAwardDef={removeAwardDef} setAwardWinner={setAwardWinner} clearAwardWinner={clearAwardWinner} />;
     } else if (tab === 'odds') {
-      body = <OddsView season={activeSeason} teamsById={teamsById} standings={standings} settings={activeSeason.settings} onOpenTeam={onOpenTeam} h2hMatrix={h2hMatrix} onStartPlayoffs={startPlayoffs} onClearPlayoffs={clearPlayoffs} onStartPlayIn={startPlayIn} onClearPlayIn={clearPlayIn} />;
+      body = <OddsView season={activeSeason} teamsById={teamsById} standings={standings} settings={activeSeason.settings} onOpenTeam={onOpenTeam} h2hMatrix={h2hMatrix} onStartPlayoffs={startPlayoffs} onClearPlayoffs={clearPlayoffs} onStartPlayIn={startPlayIn} onClearPlayIn={clearPlayIn} onOpenCompare={onOpenCompare} />;
     } else if (tab === 'extras') {
       body = <ExtrasView extras={extras} teamsById={teamsById} leagueRecords={leagueRecords} activityLog={activeSeason.activityLog || []} season={activeSeason} standings={standings} />;
     } else if (tab === 'graphs') {
@@ -5667,9 +5779,9 @@ function App() {
     } else if (tab === 'settings') {
       body = <SettingsView settings={activeSeason.settings} saveSettings={saveSettings} theme={theme} saveTheme={saveTheme} sport={sport} season={activeSeason} teamsById={teamsById} importGames={importGames} addManualGame={addManualGame} generateSchedule={generateSchedule} />;
     } else if (tab === 'team') {
-      body = <TeamPage season={activeSeason} settings={activeSeason.settings} team={selectedTeamMerged} standingsRow={selectedStandingsRow} teamsById={teamsById} h2hMatrix={h2hMatrix} championshipCount={selectedTeamId ? (teamChampionshipCounts[selectedTeamId] || 0) : 0} onBack={backFromTeam} onOpenGlobalHistory={(id) => openTeamHistory(id, 'league')} onOpenCompare={onOpenCompare} updatePlayerField={updatePlayerField} removePlayer={removePlayer} addPlayer={addPlayer} addPlayersBulk={addPlayersBulk} tradePlayer={tradePlayer} updateMemberField={updateMemberField} />;
+      body = <TeamPage season={activeSeason} settings={activeSeason.settings} team={selectedTeamMerged} standingsRow={selectedStandingsRow} teamsById={teamsById} h2hMatrix={h2hMatrix} championshipCount={selectedTeamId ? (teamChampionshipCounts[selectedTeamId] || 0) : 0} onBack={backFromTeam} onOpenGlobalHistory={(id) => openTeamHistory(id, 'league')} onOpenCompare={onOpenCompare} updatePlayerField={updatePlayerField} removePlayer={removePlayer} addPlayer={addPlayer} addPlayersBulk={addPlayersBulk} tradePlayer={tradePlayer} updateMemberField={updateMemberField} setPlayerSuspended={setPlayerSuspended} />;
     } else if (tab === 'compare') {
-      body = <ComparePage season={activeSeason} standingsAll={standingsResult.all} teamsById={teamsById} h2hMatrix={h2hMatrix} initialTeamId={compareInitialId} onBack={backFromCompare} onOpenTeam={onOpenTeam} />;
+      body = <ComparePage season={activeSeason} standingsAll={standingsResult.all} teamsById={teamsById} h2hMatrix={h2hMatrix} initialTeamId={compareInitialId} initialTeamBId={compareSecondId} onBack={backFromCompare} onOpenTeam={onOpenTeam} />;
     }
   }
 
@@ -5706,6 +5818,9 @@ function App() {
               </span>
             )
           )}
+          <button onClick={() => setLocalThemeMode((localThemeMode || 'dark') === 'dark' ? 'light' : 'dark')} title="Light / dark mode (just for you)" className="p-1.5 rounded flex-shrink-0" style={{ color: CHALK_DIM }}>
+            {(localThemeMode || 'dark') === 'dark' ? <Moon size={16} /> : <Sun size={16} />}
+          </button>
           <LoginControl chalk={CHALK} chalkDim={CHALK_DIM} primary={PRIMARY} ink={INK} panel={PANEL} panel2={PANEL2} line={LINE} />
         </div>
       </header>
@@ -5717,6 +5832,7 @@ function App() {
           <TabBtn active={tab === 'home'} onClick={() => setTab('home')} icon={HomeIcon} label="Home" />
           <TabBtn active={tab === 'standings'} onClick={() => setTab('standings')} icon={Trophy} label="Standings" />
           {isLoggedIn && <TabBtn active={tab === 'teams'} onClick={() => setTab('teams')} icon={Users} label="Teams" />}
+          {isLoggedIn && <TabBtn active={tab === 'roster'} onClick={() => setTab('roster')} icon={ClipboardList} label="Roster" />}
           <TabBtn active={tab === 'schedule'} onClick={() => setTab('schedule')} icon={Calendar} label="Schedule" />
           <TabBtn active={tab === 'stats'} onClick={() => setTab('stats')} icon={Activity} label="Stats" />
           <TabBtn active={tab === 'awards'} onClick={() => setTab('awards')} icon={AwardIcon} label="Awards" />
