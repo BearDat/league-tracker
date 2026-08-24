@@ -1,0 +1,15 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+html,
+body {
+  margin: 0;
+  padding: 0;
+  background: var(--lt-ink, #080b11);
+  color: var(--lt-chalk, #f3f5fa);
+}
+
+* {
+  box-sizing: border-box;
+}
