@@ -3316,6 +3316,173 @@ function matchRosterPlayer(name, roster) {
   return hit ? hit.id : '';
 }
 
+/* ==================================================================== */
+/* Player career stats                                                   */
+/* ==================================================================== */
+
+// Baseball box-score IP notation: the digits after the decimal point are
+// OUTS (0, 1, or 2), not tenths — "5.2" means 5 innings + 2 outs.
+function ipDisplayToOuts(ip) {
+  const n = Number(ip) || 0;
+  const whole = Math.trunc(n);
+  const frac = Math.round((n - whole) * 10);
+  return whole * 3 + Math.min(2, Math.max(0, frac));
+}
+function outsToIpDisplay(outs) {
+  const o = Math.max(0, Math.round(outs));
+  return `${Math.floor(o / 3)}.${o % 3}`;
+}
+
+// A "career" spans season-roster entries that each get their own internal
+// id (see addPlayer) — there's no persistent player identity in the data
+// model, so the only stable thread to pull a player's whole history
+// together is their name (their Roblox username, which the stat-import
+// flow also matches against). Returns every season/team this name appears
+// on, plus every per-game stat line saved against any of those entries.
+function getPlayerCareerData(league, playerName) {
+  const norm = (s) => (s || '').trim().toLowerCase();
+  const target = norm(playerName);
+  const seasonsInfo = [];
+  (league.seasons || []).forEach(season => {
+    (season.members || []).forEach(member => {
+      (member.roster || []).forEach(p => {
+        if (norm(p.name) === target) seasonsInfo.push({ season, teamId: member.teamId, playerId: p.id, player: p });
+      });
+    });
+  });
+  const gameLog = [];
+  seasonsInfo.forEach(info => {
+    (info.season.games || []).forEach(g => {
+      if (g.isBye) return;
+      ['home', 'away'].forEach(side => {
+        const rows = (g.playerStats && g.playerStats[side]) || [];
+        const row = rows.find(r => r.playerId === info.playerId);
+        if (!row) return;
+        gameLog.push({
+          seasonId: info.season.id, seasonName: info.season.name, teamId: info.teamId,
+          oppTeamId: side === 'home' ? g.awayTeamId : g.homeTeamId, side,
+          gameId: g.id, date: g.date, isPlayoff: !!g.isPlayoff, isPlayIn: !!g.isPlayIn,
+          ab: Number(row.ab) || 0, r: Number(row.r) || 0, h: Number(row.h) || 0, rbi: Number(row.rbi) || 0,
+          bb: Number(row.bb) || 0, so: Number(row.so) || 0, ip: Number(row.ip) || 0, ha: Number(row.ha) || 0,
+          er: Number(row.er) || 0, bbAllowed: Number(row.bbAllowed) || 0, k: Number(row.k) || 0,
+          hrAllowed: Number(row.hrAllowed) || 0, e: Number(row.e) || 0, hr: Number(row.hr) || 0,
+        });
+      });
+    });
+  });
+  gameLog.sort((a, b) => (a.date || '').localeCompare(b.date || ''));
+  return { seasonsInfo, gameLog };
+}
+
+function sumPlayerTotals(gameLog) {
+  const t = { g: gameLog.length, ab: 0, r: 0, h: 0, rbi: 0, bb: 0, so: 0, outs: 0, ha: 0, er: 0, bbAllowed: 0, k: 0, hrAllowed: 0, e: 0, hr: 0 };
+  gameLog.forEach(row => {
+    t.ab += row.ab; t.r += row.r; t.h += row.h; t.rbi += row.rbi; t.bb += row.bb; t.so += row.so;
+    t.outs += ipDisplayToOuts(row.ip); t.ha += row.ha; t.er += row.er; t.bbAllowed += row.bbAllowed;
+    t.k += row.k; t.hrAllowed += row.hrAllowed; t.e += row.e; t.hr += row.hr;
+  });
+  return t;
+}
+
+// SLG/OPS need total bases, but the stat screen only gives us hits + home
+// runs (no 2B/3B breakdown) — every non-HR hit is treated as a single, the
+// standard simplification when extra-base-hit detail isn't tracked.
+function computeBattingAdvanced(t) {
+  const avg = t.ab > 0 ? t.h / t.ab : 0;
+  const obpDenom = t.ab + t.bb;
+  const obp = obpDenom > 0 ? (t.h + t.bb) / obpDenom : 0;
+  const totalBases = (t.h - t.hr) * 1 + t.hr * 4;
+  const slg = t.ab > 0 ? totalBases / t.ab : 0;
+  return { avg, obp, slg, ops: obp + slg, iso: slg - avg };
+}
+function computePitchingAdvanced(t) {
+  const era = t.outs > 0 ? (t.er * 27) / t.outs : 0;
+  const whip = t.outs > 0 ? ((t.ha + t.bbAllowed) * 3) / t.outs : 0;
+  const k9 = t.outs > 0 ? (t.k * 27) / t.outs : 0;
+  const bb9 = t.outs > 0 ? (t.bbAllowed * 27) / t.outs : 0;
+  return { ip: t.outs / 3, era, whip, k9, bb9, kbb: t.bbAllowed > 0 ? t.k / t.bbAllowed : (t.k > 0 ? Infinity : 0) };
+}
+
+const PLAYER_HIGH_FIELDS = [
+  { key: 'h', label: 'Hits' }, { key: 'r', label: 'Runs' }, { key: 'rbi', label: 'RBI' },
+  { key: 'hr', label: 'Home Runs' }, { key: 'bb', label: 'Walks' }, { key: 'k', label: 'Strikeouts (pitching)' },
+];
+function computePlayerGameHighs(gameLog) {
+  return PLAYER_HIGH_FIELDS.map(f => {
+    let best = null;
+    gameLog.forEach(row => { if (!best || row[f.key] > best[f.key]) best = row; });
+    return { ...f, value: best ? best[f.key] : 0, row: best && best[f.key] > 0 ? best : null };
+  }).filter(x => x.row);
+}
+
+// A rough single-game "game score" blending batting and pitching production
+// into one number, purely to rank a player's own games against each other —
+// not a real sabermetric formula, just enough signal to surface standout
+// performances without a human curating them one by one.
+function playerGameScore(row) {
+  const outs = ipDisplayToOuts(row.ip);
+  const batting = row.h * 1 + row.hr * 3 + row.rbi * 1 + row.r * 0.5 + row.bb * 0.3 - row.so * 0.3;
+  const pitching = row.k * 1 + (outs / 3) * 1 - row.er * 1.5 - row.ha * 0.3 - row.bbAllowed * 0.3;
+  return batting + pitching;
+}
+function computePlayerNotableGames(gameLog) {
+  const notes = [];
+  gameLog.forEach(row => {
+    const tags = [];
+    if (row.hr >= 2) tags.push(`${row.hr}-homer game`);
+    if (row.h >= 4) tags.push(`${row.h}-hit game`);
+    if (row.rbi >= 4) tags.push(`${row.rbi}-RBI game`);
+    const outs = ipDisplayToOuts(row.ip);
+    if (outs >= 15 && row.er === 0) tags.push(`${outsToIpDisplay(outs)} IP shutout`);
+    if (row.k >= 8) tags.push(`${row.k}-strikeout outing`);
+    if (tags.length > 0) notes.push({ row, tags });
+  });
+  return notes;
+}
+
+// Distinct player names across every season/team in the league — the pool
+// a player-compare picker draws from.
+function getAllPlayerNames(league) {
+  const seen = new Set();
+  (league.seasons || []).forEach(season => {
+    (season.members || []).forEach(member => {
+      (member.roster || []).forEach(p => { if (p.name && p.name.trim()) seen.add(p.name.trim()); });
+    });
+  });
+  return [...seen].sort((a, b) => a.localeCompare(b));
+}
+
+// Per-visitor Roblox avatar lookup via the /api/roblox-avatar proxy route
+// (Roblox's own APIs don't send CORS headers for browser callers). Cached
+// in sessionStorage per username so navigating around doesn't re-fetch.
+function useRobloxAvatar(username) {
+  const [state, setState] = useState({ url: null, loading: true });
+  useEffect(() => {
+    if (!username) { setState({ url: null, loading: false }); return; }
+    let cancelled = false;
+    const cacheKey = `lt-rbx-avatar:${username.trim().toLowerCase()}`;
+    try {
+      const cached = sessionStorage.getItem(cacheKey);
+      if (cached !== null) { setState({ url: cached === 'null' ? null : cached, loading: false }); return; }
+    } catch (e) { /* sessionStorage unavailable */ }
+    setState({ url: null, loading: true });
+    fetch(`/api/roblox-avatar?username=${encodeURIComponent(username)}`)
+      .then(r => (r.ok ? r.json() : Promise.reject()))
+      .then(data => {
+        if (cancelled) return;
+        setState({ url: data.avatarUrl, loading: false });
+        try { sessionStorage.setItem(cacheKey, data.avatarUrl); } catch (e) { /* ignore */ }
+      })
+      .catch(() => {
+        if (cancelled) return;
+        setState({ url: null, loading: false });
+        try { sessionStorage.setItem(cacheKey, 'null'); } catch (e) { /* ignore */ }
+      });
+    return () => { cancelled = true; };
+  }, [username]);
+  return state;
+}
+
 // Drag-to-select crop tool: draws a selection box over the uploaded image and
 // hands back a canvas cropped (and scaled to the image's real resolution) to
 // just that region, so OCR only has to read the stats table itself.
@@ -4077,7 +4244,7 @@ function StarLevelEditor({ value, onChange, disabled = false }) {
   );
 }
 
-function RosterPanel({ member, color, updatePlayerField, removePlayer, addPlayer, addPlayersBulk, teamOptions, onTrade, onSuspend }) {
+function RosterPanel({ member, color, updatePlayerField, removePlayer, addPlayer, addPlayersBulk, teamOptions, onTrade, onSuspend, onOpenPlayer }) {
   const { isLoggedIn } = useAuth();
   const [name, setName] = useState('');
   const [starLevel, setStarLevel] = useState(null);
@@ -4130,6 +4297,7 @@ function RosterPanel({ member, color, updatePlayerField, removePlayer, addPlayer
                   {p.number && <span className="text-xs font-mono flex-shrink-0" style={{ color: CHALK_DIM }}>#{p.number}</span>}
                   {p.suspended && <span className="text-[9px] uppercase font-bold px-1.5 py-0.5 rounded flex-shrink-0" style={{ background: `${NEGATIVE}22`, color: NEGATIVE }}>Suspended</span>}
                 </button>
+                {onOpenPlayer && <button onClick={() => onOpenPlayer(p.name)} className="text-[10px] font-semibold uppercase flex-shrink-0" style={{ color }}>Profile</button>}
                 <StarLevelEditor value={p.starLevel} onChange={v => updatePlayerField(p.id, 'starLevel', v)} disabled={!isLoggedIn} />
                 <button onClick={() => setExpandedId(isOpen ? null : p.id)} className="p-1 flex-shrink-0" style={{ color: CHALK_DIM }}><ChevronRight size={14} style={{ transform: isOpen ? 'rotate(90deg)' : 'none', transition: 'transform 0.15s' }} /></button>
               </div>
@@ -4185,7 +4353,7 @@ function RosterPanel({ member, color, updatePlayerField, removePlayer, addPlayer
 // Admin-only aggregate roster view: every team's roster (create/remove/trade/
 // suspend) in one place, so managing the league doesn't require opening each
 // team's page individually. Reuses RosterPanel per-team, same as TeamPage.
-function RosterManagementView({ season, teamsById, updatePlayerField, removePlayer, addPlayer, addPlayersBulk, tradePlayer, setPlayerSuspended }) {
+function RosterManagementView({ season, teamsById, updatePlayerField, removePlayer, addPlayer, addPlayersBulk, tradePlayer, setPlayerSuspended, onOpenPlayer }) {
   const [openTeamId, setOpenTeamId] = useState(null);
   return (
     <div className="p-4 space-y-3">
@@ -4219,6 +4387,7 @@ function RosterManagementView({ season, teamsById, updatePlayerField, removePlay
                   teamOptions={season.members.filter(mm => mm.teamId !== m.teamId).map(mm => ({ id: mm.teamId, name: (teamsById[mm.teamId] && teamsById[mm.teamId].name) || mm.scheduleName || 'Unknown team' }))}
                   onTrade={(toTeamId, playerId) => tradePlayer(m.teamId, toTeamId, playerId)}
                   onSuspend={(pid, susp, reason) => setPlayerSuspended(m.teamId, pid, susp, reason)}
+                  onOpenPlayer={onOpenPlayer}
                 />
               </div>
             )}
@@ -4229,7 +4398,7 @@ function RosterManagementView({ season, teamsById, updatePlayerField, removePlay
   );
 }
 
-function TeamPage({ season, settings, team, standingsRow, teamsById, h2hMatrix, championshipCount, onBack, onOpenGlobalHistory, onOpenCompare, updatePlayerField, removePlayer, addPlayer, addPlayersBulk, tradePlayer, updateMemberField, setPlayerSuspended }) {
+function TeamPage({ season, settings, team, standingsRow, teamsById, h2hMatrix, championshipCount, onBack, onOpenGlobalHistory, onOpenCompare, updatePlayerField, removePlayer, addPlayer, addPlayersBulk, tradePlayer, updateMemberField, setPlayerSuspended, onOpenPlayer }) {
   const { isLoggedIn } = useAuth();
   if (!team) return <div className="p-4"><button onClick={onBack} className="flex items-center gap-1 text-sm mb-3" style={{ color: CHALK_DIM }}><ArrowLeft size={14} /> Back</button><Panel><p className="px-4 py-8 text-sm text-center" style={{ color: CHALK_DIM }}>That team could not be found.</p></Panel></div>;
   const color = teamColor(team);
@@ -4391,7 +4560,7 @@ function TeamPage({ season, settings, team, standingsRow, teamsById, h2hMatrix, 
         </>
       )}
 
-      <RosterPanel member={member} color={color} updatePlayerField={(pid, f, v) => updatePlayerField(team.id, pid, f, v)} removePlayer={(pid) => removePlayer(team.id, pid)} addPlayer={(n, s) => addPlayer(team.id, n, s)} addPlayersBulk={(rows) => addPlayersBulk(team.id, rows)} teamOptions={season.members.filter(m => m.teamId !== team.id).map(m => ({ id: m.teamId, name: (teamsById[m.teamId] && teamsById[m.teamId].name) || m.scheduleName || 'Unknown team' }))} onTrade={(toTeamId, playerId) => tradePlayer(team.id, toTeamId, playerId)} onSuspend={(pid, susp, reason) => setPlayerSuspended(team.id, pid, susp, reason)} />
+      <RosterPanel member={member} color={color} updatePlayerField={(pid, f, v) => updatePlayerField(team.id, pid, f, v)} removePlayer={(pid) => removePlayer(team.id, pid)} addPlayer={(n, s) => addPlayer(team.id, n, s)} addPlayersBulk={(rows) => addPlayersBulk(team.id, rows)} teamOptions={season.members.filter(m => m.teamId !== team.id).map(m => ({ id: m.teamId, name: (teamsById[m.teamId] && teamsById[m.teamId].name) || m.scheduleName || 'Unknown team' }))} onTrade={(toTeamId, playerId) => tradePlayer(team.id, toTeamId, playerId)} onSuspend={(pid, susp, reason) => setPlayerSuspended(team.id, pid, susp, reason)} onOpenPlayer={onOpenPlayer} />
 
       <Panel className="overflow-hidden" style={{ borderColor: color }}>
         <SectionTitle accent={color}>Head-to-head</SectionTitle>
@@ -4508,6 +4677,339 @@ function ComparePage({ season, standingsAll, teamsById, h2hMatrix, initialTeamId
           </Panel>
         </>
       )}
+    </div>
+  );
+}
+
+/* ==================================================================== */
+/* Player career page                                                    */
+/* ==================================================================== */
+function PlayerPage({ league, teamsById, playerName, onBack, onOpenTeam, onOpenPlayerCompare }) {
+  const { seasonsInfo, gameLog } = useMemo(() => getPlayerCareerData(league, playerName), [league, playerName]);
+  const avatar = useRobloxAvatar(playerName);
+
+  if (seasonsInfo.length === 0) {
+    return (
+      <div className="p-4">
+        <button onClick={onBack} className="flex items-center gap-1 text-sm mb-3" style={{ color: CHALK_DIM }}><ArrowLeft size={14} /> Back</button>
+        <Panel><p className="px-4 py-8 text-sm text-center" style={{ color: CHALK_DIM }}>That player could not be found.</p></Panel>
+      </div>
+    );
+  }
+
+  const totals = sumPlayerTotals(gameLog);
+  const batting = computeBattingAdvanced(totals);
+  const pitching = computePitchingAdvanced(totals);
+  const hasBatting = totals.ab > 0;
+  const hasPitching = totals.outs > 0;
+  const latest = seasonsInfo[seasonsInfo.length - 1];
+  const latestTeam = teamsById[latest.teamId];
+  const color = latestTeam ? teamColor(latestTeam) : PRIMARY;
+  const highs = computePlayerGameHighs(gameLog);
+  const notable = computePlayerNotableGames(gameLog);
+  const topPerformances = [...gameLog].map(row => ({ row, score: playerGameScore(row) })).sort((a, b) => b.score - a.score).slice(0, 5);
+  const recentGames = [...gameLog].slice(-10).reverse();
+  const trendData = (() => {
+    if (hasBatting) {
+      let cumH = 0, cumAB = 0;
+      return gameLog.map((row, i) => { cumH += row.h; cumAB += row.ab; return { i: i + 1, value: cumAB > 0 ? cumH / cumAB : 0 }; });
+    }
+    let cumER = 0, cumOuts = 0;
+    return gameLog.map((row, i) => { cumER += row.er; cumOuts += ipDisplayToOuts(row.ip); return { i: i + 1, value: cumOuts > 0 ? (cumER * 27) / cumOuts : 0 }; });
+  })();
+
+  const awards = [];
+  seasonsInfo.forEach(info => {
+    const winners = info.season.awardWinners || {};
+    Object.entries(winners).forEach(([awardId, w]) => {
+      if (w && w.type === 'player' && w.playerId === info.playerId) {
+        const def = (league.awardDefs || []).find(a => a.id === awardId);
+        if (def) awards.push({ name: def.name, seasonName: info.season.name });
+      }
+    });
+  });
+
+  const GameRef = ({ row }) => {
+    const opp = teamsById[row.oppTeamId];
+    return <span className="text-xs flex-shrink-0" style={{ color: CHALK_DIM }}>{row.date ? `${row.date} · ` : ''}{opp ? `vs ${opp.name}` : ''}{row.isPlayoff ? ' (Playoffs)' : ''}</span>;
+  };
+
+  return (
+    <div className="p-4 space-y-4">
+      <button onClick={onBack} className="flex items-center gap-1 text-sm" style={{ color: CHALK_DIM }}><ArrowLeft size={14} /> Back</button>
+
+      <Panel className="overflow-hidden" style={{ borderColor: color }}>
+        <div className="p-4 flex items-center gap-4">
+          <div className="w-16 h-16 rounded-full overflow-hidden flex-shrink-0 flex items-center justify-center" style={{ background: PANEL2, border: `2px solid ${color}` }}>
+            {avatar.loading ? (
+              <RefreshCw size={20} className="animate-spin" style={{ color: CHALK_DIM }} />
+            ) : avatar.url ? (
+              <img src={avatar.url} alt="" className="w-full h-full object-cover" />
+            ) : (
+              <Users size={28} style={{ color: CHALK_DIM }} />
+            )}
+          </div>
+          <div className="flex-1 min-w-0">
+            <h2 className="text-xl font-black truncate" style={{ color: CHALK }}>{playerName}</h2>
+            <div className="flex items-center gap-2 mt-1 flex-wrap">
+              {latestTeam && <button onClick={() => onOpenTeam(latest.teamId)} className="flex items-center gap-1.5 text-sm font-semibold" style={{ color }}><TeamMark team={latestTeam} size={16} /> {latestTeam.name}</button>}
+              {latest.player.number && <span className="text-xs font-mono" style={{ color: CHALK_DIM }}>#{latest.player.number}</span>}
+              {latest.player.position && <span className="text-xs" style={{ color: CHALK_DIM }}>{latest.player.position}</span>}
+            </div>
+          </div>
+          <button onClick={() => onOpenPlayerCompare(playerName)} className="flex items-center gap-1 text-xs font-semibold flex-shrink-0" style={{ color }}><BarChart3 size={13} /> Compare</button>
+        </div>
+      </Panel>
+
+      <Panel>
+        <SectionTitle>Teams played on</SectionTitle>
+        <div className="px-2 pb-2">
+          {seasonsInfo.map((info, i) => {
+            const t = teamsById[info.teamId];
+            return (
+              <button key={i} onClick={() => onOpenTeam(info.teamId)} className="w-full flex items-center gap-2 px-2 py-2 text-left" style={{ borderTop: i > 0 ? `1px solid ${LINE}` : 'none' }}>
+                {t && <TeamMark team={t} size={18} />}
+                <span className="flex-1 text-sm font-semibold truncate" style={{ color: CHALK }}>{t ? t.name : 'Unknown team'}</span>
+                <span className="text-xs flex-shrink-0" style={{ color: CHALK_DIM }}>{info.season.name}</span>
+              </button>
+            );
+          })}
+        </div>
+      </Panel>
+
+      {gameLog.length === 0 ? (
+        <Panel><p className="px-4 py-8 text-sm text-center" style={{ color: CHALK_DIM }}>No stats imported for this player yet.</p></Panel>
+      ) : (
+        <>
+          {hasBatting && (
+            <Panel>
+              <SectionTitle accent={PRIMARY}>Career batting</SectionTitle>
+              <div className="overflow-x-auto px-2 pb-4">
+                <table className="w-full text-sm" style={{ color: CHALK }}>
+                  <thead><tr className="text-[10px] uppercase" style={{ color: CHALK_DIM }}>
+                    <th className="text-left px-2 py-1">G</th><th className="px-2 py-1">AB</th><th className="px-2 py-1">R</th><th className="px-2 py-1">H</th><th className="px-2 py-1">HR</th><th className="px-2 py-1">RBI</th><th className="px-2 py-1">BB</th><th className="px-2 py-1">SO</th><th className="px-2 py-1">AVG</th>
+                  </tr></thead>
+                  <tbody><tr>
+                    <td className="px-2 py-1.5 font-mono">{totals.g}</td>
+                    <td className="px-2 py-1.5 text-center font-mono">{totals.ab}</td>
+                    <td className="px-2 py-1.5 text-center font-mono">{totals.r}</td>
+                    <td className="px-2 py-1.5 text-center font-mono">{totals.h}</td>
+                    <td className="px-2 py-1.5 text-center font-mono">{totals.hr}</td>
+                    <td className="px-2 py-1.5 text-center font-mono">{totals.rbi}</td>
+                    <td className="px-2 py-1.5 text-center font-mono">{totals.bb}</td>
+                    <td className="px-2 py-1.5 text-center font-mono">{totals.so}</td>
+                    <td className="px-2 py-1.5 text-center font-mono font-bold" style={{ color: PRIMARY }}>{batting.avg.toFixed(3).replace(/^0/, '')}</td>
+                  </tr></tbody>
+                </table>
+              </div>
+            </Panel>
+          )}
+
+          {hasPitching && (
+            <Panel>
+              <SectionTitle accent={PRIMARY}>Career pitching</SectionTitle>
+              <div className="overflow-x-auto px-2 pb-4">
+                <table className="w-full text-sm" style={{ color: CHALK }}>
+                  <thead><tr className="text-[10px] uppercase" style={{ color: CHALK_DIM }}>
+                    <th className="text-left px-2 py-1">G</th><th className="px-2 py-1">IP</th><th className="px-2 py-1">HA</th><th className="px-2 py-1">ER</th><th className="px-2 py-1">BB</th><th className="px-2 py-1">K</th><th className="px-2 py-1">HR</th><th className="px-2 py-1">ERA</th>
+                  </tr></thead>
+                  <tbody><tr>
+                    <td className="px-2 py-1.5 font-mono">{totals.g}</td>
+                    <td className="px-2 py-1.5 text-center font-mono">{outsToIpDisplay(totals.outs)}</td>
+                    <td className="px-2 py-1.5 text-center font-mono">{totals.ha}</td>
+                    <td className="px-2 py-1.5 text-center font-mono">{totals.er}</td>
+                    <td className="px-2 py-1.5 text-center font-mono">{totals.bbAllowed}</td>
+                    <td className="px-2 py-1.5 text-center font-mono">{totals.k}</td>
+                    <td className="px-2 py-1.5 text-center font-mono">{totals.hrAllowed}</td>
+                    <td className="px-2 py-1.5 text-center font-mono font-bold" style={{ color: PRIMARY }}>{pitching.era.toFixed(2)}</td>
+                  </tr></tbody>
+                </table>
+              </div>
+            </Panel>
+          )}
+
+          <Panel>
+            <SectionTitle accent={GOLD}>Advanced stats</SectionTitle>
+            <div className="px-4 pb-4 grid grid-cols-2 sm:grid-cols-4 gap-3">
+              {hasBatting && <>
+                <StatBox label="OBP" value={batting.obp.toFixed(3).replace(/^0/, '')} />
+                <StatBox label="SLG" value={batting.slg.toFixed(3).replace(/^0/, '')} />
+                <StatBox label="OPS" value={batting.ops.toFixed(3).replace(/^0/, '')} color={GOLD} />
+                <StatBox label="ISO" value={batting.iso.toFixed(3).replace(/^0/, '')} />
+              </>}
+              {hasPitching && <>
+                <StatBox label="WHIP" value={pitching.whip.toFixed(2)} />
+                <StatBox label="K/9" value={pitching.k9.toFixed(1)} />
+                <StatBox label="BB/9" value={pitching.bb9.toFixed(1)} />
+                <StatBox label="K/BB" value={pitching.kbb === Infinity ? '∞' : pitching.kbb.toFixed(2)} />
+              </>}
+            </div>
+          </Panel>
+
+          {trendData.length >= 3 && (
+            <Panel>
+              <SectionTitle>{hasBatting ? 'AVG trend' : 'ERA trend'}</SectionTitle>
+              <div className="px-2 pb-4" style={{ height: 180 }}>
+                <ResponsiveContainer width="100%" height="100%">
+                  <LineChart data={trendData}>
+                    <CartesianGrid stroke={LINE} strokeDasharray="3 3" />
+                    <XAxis dataKey="i" stroke={CHALK_DIM} tick={{ fontSize: 10 }} />
+                    <YAxis stroke={CHALK_DIM} tick={{ fontSize: 10 }} domain={hasBatting ? [0, 1] : ['auto', 'auto']} />
+                    <Tooltip contentStyle={{ background: PANEL2, border: `1px solid ${LINE}`, fontSize: 12 }} formatter={(v) => hasBatting ? v.toFixed(3) : v.toFixed(2)} />
+                    <Line type="monotone" dataKey="value" stroke={PRIMARY} dot={false} strokeWidth={2} />
+                  </LineChart>
+                </ResponsiveContainer>
+              </div>
+            </Panel>
+          )}
+
+          {highs.length > 0 && (
+            <Panel>
+              <SectionTitle accent={GOLD}>Game highs</SectionTitle>
+              <div className="px-4 pb-4 space-y-2">
+                {highs.map(h => (
+                  <div key={h.key} className="flex items-center justify-between text-sm gap-2">
+                    <span style={{ color: CHALK_DIM }}>{h.label}</span>
+                    <span className="font-mono font-bold flex items-center gap-2" style={{ color: CHALK }}>{h.value} <GameRef row={h.row} /></span>
+                  </div>
+                ))}
+              </div>
+            </Panel>
+          )}
+
+          {notable.length > 0 && (
+            <Panel>
+              <SectionTitle accent={GOLD}>Notable games</SectionTitle>
+              <div className="px-4 pb-4 space-y-2">
+                {notable.map((n, i) => (
+                  <div key={i} className="flex items-center justify-between text-sm gap-2">
+                    <span className="font-semibold" style={{ color: CHALK }}>{n.tags.join(', ')}</span> <GameRef row={n.row} />
+                  </div>
+                ))}
+              </div>
+            </Panel>
+          )}
+
+          <Panel>
+            <SectionTitle accent={PRIMARY}>Top performances</SectionTitle>
+            <div className="px-2 pb-3">
+              {topPerformances.map((tp, i) => (
+                <div key={i} className="flex items-center justify-between px-2 py-2 text-sm gap-2" style={{ borderTop: i > 0 ? `1px solid ${LINE}` : 'none' }}>
+                  <span style={{ color: CHALK }}>{tp.row.h}H {tp.row.rbi}RBI{tp.row.hr ? ` ${tp.row.hr}HR` : ''}{ipDisplayToOuts(tp.row.ip) > 0 ? ` · ${tp.row.k}K ${outsToIpDisplay(ipDisplayToOuts(tp.row.ip))}IP` : ''}</span>
+                  <GameRef row={tp.row} />
+                </div>
+              ))}
+            </div>
+          </Panel>
+
+          <Panel>
+            <SectionTitle>Recent games</SectionTitle>
+            <div className="overflow-x-auto px-2 pb-4">
+              <table className="w-full text-xs" style={{ color: CHALK }}>
+                <thead><tr className="text-[10px] uppercase" style={{ color: CHALK_DIM }}>
+                  <th className="text-left px-2 py-1">Date</th><th className="text-left px-2 py-1">Opp</th><th className="px-2 py-1">AB</th><th className="px-2 py-1">H</th><th className="px-2 py-1">HR</th><th className="px-2 py-1">RBI</th><th className="px-2 py-1">IP</th><th className="px-2 py-1">K</th><th className="px-2 py-1">ER</th>
+                </tr></thead>
+                <tbody>
+                  {recentGames.map((row, i) => {
+                    const opp = teamsById[row.oppTeamId];
+                    return (
+                      <tr key={i} style={{ borderTop: `1px solid ${LINE}` }}>
+                        <td className="px-2 py-1.5 font-mono whitespace-nowrap">{row.date || '—'}</td>
+                        <td className="px-2 py-1.5 truncate">{opp ? opp.name : '—'}</td>
+                        <td className="px-2 py-1.5 text-center font-mono">{row.ab}</td>
+                        <td className="px-2 py-1.5 text-center font-mono">{row.h}</td>
+                        <td className="px-2 py-1.5 text-center font-mono">{row.hr}</td>
+                        <td className="px-2 py-1.5 text-center font-mono">{row.rbi}</td>
+                        <td className="px-2 py-1.5 text-center font-mono">{ipDisplayToOuts(row.ip) > 0 ? outsToIpDisplay(ipDisplayToOuts(row.ip)) : '—'}</td>
+                        <td className="px-2 py-1.5 text-center font-mono">{row.k}</td>
+                        <td className="px-2 py-1.5 text-center font-mono">{row.er}</td>
+                      </tr>
+                    );
+                  })}
+                </tbody>
+              </table>
+            </div>
+          </Panel>
+
+          {awards.length > 0 && (
+            <Panel className="overflow-hidden" style={{ borderColor: GOLD }}>
+              <SectionTitle accent={GOLD}>Awards</SectionTitle>
+              <div className="px-4 pb-4 space-y-1">
+                {awards.map((a, i) => (
+                  <div key={i} className="flex items-center gap-2 text-sm" style={{ color: GOLD }}><Crown size={14} /> {a.name} <span style={{ color: CHALK_DIM }}>({a.seasonName})</span></div>
+                ))}
+              </div>
+            </Panel>
+          )}
+        </>
+      )}
+    </div>
+  );
+}
+
+function PlayerComparePage({ league, teamsById, initialNameA, initialNameB, onBack, onOpenPlayer }) {
+  const allNames = useMemo(() => getAllPlayerNames(league), [league]);
+  const [nameA, setNameA] = useState(initialNameA || allNames[0] || '');
+  const [nameB, setNameB] = useState(initialNameB || allNames.find(n => n !== initialNameA) || allNames[1] || '');
+
+  if (allNames.length === 0) {
+    return (
+      <div className="p-4">
+        <button onClick={onBack} className="flex items-center gap-1 text-sm mb-3" style={{ color: CHALK_DIM }}><ArrowLeft size={14} /> Back</button>
+        <Panel><p className="px-4 py-8 text-sm text-center" style={{ color: CHALK_DIM }}>No players in this league yet.</p></Panel>
+      </div>
+    );
+  }
+
+  const dataA = getPlayerCareerData(league, nameA);
+  const dataB = getPlayerCareerData(league, nameB);
+  const totalsA = sumPlayerTotals(dataA.gameLog), totalsB = sumPlayerTotals(dataB.gameLog);
+  const battingA = computeBattingAdvanced(totalsA), battingB = computeBattingAdvanced(totalsB);
+  const pitchingA = computePitchingAdvanced(totalsA), pitchingB = computePitchingAdvanced(totalsB);
+  const latestA = dataA.seasonsInfo[dataA.seasonsInfo.length - 1];
+  const latestB = dataB.seasonsInfo[dataB.seasonsInfo.length - 1];
+  const teamA = latestA ? teamsById[latestA.teamId] : null;
+  const teamB = latestB ? teamsById[latestB.teamId] : null;
+  const colorA = teamA ? teamColor(teamA) : PRIMARY, colorB = teamB ? teamColor(teamB) : NEGATIVE;
+  const bothPitch = totalsA.outs > 0 && totalsB.outs > 0;
+
+  return (
+    <div className="p-4 space-y-4">
+      <button onClick={onBack} className="flex items-center gap-1 text-sm" style={{ color: CHALK_DIM }}><ArrowLeft size={14} /> Back</button>
+      <Panel>
+        <SectionTitle>Player comparison</SectionTitle>
+        <div className="px-4 pb-4 flex items-center gap-2">
+          <select value={nameA} onChange={e => setNameA(e.target.value)} className="flex-1 bg-[#242424] border rounded px-2 py-2 text-sm" style={{ borderColor: LINE, color: CHALK }}>
+            {allNames.map(n => <option key={n} value={n} style={{ background: PANEL2, color: CHALK }}>{n}</option>)}
+          </select>
+          <span className="text-xs font-bold" style={{ color: CHALK_DIM }}>VS</span>
+          <select value={nameB} onChange={e => setNameB(e.target.value)} className="flex-1 bg-[#242424] border rounded px-2 py-2 text-sm" style={{ borderColor: LINE, color: CHALK }}>
+            {allNames.map(n => <option key={n} value={n} style={{ background: PANEL2, color: CHALK }}>{n}</option>)}
+          </select>
+        </div>
+      </Panel>
+      <div className="rounded-xl overflow-hidden flex" style={{ border: `1px solid ${LINE}` }}>
+        <button onClick={() => onOpenPlayer(nameA)} className="flex-1 p-3 flex items-center gap-2" style={{ background: `${colorA}22` }}>
+          {teamA && <TeamMark team={teamA} size={20} />} <span className="font-bold truncate" style={{ color: CHALK }}>{nameA}</span>
+        </button>
+        <button onClick={() => onOpenPlayer(nameB)} className="flex-1 p-3 flex items-center justify-end gap-2" style={{ background: `${colorB}22` }}>
+          <span className="font-bold truncate" style={{ color: CHALK }}>{nameB}</span> {teamB && <TeamMark team={teamB} size={20} />}
+        </button>
+      </div>
+      <Panel>
+        <div className="py-2">
+          <CompareStatRow label="Games" aVal={totalsA.g} bVal={totalsB.g} aBetter={totalsA.g > totalsB.g} bBetter={totalsB.g > totalsA.g} aColor={colorA} bColor={colorB} />
+          <CompareStatRow label="AVG" aVal={battingA.avg.toFixed(3).replace(/^0/, '')} bVal={battingB.avg.toFixed(3).replace(/^0/, '')} aBetter={battingA.avg > battingB.avg} bBetter={battingB.avg > battingA.avg} aColor={colorA} bColor={colorB} />
+          <CompareStatRow label="OBP" aVal={battingA.obp.toFixed(3).replace(/^0/, '')} bVal={battingB.obp.toFixed(3).replace(/^0/, '')} aBetter={battingA.obp > battingB.obp} bBetter={battingB.obp > battingA.obp} aColor={colorA} bColor={colorB} />
+          <CompareStatRow label="SLG" aVal={battingA.slg.toFixed(3).replace(/^0/, '')} bVal={battingB.slg.toFixed(3).replace(/^0/, '')} aBetter={battingA.slg > battingB.slg} bBetter={battingB.slg > battingA.slg} aColor={colorA} bColor={colorB} />
+          <CompareStatRow label="OPS" aVal={battingA.ops.toFixed(3).replace(/^0/, '')} bVal={battingB.ops.toFixed(3).replace(/^0/, '')} aBetter={battingA.ops > battingB.ops} bBetter={battingB.ops > battingA.ops} aColor={colorA} bColor={colorB} />
+          <CompareStatRow label="HR" aVal={totalsA.hr} bVal={totalsB.hr} aBetter={totalsA.hr > totalsB.hr} bBetter={totalsB.hr > totalsA.hr} aColor={colorA} bColor={colorB} />
+          <CompareStatRow label="RBI" aVal={totalsA.rbi} bVal={totalsB.rbi} aBetter={totalsA.rbi > totalsB.rbi} bBetter={totalsB.rbi > totalsA.rbi} aColor={colorA} bColor={colorB} />
+          <CompareStatRow label="ERA" aVal={totalsA.outs > 0 ? pitchingA.era.toFixed(2) : '—'} bVal={totalsB.outs > 0 ? pitchingB.era.toFixed(2) : '—'} aBetter={bothPitch && pitchingA.era < pitchingB.era} bBetter={bothPitch && pitchingB.era < pitchingA.era} aColor={colorA} bColor={colorB} />
+          <CompareStatRow label="WHIP" aVal={totalsA.outs > 0 ? pitchingA.whip.toFixed(2) : '—'} bVal={totalsB.outs > 0 ? pitchingB.whip.toFixed(2) : '—'} aBetter={bothPitch && pitchingA.whip < pitchingB.whip} bBetter={bothPitch && pitchingB.whip < pitchingA.whip} aColor={colorA} bColor={colorB} />
+          <CompareStatRow label="K/9" aVal={totalsA.outs > 0 ? pitchingA.k9.toFixed(1) : '—'} bVal={totalsB.outs > 0 ? pitchingB.k9.toFixed(1) : '—'} aBetter={bothPitch && pitchingA.k9 > pitchingB.k9} bBetter={bothPitch && pitchingB.k9 > pitchingA.k9} aColor={colorA} bColor={colorB} />
+        </div>
+      </Panel>
     </div>
   );
 }
@@ -5537,6 +6039,9 @@ function App() {
   const [selectedTeamId, setSelectedTeamId] = useState(null);
   const [compareInitialId, setCompareInitialId] = useState(null);
   const [compareSecondId, setCompareSecondId] = useState(null);
+  const [selectedPlayerName, setSelectedPlayerName] = useState(null);
+  const [comparePlayerAName, setComparePlayerAName] = useState(null);
+  const [comparePlayerBName, setComparePlayerBName] = useState(null);
   const [historyBack, setHistoryBack] = useState('leagues');
   const [historyTeamId, setHistoryTeamId] = useState(null);
   const [historyData, setHistoryData] = useState([]);
@@ -6222,10 +6727,15 @@ function App() {
   };
 
   /* ---- navigation helpers ---- */
-  const onOpenTeam = (teamId) => { setSelectedTeamId(teamId); setPrevTab(tab === 'team' || tab === 'compare' ? prevTab : tab); setTab('team'); };
+  const subNavTabs = ['team', 'compare', 'player', 'playerCompare'];
+  const onOpenTeam = (teamId) => { setSelectedTeamId(teamId); setPrevTab(subNavTabs.includes(tab) ? prevTab : tab); setTab('team'); };
   const backFromTeam = () => { setTab(prevTab); setSelectedTeamId(null); };
-  const onOpenCompare = (teamId, teamBId) => { setCompareInitialId(teamId); setCompareSecondId(teamBId || null); setPrevTab(tab === 'team' || tab === 'compare' ? prevTab : tab); setTab('compare'); };
+  const onOpenCompare = (teamId, teamBId) => { setCompareInitialId(teamId); setCompareSecondId(teamBId || null); setPrevTab(subNavTabs.includes(tab) ? prevTab : tab); setTab('compare'); };
   const backFromCompare = () => { setTab(prevTab); setCompareInitialId(null); setCompareSecondId(null); };
+  const onOpenPlayer = (name) => { setSelectedPlayerName(name); setPrevTab(subNavTabs.includes(tab) ? prevTab : tab); setTab('player'); };
+  const backFromPlayer = () => { setTab(prevTab); setSelectedPlayerName(null); };
+  const onOpenPlayerCompare = (nameA, nameB) => { setComparePlayerAName(nameA); setComparePlayerBName(nameB || null); setPrevTab(subNavTabs.includes(tab) ? prevTab : tab); setTab('playerCompare'); };
+  const backFromPlayerCompare = () => { setTab(prevTab); setComparePlayerAName(null); setComparePlayerBName(null); };
 
   /* ---- derived data ---- */
   const teamChampionshipCounts = useMemo(() => {
@@ -6303,7 +6813,7 @@ function App() {
     } else if (tab === 'teams' && isLoggedIn) {
       body = <TeamsView season={activeSeason} teamsById={teamsById} teamsIndex={teamsIndex} addExistingTeam={addExistingTeamToSeason} createAndAddTeam={createAndAddTeamToSeason} updateMemberField={updateMemberField} updateGlobalTeamField={updateGlobalTeamField} removeMember={removeMember} onOpenTeam={onOpenTeam} importRosterSheet={importRosterSheet} addDivision={addDivision} updateDivision={updateDivision} removeDivision={removeDivision} assignMemberDivision={assignMemberDivision} />;
     } else if (tab === 'roster' && isLoggedIn) {
-      body = <RosterManagementView season={activeSeason} teamsById={teamsById} updatePlayerField={updatePlayerField} removePlayer={removePlayer} addPlayer={addPlayer} addPlayersBulk={addPlayersBulk} tradePlayer={tradePlayer} setPlayerSuspended={setPlayerSuspended} />;
+      body = <RosterManagementView season={activeSeason} teamsById={teamsById} updatePlayerField={updatePlayerField} removePlayer={removePlayer} addPlayer={addPlayer} addPlayersBulk={addPlayersBulk} tradePlayer={tradePlayer} setPlayerSuspended={setPlayerSuspended} onOpenPlayer={onOpenPlayer} />;
     } else if (tab === 'schedule') {
       body = <ScheduleView season={activeSeason} settings={activeSeason.settings} saveScore={saveScore} deleteGame={deleteGame} declareForfeit={declareForfeit} setWinnerOverride={setWinnerOverride} teamsById={teamsById} sport={sport} updateGameNotes={updateGameNotes} updateGameStreamUrl={updateGameStreamUrl} saveGamePlayerStats={saveGamePlayerStats} setGameOngoing={setGameOngoing} swapHomeAway={swapHomeAway} />;
     } else if (tab === 'stats') {
@@ -6323,9 +6833,13 @@ function App() {
     } else if (tab === 'settings') {
       body = <SettingsView settings={activeSeason.settings} saveSettings={saveSettings} theme={theme} saveTheme={saveTheme} sport={sport} season={activeSeason} teamsById={teamsById} importGames={importGames} addManualGame={addManualGame} generateSchedule={generateSchedule} />;
     } else if (tab === 'team') {
-      body = <TeamPage season={activeSeason} settings={activeSeason.settings} team={selectedTeamMerged} standingsRow={selectedStandingsRow} teamsById={teamsById} h2hMatrix={h2hMatrix} championshipCount={selectedTeamId ? (teamChampionshipCounts[selectedTeamId] || 0) : 0} onBack={backFromTeam} onOpenGlobalHistory={(id) => openTeamHistory(id, 'league')} onOpenCompare={onOpenCompare} updatePlayerField={updatePlayerField} removePlayer={removePlayer} addPlayer={addPlayer} addPlayersBulk={addPlayersBulk} tradePlayer={tradePlayer} updateMemberField={updateMemberField} setPlayerSuspended={setPlayerSuspended} />;
+      body = <TeamPage season={activeSeason} settings={activeSeason.settings} team={selectedTeamMerged} standingsRow={selectedStandingsRow} teamsById={teamsById} h2hMatrix={h2hMatrix} championshipCount={selectedTeamId ? (teamChampionshipCounts[selectedTeamId] || 0) : 0} onBack={backFromTeam} onOpenGlobalHistory={(id) => openTeamHistory(id, 'league')} onOpenCompare={onOpenCompare} updatePlayerField={updatePlayerField} removePlayer={removePlayer} addPlayer={addPlayer} addPlayersBulk={addPlayersBulk} tradePlayer={tradePlayer} updateMemberField={updateMemberField} setPlayerSuspended={setPlayerSuspended} onOpenPlayer={onOpenPlayer} />;
     } else if (tab === 'compare') {
       body = <ComparePage season={activeSeason} standingsAll={standingsResult.all} teamsById={teamsById} h2hMatrix={h2hMatrix} initialTeamId={compareInitialId} initialTeamBId={compareSecondId} onBack={backFromCompare} onOpenTeam={onOpenTeam} />;
+    } else if (tab === 'player') {
+      body = <PlayerPage league={league} teamsById={teamsById} playerName={selectedPlayerName} onBack={backFromPlayer} onOpenTeam={onOpenTeam} onOpenPlayerCompare={onOpenPlayerCompare} />;
+    } else if (tab === 'playerCompare') {
+      body = <PlayerComparePage league={league} teamsById={teamsById} initialNameA={comparePlayerAName} initialNameB={comparePlayerBName} onBack={backFromPlayerCompare} onOpenPlayer={onOpenPlayer} />;
     }
   }
 
