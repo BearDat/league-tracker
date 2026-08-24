@@ -6,8 +6,8 @@ html,
 body {
   margin: 0;
   padding: 0;
-  background: var(--lt-ink, #080b11);
-  color: var(--lt-chalk, #f3f5fa);
+  background: var(--lt-ink, #0a0a0a);
+  color: var(--lt-chalk, #f5f5f5);
 }
 
 * {
