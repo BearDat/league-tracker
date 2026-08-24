@@ -8,8 +8,15 @@ body {
   padding: 0;
   background: var(--lt-ink, #0a0a0a);
   color: var(--lt-chalk, #f5f5f5);
+  font-family: var(--font-body), ui-sans-serif, system-ui, sans-serif;
 }
 
 * {
   box-sizing: border-box;
+}
+
+/* Condensed sports-broadcast headline face — used for section titles, hero
+   text, and big display numbers throughout the site. */
+.font-head {
+  font-family: var(--font-heading), ui-sans-serif, system-ui, sans-serif;
 }
