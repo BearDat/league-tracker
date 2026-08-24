@@ -83,6 +83,13 @@ function formatLivePeriod(sport, period, half) {
 function uid(prefix = 'id') {
   return `${prefix}_${Date.now().toString(36)}_${Math.random().toString(36).slice(2, 8)}`;
 }
+// awardWinners[awardId] used to store a single winner object; it's now a list
+// so an award can have co-winners. Normalize old single-object saves to a
+// one-item list so both shapes render and edit the same way.
+function normalizeAwardWinners(raw) {
+  if (!raw) return [];
+  return Array.isArray(raw) ? raw : [raw];
+}
 function hashColor(id) {
   let h = 0;
   for (let i = 0; i < id.length; i++) h = (h * 31 + id.charCodeAt(i)) >>> 0;
@@ -5095,8 +5102,8 @@ function PlayerPage({ league, teamsById, playerName, onBack, onOpenTeam, onOpenP
   const normName = (s) => (s || '').trim().toLowerCase();
   seasonsInfo.forEach(info => {
     const winners = info.season.awardWinners || {};
-    Object.entries(winners).forEach(([awardId, w]) => {
-      const isThisPlayer = w && w.type === 'player' && (w.playerId === info.playerId || (!w.playerId && w.name && normName(w.name) === normName(playerName)));
+    Object.entries(winners).forEach(([awardId, raw]) => {
+      const isThisPlayer = normalizeAwardWinners(raw).some(w => w.type === 'player' && (w.playerId === info.playerId || (!w.playerId && w.name && normName(w.name) === normName(playerName))));
       if (isThisPlayer) {
         const def = (league.awardDefs || []).find(a => a.id === awardId);
         if (def) awards.push({ name: def.name, seasonName: info.season.name });
@@ -5779,7 +5786,7 @@ function OddsView({ season, teamsById, standings, settings, onOpenTeam, h2hMatri
 /* ==================================================================== */
 /* Awards                                                                */
 /* ==================================================================== */
-function AwardsView({ league, season, standings, teamsById, addAwardDef, updateAwardDef, removeAwardDef, setAwardWinner, clearAwardWinner }) {
+function AwardsView({ league, season, standings, teamsById, addAwardDef, updateAwardDef, removeAwardDef, addAwardWinner, removeAwardWinnerAt }) {
   const { isLoggedIn } = useAuth();
   const [name, setName] = useState('');
   const [desc, setDesc] = useState('');
@@ -5812,48 +5819,53 @@ function AwardsView({ league, season, standings, teamsById, addAwardDef, updateA
       {awardDefs.length === 0 && <Panel><p className="px-4 py-8 text-sm text-center" style={{ color: CHALK_DIM }}>No awards yet — create one above.</p></Panel>}
 
       {awardDefs.map(a => {
-        const w = winners[a.id];
-        let winnerLabel = null;
-        if (w) {
-          if (w.type === 'team') { const t = teamsById[w.teamId]; winnerLabel = t ? t.name : 'Unknown team'; }
+        const winnerList = normalizeAwardWinners(winners[a.id]).map(w => {
+          let label = null;
+          if (w.type === 'team') { const t = teamsById[w.teamId]; label = t ? t.name : 'Unknown team'; }
           else if (w.type === 'player') {
-            if (w.playerId) { const p = allPlayers.find(pl => pl.id === w.playerId); winnerLabel = p ? `${p.name} (${p.teamName})` : 'Unknown player'; }
-            else if (w.name) { winnerLabel = `${w.name} (Free agent)`; }
+            if (w.playerId) { const p = allPlayers.find(pl => pl.id === w.playerId); label = p ? `${p.name} (${p.teamName})` : 'Unknown player'; }
+            else if (w.name) { label = `${w.name} (Free agent)`; }
           }
-        }
+          return { ...w, label };
+        });
         return (
           <Panel key={a.id}>
             <SectionTitle right={isLoggedIn && <button onClick={() => removeAwardDef(a.id)} className="p-1 rounded" style={{ color: NEGATIVE }}><Trash2 size={14} /></button>}>{a.name}</SectionTitle>
             <div className="px-4 pb-4 space-y-2">
               {a.description && <p className="text-xs" style={{ color: CHALK_DIM }}>{a.description}</p>}
-              {winnerLabel ? (
-                <div className="flex items-center justify-between px-3 py-2 rounded-lg" style={{ background: 'rgba(245,198,75,0.12)' }}>
-                  <span className="flex items-center gap-2 text-sm font-bold" style={{ color: GOLD }}><Crown size={15} /> {winnerLabel}</span>
-                  {isLoggedIn && <button onClick={() => clearAwardWinner(a.id)} className="text-xs" style={{ color: CHALK_DIM }}>Clear</button>}
+              {winnerList.length > 0 ? (
+                <div className="space-y-1.5">
+                  {winnerList.map((w, i) => (
+                    <div key={i} className="flex items-center justify-between px-3 py-2 rounded-lg" style={{ background: 'rgba(245,198,75,0.12)' }}>
+                      <span className="flex items-center gap-2 text-sm font-bold" style={{ color: GOLD }}><Crown size={15} /> {w.label}</span>
+                      {isLoggedIn && <button onClick={() => removeAwardWinnerAt(a.id, i)} className="text-xs" style={{ color: CHALK_DIM }}>Remove</button>}
+                    </div>
+                  ))}
                 </div>
-              ) : isLoggedIn ? (
-                <button onClick={() => setPickerId(pickerId === a.id ? null : a.id)} className="text-xs font-semibold px-3 py-1.5 rounded" style={{ background: PANEL2, color: PRIMARY, border: `1px solid ${LINE}` }}>Pick a winner</button>
-              ) : (
+              ) : !isLoggedIn && (
                 <span className="text-xs" style={{ color: CHALK_DIM }}>No winner yet</span>
+              )}
+              {isLoggedIn && (
+                <button onClick={() => setPickerId(pickerId === a.id ? null : a.id)} className="text-xs font-semibold px-3 py-1.5 rounded" style={{ background: PANEL2, color: PRIMARY, border: `1px solid ${LINE}` }}>{winnerList.length > 0 ? 'Add co-winner' : 'Pick a winner'}</button>
               )}
               {pickerId === a.id && (
                 <div className="space-y-2 pt-2" style={{ borderTop: `1px solid ${LINE}` }}>
                   <div className="text-[10px] uppercase" style={{ color: CHALK_DIM }}>Teams</div>
                   <div className="flex flex-wrap gap-2">
-                    {standings.map(t => <button key={t.id} onClick={() => { setAwardWinner(a.id, { type: 'team', teamId: t.id }); setPickerId(null); }} className="text-xs px-2 py-1 rounded" style={{ background: PANEL2, color: CHALK, border: `1px solid ${LINE}` }}>{t.displayName}</button>)}
+                    {standings.map(t => <button key={t.id} onClick={() => { addAwardWinner(a.id, { type: 'team', teamId: t.id }); setPickerId(null); }} className="text-xs px-2 py-1 rounded" style={{ background: PANEL2, color: CHALK, border: `1px solid ${LINE}` }}>{t.displayName}</button>)}
                   </div>
                   {allPlayers.length > 0 && (
                     <>
                       <div className="text-[10px] uppercase pt-1" style={{ color: CHALK_DIM }}>Players</div>
                       <div className="flex flex-wrap gap-2 max-h-32 overflow-y-auto">
-                        {allPlayers.map(p => <button key={p.id} onClick={() => { setAwardWinner(a.id, { type: 'player', playerId: p.id, teamId: p.teamId }); setPickerId(null); }} className="text-xs px-2 py-1 rounded" style={{ background: PANEL2, color: CHALK, border: `1px solid ${LINE}` }}>{p.name} <span style={{ color: CHALK_DIM }}>({p.teamName})</span></button>)}
+                        {allPlayers.map(p => <button key={p.id} onClick={() => { addAwardWinner(a.id, { type: 'player', playerId: p.id, teamId: p.teamId }); setPickerId(null); }} className="text-xs px-2 py-1 rounded" style={{ background: PANEL2, color: CHALK, border: `1px solid ${LINE}` }}>{p.name} <span style={{ color: CHALK_DIM }}>({p.teamName})</span></button>)}
                       </div>
                     </>
                   )}
                   <div className="text-[10px] uppercase pt-1" style={{ color: CHALK_DIM }}>Free agent (not on a current roster)</div>
                   <div className="flex items-center gap-2">
                     <input value={manualName} onChange={e => setManualName(e.target.value)} placeholder="Type a player name" className="flex-1 bg-[#242424] border rounded px-2 py-1.5 text-xs" style={{ borderColor: LINE, color: CHALK }} />
-                    <button onClick={() => { if (manualName.trim()) { setAwardWinner(a.id, { type: 'player', playerId: null, name: manualName.trim(), teamId: null }); setManualName(''); setPickerId(null); } }} disabled={!manualName.trim()} className="text-xs font-semibold px-2 py-1.5 rounded disabled:opacity-40 flex-shrink-0" style={{ background: PANEL2, color: PRIMARY, border: `1px solid ${LINE}` }}>Set winner</button>
+                    <button onClick={() => { if (manualName.trim()) { addAwardWinner(a.id, { type: 'player', playerId: null, name: manualName.trim(), teamId: null }); setManualName(''); setPickerId(null); } }} disabled={!manualName.trim()} className="text-xs font-semibold px-2 py-1.5 rounded disabled:opacity-40 flex-shrink-0" style={{ background: PANEL2, color: PRIMARY, border: `1px solid ${LINE}` }}>Set winner</button>
                   </div>
                 </div>
               )}
@@ -6042,7 +6054,8 @@ function NewsView({ league, addNewsPost, updateNewsPost, removeNewsPost }) {
   );
 }
 
-function ExtrasView({ extras, teamsById, leagueRecords, activityLog, season, standings }) {
+function ExtrasView({ extras, teamsById, leagueRecords, activityLog, season, standings, onRemoveActivity }) {
+  const { isLoggedIn } = useAuth();
   if (!extras) return <div className="p-4 space-y-4"><Panel><p className="px-4 py-8 text-sm text-center" style={{ color: CHALK_DIM }}>Enter some scores to unlock fun stats here.</p></Panel></div>;
   const GameCard = ({ label, g, note }) => {
     if (!g) return null;
@@ -6221,6 +6234,9 @@ function ExtrasView({ extras, teamsById, leagueRecords, activityLog, season, sta
                   {team && <TeamMark team={team} size={16} />}
                   {toTeam && <><span style={{ color: CHALK_DIM }}>→</span><TeamMark team={toTeam} size={16} /></>}
                   <span className="flex-1 min-w-0">{a.text}</span>
+                  {isLoggedIn && (
+                    <button onClick={() => { if (confirm('Remove this activity entry?')) onRemoveActivity(a.id); }} className="p-1 rounded flex-shrink-0" style={{ color: CHALK_DIM }}><Trash2 size={13} /></button>
+                  )}
                 </div>
               );
             })}
@@ -7053,18 +7069,35 @@ function App() {
     });
     persistLeague({ ...league, awardDefs: (league.awardDefs || []).filter(a => a.id !== id), seasons });
   };
-  const setAwardWinner = (awardId, winner) => {
-    if (!league || !activeSeason) return;
-    const seasons = league.seasons.map(s => s.id === activeSeason.id ? { ...s, awardWinners: { ...(s.awardWinners || {}), [awardId]: winner } } : s);
-    persistLeague({ ...league, seasons });
-  };
-  const clearAwardWinner = (awardId) => {
+  const addAwardWinner = (awardId, winner) => {
     if (!league || !activeSeason) return;
     const seasons = league.seasons.map(s => {
-      if (s.id !== activeSeason.id || !s.awardWinners) return s;
-      const aw = { ...s.awardWinners }; delete aw[awardId];
+      if (s.id !== activeSeason.id) return s;
+      const list = normalizeAwardWinners((s.awardWinners || {})[awardId]);
+      const isDup = list.some(w => w.type === winner.type && (
+        winner.type === 'team' ? w.teamId === winner.teamId
+        : winner.playerId ? w.playerId === winner.playerId
+        : (w.name || '').trim().toLowerCase() === (winner.name || '').trim().toLowerCase()
+      ));
+      if (isDup) return s;
+      return { ...s, awardWinners: { ...(s.awardWinners || {}), [awardId]: [...list, winner] } };
+    });
+    persistLeague({ ...league, seasons });
+  };
+  const removeAwardWinnerAt = (awardId, index) => {
+    if (!league || !activeSeason) return;
+    const seasons = league.seasons.map(s => {
+      if (s.id !== activeSeason.id || !s.awardWinners || !s.awardWinners[awardId]) return s;
+      const list = normalizeAwardWinners(s.awardWinners[awardId]).filter((_, i) => i !== index);
+      const aw = { ...s.awardWinners };
+      if (list.length === 0) delete aw[awardId]; else aw[awardId] = list;
       return { ...s, awardWinners: aw };
     });
+    persistLeague({ ...league, seasons });
+  };
+  const removeActivityItem = (activityId) => {
+    if (!league || !activeSeason) return;
+    const seasons = league.seasons.map(s => s.id === activeSeason.id ? { ...s, activityLog: (s.activityLog || []).filter(a => a.id !== activityId) } : s);
     persistLeague({ ...league, seasons });
   };
   /* ---- league info & staff ---- */
@@ -7398,11 +7431,11 @@ function App() {
     } else if (tab === 'leaders') {
       body = <StatLeadersView season={activeSeason} teamsById={displayTeamsById} onOpenPlayer={onOpenPlayer} />;
     } else if (tab === 'awards') {
-      body = <AwardsView league={league} season={activeSeason} standings={standings} teamsById={displayTeamsById} addAwardDef={addAwardDef} updateAwardDef={updateAwardDef} removeAwardDef={removeAwardDef} setAwardWinner={setAwardWinner} clearAwardWinner={clearAwardWinner} />;
+      body = <AwardsView league={league} season={activeSeason} standings={standings} teamsById={displayTeamsById} addAwardDef={addAwardDef} updateAwardDef={updateAwardDef} removeAwardDef={removeAwardDef} addAwardWinner={addAwardWinner} removeAwardWinnerAt={removeAwardWinnerAt} />;
     } else if (tab === 'odds') {
       body = <OddsView season={activeSeason} teamsById={displayTeamsById} standings={standings} settings={activeSeason.settings} onOpenTeam={onOpenTeam} h2hMatrix={h2hMatrix} onStartPlayoffs={startPlayoffs} onClearPlayoffs={clearPlayoffs} onStartPlayIn={startPlayIn} onClearPlayIn={clearPlayIn} onOpenCompare={onOpenCompare} />;
     } else if (tab === 'extras') {
-      body = <ExtrasView extras={extras} teamsById={displayTeamsById} leagueRecords={leagueRecords} activityLog={activeSeason.activityLog || []} season={activeSeason} standings={standings} />;
+      body = <ExtrasView extras={extras} teamsById={displayTeamsById} leagueRecords={leagueRecords} activityLog={activeSeason.activityLog || []} season={activeSeason} standings={standings} onRemoveActivity={removeActivityItem} />;
     } else if (tab === 'graphs') {
       body = <GraphsView league={Object.values(teamsById).filter(t => activeSeason.members.some(m => m.teamId === t.id))} roundHistory={roundHistory} standings={standings} scoringTrend={scoringTrend} season={activeSeason} h2hMatrix={h2hMatrix} onOpenTeam={onOpenTeam} sport={sport} />;
     } else if (tab === 'news') {
