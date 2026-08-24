@@ -9,7 +9,7 @@ import {
   Trophy, Calendar, Users, BarChart3, Percent, Plus, Trash2, Upload,
   ChevronRight, ChevronLeft, Pencil, Check, X, Folder, Save, RefreshCw, ArrowLeft,
   Activity, AlertTriangle, Image as ImageIcon, Layers, Crown, History, Sparkles, Home as HomeIcon, Settings as SettingsIcon,
-  Award as AwardIcon, Eye, EyeOff, Sun, Moon, Video, ClipboardList, Newspaper, Info as InfoIcon
+  Award as AwardIcon, Eye, EyeOff, Sun, Moon, Video, ClipboardList, Newspaper, Info as InfoIcon, TrendingUp
 } from 'lucide-react';
 import { supabase } from '../lib/supabaseClient';
 import { AuthProvider, useAuth } from '../lib/AuthContext';
@@ -3333,6 +3333,21 @@ function outsToIpDisplay(outs) {
   return `${Math.floor(o / 3)}.${o % 3}`;
 }
 
+// Coerces a saved stat row (game.playerStats[side][i]) to numbers, filling
+// in defaults for fields older imports won't have (doubles/triples were
+// added after the OCR importer shipped — home runs got the same treatment
+// back when that was added, since the stat screen never reports it either).
+function normalizeStatRow(row, extra) {
+  return {
+    ...extra,
+    ab: Number(row.ab) || 0, r: Number(row.r) || 0, h: Number(row.h) || 0, rbi: Number(row.rbi) || 0,
+    bb: Number(row.bb) || 0, so: Number(row.so) || 0, ip: Number(row.ip) || 0, ha: Number(row.ha) || 0,
+    er: Number(row.er) || 0, bbAllowed: Number(row.bbAllowed) || 0, k: Number(row.k) || 0,
+    hrAllowed: Number(row.hrAllowed) || 0, e: Number(row.e) || 0, hr: Number(row.hr) || 0,
+    doubles: Number(row.doubles) || 0, triples: Number(row.triples) || 0,
+  };
+}
+
 // A "career" spans season-roster entries that each get their own internal
 // id (see addPlayer) — there's no persistent player identity in the data
 // model, so the only stable thread to pull a player's whole history
@@ -3358,15 +3373,11 @@ function getPlayerCareerData(league, playerName) {
         const rows = (g.playerStats && g.playerStats[side]) || [];
         const row = rows.find(r => r.playerId === info.playerId);
         if (!row) return;
-        gameLog.push({
+        gameLog.push(normalizeStatRow(row, {
           seasonId: info.season.id, seasonName: info.season.name, teamId: info.teamId,
           oppTeamId: side === 'home' ? g.awayTeamId : g.homeTeamId, side,
           gameId: g.id, date: g.date, isPlayoff: !!g.isPlayoff, isPlayIn: !!g.isPlayIn,
-          ab: Number(row.ab) || 0, r: Number(row.r) || 0, h: Number(row.h) || 0, rbi: Number(row.rbi) || 0,
-          bb: Number(row.bb) || 0, so: Number(row.so) || 0, ip: Number(row.ip) || 0, ha: Number(row.ha) || 0,
-          er: Number(row.er) || 0, bbAllowed: Number(row.bbAllowed) || 0, k: Number(row.k) || 0,
-          hrAllowed: Number(row.hrAllowed) || 0, e: Number(row.e) || 0, hr: Number(row.hr) || 0,
-        });
+        }));
       });
     });
   });
@@ -3375,23 +3386,28 @@ function getPlayerCareerData(league, playerName) {
 }
 
 function sumPlayerTotals(gameLog) {
-  const t = { g: gameLog.length, ab: 0, r: 0, h: 0, rbi: 0, bb: 0, so: 0, outs: 0, ha: 0, er: 0, bbAllowed: 0, k: 0, hrAllowed: 0, e: 0, hr: 0 };
+  const t = { g: gameLog.length, ab: 0, r: 0, h: 0, rbi: 0, bb: 0, so: 0, outs: 0, ha: 0, er: 0, bbAllowed: 0, k: 0, hrAllowed: 0, e: 0, hr: 0, doubles: 0, triples: 0 };
   gameLog.forEach(row => {
     t.ab += row.ab; t.r += row.r; t.h += row.h; t.rbi += row.rbi; t.bb += row.bb; t.so += row.so;
     t.outs += ipDisplayToOuts(row.ip); t.ha += row.ha; t.er += row.er; t.bbAllowed += row.bbAllowed;
     t.k += row.k; t.hrAllowed += row.hrAllowed; t.e += row.e; t.hr += row.hr;
+    t.doubles += row.doubles; t.triples += row.triples;
   });
   return t;
 }
 
-// SLG/OPS need total bases, but the stat screen only gives us hits + home
-// runs (no 2B/3B breakdown) — every non-HR hit is treated as a single, the
-// standard simplification when extra-base-hit detail isn't tracked.
+// Singles are never entered directly — they're always however many of the
+// OCR'd total hits are left over once home runs, doubles, and triples (the
+// only hit types anyone actually enters) are accounted for. That keeps H as
+// the single source of truth instead of two manually-entered numbers that
+// could silently drift out of sync with each other.
+function playerSingles(t) { return Math.max(0, t.h - t.hr - t.doubles - t.triples); }
+
 function computeBattingAdvanced(t) {
   const avg = t.ab > 0 ? t.h / t.ab : 0;
   const obpDenom = t.ab + t.bb;
   const obp = obpDenom > 0 ? (t.h + t.bb) / obpDenom : 0;
-  const totalBases = (t.h - t.hr) * 1 + t.hr * 4;
+  const totalBases = playerSingles(t) * 1 + t.doubles * 2 + t.triples * 3 + t.hr * 4;
   const slg = t.ab > 0 ? totalBases / t.ab : 0;
   return { avg, obp, slg, ops: obp + slg, iso: slg - avg };
 }
@@ -3401,6 +3417,49 @@ function computePitchingAdvanced(t) {
   const k9 = t.outs > 0 ? (t.k * 27) / t.outs : 0;
   const bb9 = t.outs > 0 ? (t.bbAllowed * 27) / t.outs : 0;
   return { ip: t.outs / 3, era, whip, k9, bb9, kbb: t.bbAllowed > 0 ? t.k / t.bbAllowed : (t.k > 0 ? Infinity : 0) };
+}
+
+// A simplified, "good enough for a casual league" WAR — not an official
+// sabermetric figure (no park factors, defense, or baserunning; replacement
+// level is approximated as league-average rather than true replacement).
+// Batting side uses standard linear-weights run values per event; pitching
+// side is runs saved vs. this season's league-average ERA. Both convert to
+// wins at the usual ~10 runs per win.
+function computePlayerWAR(t, leagueERA) {
+  const battingRuns = 0.9 * playerSingles(t) + 1.25 * t.doubles + 1.6 * t.triples + 2.0 * t.hr
+    + 0.33 * t.bb - 0.3 * Math.max(0, t.ab - t.h);
+  const ip = t.outs / 3;
+  const pitchingRuns = t.outs > 0 ? ((leagueERA - (t.er * 9) / ip) / 9) * ip : 0;
+  return (battingRuns + pitchingRuns) / 10;
+}
+
+// Every roster player in this season with at least one imported game line,
+// with career-style totals/advanced stats scoped to just this season — the
+// pool the Leaders page ranks. WAR needs a league-average ERA baseline, so
+// it's computed once here and threaded through rather than per-player.
+function computeSeasonPlayerLeaders(season, teamsById) {
+  const byPlayer = new Map();
+  (season.members || []).forEach(member => {
+    (member.roster || []).forEach(p => byPlayer.set(p.id, { playerId: p.id, name: p.name, teamId: member.teamId, rows: [] }));
+  });
+  (season.games || []).forEach(g => {
+    if (g.isBye) return;
+    ['home', 'away'].forEach(side => {
+      ((g.playerStats && g.playerStats[side]) || []).forEach(row => {
+        const entry = byPlayer.get(row.playerId);
+        if (entry) entry.rows.push(normalizeStatRow(row, {}));
+      });
+    });
+  });
+  const players = [...byPlayer.values()].filter(e => e.rows.length > 0).map(e => {
+    const totals = sumPlayerTotals(e.rows);
+    return { playerId: e.playerId, name: e.name, teamId: e.teamId, totals, batting: computeBattingAdvanced(totals), pitching: computePitchingAdvanced(totals) };
+  });
+  const leagueOuts = players.reduce((s, p) => s + p.totals.outs, 0);
+  const leagueER = players.reduce((s, p) => s + p.totals.er, 0);
+  const leagueERA = leagueOuts > 0 ? (leagueER * 27) / leagueOuts : 4.5;
+  players.forEach(p => { p.war = computePlayerWAR(p.totals, leagueERA); });
+  return players;
 }
 
 const PLAYER_HIGH_FIELDS = [
@@ -3548,7 +3607,7 @@ function StatImportModal({ game, side, team, roster, existingRows, onSave, onClo
   const [rows, setRows] = useState(() => (existingRows || []).map(r => ({
     name: r.name || '', playerId: r.playerId || '',
     values: Object.fromEntries(STAT_COLUMNS.map(c => [c.key, r[c.key] || 0])),
-    hr: r.hr || 0,
+    hr: r.hr || 0, doubles: r.doubles || 0, triples: r.triples || 0,
   })));
   const fileRef = useRef(null);
 
@@ -3569,11 +3628,11 @@ function StatImportModal({ game, side, team, roster, existingRows, onSave, onClo
       await worker.terminate();
       const parsed = ocrLinesToStatRows(parseOcrTsvToLines(data.tsv));
       if (parsed.length === 0) setError("Couldn't find any rows in that image — try a tighter crop, or add rows manually below.");
-      setRows(parsed.map(p => ({ name: p.name, playerId: matchRosterPlayer(p.name, roster), values: p.values, hr: 0 })));
+      setRows(parsed.map(p => ({ name: p.name, playerId: matchRosterPlayer(p.name, roster), values: p.values, hr: 0, doubles: 0, triples: 0 })));
       setStep('review');
     } catch (e) {
       setError('Could not read the screenshot automatically. Add rows and enter stats by hand below.');
-      setRows(rows.length ? rows : [{ name: '', playerId: '', values: emptyValues(), hr: 0 }]);
+      setRows(rows.length ? rows : [{ name: '', playerId: '', values: emptyValues(), hr: 0, doubles: 0, triples: 0 }]);
       setStep('review');
     }
   };
@@ -3581,13 +3640,13 @@ function StatImportModal({ game, side, team, roster, existingRows, onSave, onClo
   const updateRow = (i, patch) => setRows(rs => rs.map((r, idx) => idx === i ? { ...r, ...patch } : r));
   const updateRowValue = (i, key, v) => setRows(rs => rs.map((r, idx) => idx === i ? { ...r, values: { ...r.values, [key]: v } } : r));
   const removeRow = (i) => setRows(rs => rs.filter((_, idx) => idx !== i));
-  const addRow = () => setRows(rs => [...rs, { name: '', playerId: '', values: emptyValues(), hr: 0 }]);
+  const addRow = () => setRows(rs => [...rs, { name: '', playerId: '', values: emptyValues(), hr: 0, doubles: 0, triples: 0 }]);
 
   const save = () => {
     const entries = rows.filter(r => r.playerId).map(r => {
       const values = {};
       STAT_COLUMNS.forEach(c => { values[c.key] = Number(r.values[c.key]) || 0; });
-      return { playerId: r.playerId, name: r.name, ...values, hr: Number(r.hr) || 0 };
+      return { playerId: r.playerId, name: r.name, ...values, hr: Number(r.hr) || 0, doubles: Number(r.doubles) || 0, triples: Number(r.triples) || 0 };
     });
     onSave(entries);
     onClose();
@@ -3626,7 +3685,7 @@ function StatImportModal({ game, side, team, roster, existingRows, onSave, onClo
           {step === 'review' && (
             <div className="space-y-3">
               {error && <p className="text-xs" style={{ color: NEGATIVE }}>{error}</p>}
-              <p className="text-xs" style={{ color: CHALK_DIM }}>Check each row, match it to a roster player, and fix anything the scan misread — nothing saves until you hit Save. Batting home runs aren't on the stat screen, so add those by hand.</p>
+              <p className="text-xs" style={{ color: CHALK_DIM }}>Check each row, match it to a roster player, and fix anything the scan misread — nothing saves until you hit Save. The stat screen doesn't break hits down by type or report home runs at all, so 1B/2B/3B/HR are always by hand; singles are whatever's left of H once HR/2B/3B are accounted for.</p>
               <div className="overflow-x-auto">
                 <table className="text-xs" style={{ color: CHALK, borderCollapse: 'collapse' }}>
                   <thead>
@@ -3634,6 +3693,9 @@ function StatImportModal({ game, side, team, roster, existingRows, onSave, onClo
                       <th className="text-left px-1 pb-1">Name</th>
                       <th className="text-left px-1 pb-1">Matched to</th>
                       {STAT_COLUMNS.map((c, i) => <th key={i} className="px-1 pb-1">{c.label}</th>)}
+                      <th className="px-1 pb-1" style={{ color: GOLD }}>1B</th>
+                      <th className="px-1 pb-1" style={{ color: GOLD }}>2B</th>
+                      <th className="px-1 pb-1" style={{ color: GOLD }}>3B</th>
                       <th className="px-1 pb-1" style={{ color: GOLD }}>HR</th>
                       <th></th>
                     </tr>
@@ -3651,11 +3713,16 @@ function StatImportModal({ game, side, team, roster, existingRows, onSave, onClo
                         {STAT_COLUMNS.map(c => (
                           <td key={c.key} className="px-1 py-1"><input value={r.values[c.key]} onChange={e => updateRowValue(i, c.key, e.target.value)} className="w-10 bg-[#242424] border rounded px-1 py-1 text-center" style={{ borderColor: LINE, color: CHALK }} /></td>
                         ))}
+                        <td className="px-1 py-1 text-center font-mono" style={{ color: CHALK_DIM }} title="Computed: H − HR − 2B − 3B">
+                          {Math.max(0, (Number(r.values.h) || 0) - (Number(r.hr) || 0) - (Number(r.doubles) || 0) - (Number(r.triples) || 0))}
+                        </td>
+                        <td className="px-1 py-1"><input value={r.doubles} onChange={e => updateRow(i, { doubles: e.target.value })} className="w-10 bg-[#242424] border rounded px-1 py-1 text-center" style={{ borderColor: GOLD, color: CHALK }} /></td>
+                        <td className="px-1 py-1"><input value={r.triples} onChange={e => updateRow(i, { triples: e.target.value })} className="w-10 bg-[#242424] border rounded px-1 py-1 text-center" style={{ borderColor: GOLD, color: CHALK }} /></td>
                         <td className="px-1 py-1"><input value={r.hr} onChange={e => updateRow(i, { hr: e.target.value })} className="w-10 bg-[#242424] border rounded px-1 py-1 text-center" style={{ borderColor: GOLD, color: CHALK }} /></td>
                         <td className="px-1 py-1"><button onClick={() => removeRow(i)} style={{ color: NEGATIVE }}><Trash2 size={13} /></button></td>
                       </tr>
                     ))}
-                    {rows.length === 0 && <tr><td colSpan={STAT_COLUMNS.length + 4} className="px-1 py-3 text-center" style={{ color: CHALK_DIM }}>No rows yet — add one below.</td></tr>}
+                    {rows.length === 0 && <tr><td colSpan={STAT_COLUMNS.length + 7} className="px-1 py-3 text-center" style={{ color: CHALK_DIM }}>No rows yet — add one below.</td></tr>}
                   </tbody>
                 </table>
               </div>
@@ -5010,6 +5077,73 @@ function PlayerComparePage({ league, teamsById, initialNameA, initialNameB, onBa
           <CompareStatRow label="K/9" aVal={totalsA.outs > 0 ? pitchingA.k9.toFixed(1) : '—'} bVal={totalsB.outs > 0 ? pitchingB.k9.toFixed(1) : '—'} aBetter={bothPitch && pitchingA.k9 > pitchingB.k9} bBetter={bothPitch && pitchingB.k9 > pitchingA.k9} aColor={colorA} bColor={colorB} />
         </div>
       </Panel>
+    </div>
+  );
+}
+
+/* ==================================================================== */
+/* Stat leaders                                                          */
+/* ==================================================================== */
+function LeaderBoardCard({ title, accent = PRIMARY, players, valueFn, formatFn, teamsById, onOpenPlayer, sortDesc = true, limit = 5 }) {
+  const ranked = [...players].sort((a, b) => sortDesc ? valueFn(b) - valueFn(a) : valueFn(a) - valueFn(b)).slice(0, limit);
+  return (
+    <Panel>
+      <SectionTitle accent={accent}>{title}</SectionTitle>
+      <div className="px-2 pb-3">
+        {ranked.length === 0 && <p className="px-2 py-3 text-sm" style={{ color: CHALK_DIM }}>Not enough data yet.</p>}
+        {ranked.map((p, i) => {
+          const t = teamsById[p.teamId];
+          return (
+            <button key={p.playerId} onClick={() => onOpenPlayer(p.name)} className="w-full flex items-center gap-2 px-2 py-1.5 text-left" style={{ borderTop: i > 0 ? `1px solid ${LINE}` : 'none' }}>
+              <span className="w-4 text-xs font-mono flex-shrink-0" style={{ color: CHALK_DIM }}>{i + 1}</span>
+              {t && <TeamMark team={t} size={14} />}
+              <span className="flex-1 text-sm font-semibold truncate" style={{ color: CHALK }}>{p.name}</span>
+              <span className="text-sm font-mono font-bold flex-shrink-0" style={{ color: accent }}>{formatFn(valueFn(p))}</span>
+            </button>
+          );
+        })}
+      </div>
+    </Panel>
+  );
+}
+
+function StatLeadersView({ season, teamsById, onOpenPlayer }) {
+  const players = useMemo(() => computeSeasonPlayerLeaders(season, teamsById), [season, teamsById]);
+  // Small samples make rate stats (AVG/OPS/ERA…) meaningless — a 1-for-1
+  // game is a .1000 hitter otherwise. Counting stats (HR, RBI, K…) don't
+  // need a qualifier since more games played only helps, never inflates.
+  const batters = players.filter(p => p.totals.ab >= 3);
+  const pitchers = players.filter(p => p.totals.outs >= 3);
+  const fmtRate = (v) => v.toFixed(3).replace(/^0/, '');
+  const fmt2 = (v) => v.toFixed(2);
+  const fmt1 = (v) => (v >= 0 ? '+' : '') + v.toFixed(1);
+  const fmtInt = (v) => String(Math.round(v));
+
+  return (
+    <div className="p-4 space-y-4">
+      <Panel className="overflow-hidden" style={{ borderColor: GOLD }}>
+        <SectionTitle accent={GOLD}>Stat leaders</SectionTitle>
+        <p className="px-4 pb-4 text-xs" style={{ color: CHALK_DIM }}>Ranked from imported game stats for this season only. Rate stats (AVG, OPS, ERA, WHIP) need at least 3 AB or 1 IP to qualify. WAR is a simplified estimate — linear-weights batting runs plus runs saved vs. this season's league-average ERA, not an official sabermetric figure.</p>
+      </Panel>
+
+      {players.length === 0 ? (
+        <Panel><p className="px-4 py-8 text-sm text-center" style={{ color: CHALK_DIM }}>No stats imported yet this season — import a game's box score from the Schedule tab.</p></Panel>
+      ) : (
+        <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+          <LeaderBoardCard title="Batting Average" players={batters} valueFn={p => p.batting.avg} formatFn={fmtRate} teamsById={teamsById} onOpenPlayer={onOpenPlayer} />
+          <LeaderBoardCard title="OPS" accent={GOLD} players={batters} valueFn={p => p.batting.ops} formatFn={fmtRate} teamsById={teamsById} onOpenPlayer={onOpenPlayer} />
+          <LeaderBoardCard title="On-Base %" players={batters} valueFn={p => p.batting.obp} formatFn={fmtRate} teamsById={teamsById} onOpenPlayer={onOpenPlayer} />
+          <LeaderBoardCard title="Slugging %" players={batters} valueFn={p => p.batting.slg} formatFn={fmtRate} teamsById={teamsById} onOpenPlayer={onOpenPlayer} />
+          <LeaderBoardCard title="Home Runs" players={players} valueFn={p => p.totals.hr} formatFn={fmtInt} teamsById={teamsById} onOpenPlayer={onOpenPlayer} />
+          <LeaderBoardCard title="RBI" players={players} valueFn={p => p.totals.rbi} formatFn={fmtInt} teamsById={teamsById} onOpenPlayer={onOpenPlayer} />
+          <LeaderBoardCard title="Hits" players={players} valueFn={p => p.totals.h} formatFn={fmtInt} teamsById={teamsById} onOpenPlayer={onOpenPlayer} />
+          <LeaderBoardCard title="Runs" players={players} valueFn={p => p.totals.r} formatFn={fmtInt} teamsById={teamsById} onOpenPlayer={onOpenPlayer} />
+          <LeaderBoardCard title="ERA" accent={NEGATIVE} players={pitchers} valueFn={p => p.pitching.era} formatFn={fmt2} teamsById={teamsById} onOpenPlayer={onOpenPlayer} sortDesc={false} />
+          <LeaderBoardCard title="WHIP" accent={NEGATIVE} players={pitchers} valueFn={p => p.pitching.whip} formatFn={fmt2} teamsById={teamsById} onOpenPlayer={onOpenPlayer} sortDesc={false} />
+          <LeaderBoardCard title="Strikeouts (Pitching)" players={pitchers} valueFn={p => p.totals.k} formatFn={fmtInt} teamsById={teamsById} onOpenPlayer={onOpenPlayer} />
+          <LeaderBoardCard title="WAR" accent={GOLD} players={players} valueFn={p => p.war} formatFn={fmt1} teamsById={teamsById} onOpenPlayer={onOpenPlayer} />
+        </div>
+      )}
     </div>
   );
 }
@@ -6818,6 +6952,8 @@ function App() {
       body = <ScheduleView season={activeSeason} settings={activeSeason.settings} saveScore={saveScore} deleteGame={deleteGame} declareForfeit={declareForfeit} setWinnerOverride={setWinnerOverride} teamsById={teamsById} sport={sport} updateGameNotes={updateGameNotes} updateGameStreamUrl={updateGameStreamUrl} saveGamePlayerStats={saveGamePlayerStats} setGameOngoing={setGameOngoing} swapHomeAway={swapHomeAway} />;
     } else if (tab === 'stats') {
       body = <StatsView standings={standings} onOpenTeam={onOpenTeam} season={activeSeason} />;
+    } else if (tab === 'leaders') {
+      body = <StatLeadersView season={activeSeason} teamsById={teamsById} onOpenPlayer={onOpenPlayer} />;
     } else if (tab === 'awards') {
       body = <AwardsView league={league} season={activeSeason} standings={standings} teamsById={teamsById} addAwardDef={addAwardDef} updateAwardDef={updateAwardDef} removeAwardDef={removeAwardDef} setAwardWinner={setAwardWinner} clearAwardWinner={clearAwardWinner} />;
     } else if (tab === 'odds') {
@@ -6894,6 +7030,7 @@ function App() {
           {isLoggedIn && <TabBtn active={tab === 'roster'} onClick={() => setTab('roster')} icon={ClipboardList} label="Roster" />}
           <TabBtn active={tab === 'schedule'} onClick={() => setTab('schedule')} icon={Calendar} label="Schedule" />
           <TabBtn active={tab === 'stats'} onClick={() => setTab('stats')} icon={Activity} label="Stats" />
+          <TabBtn active={tab === 'leaders'} onClick={() => setTab('leaders')} icon={TrendingUp} label="Leaders" />
           <TabBtn active={tab === 'awards'} onClick={() => setTab('awards')} icon={AwardIcon} label="Awards" />
           <TabBtn active={tab === 'odds'} onClick={() => setTab('odds')} icon={Percent} label="Odds" />
           <TabBtn active={tab === 'extras'} onClick={() => setTab('extras')} icon={Sparkles} label="Extras" />
