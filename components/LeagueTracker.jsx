@@ -269,6 +269,68 @@ function getPlayoffRoundName(settings, round, roundsCount) {
   return `Round ${round}`;
 }
 
+// Player stat import (OCR from an in-game stat screenshot). Column order is
+// fixed by the game's own stat screen: player name, then 13 numeric columns.
+// Batting home runs aren't on that screen at all, so they're always a manual
+// admin entry — never OCR'd.
+const STAT_COLUMNS = [
+  { key: 'ab', label: 'AB' },
+  { key: 'r', label: 'R' },
+  { key: 'h', label: 'H' },
+  { key: 'rbi', label: 'RBI' },
+  { key: 'bb', label: 'BB' },
+  { key: 'so', label: 'SO' },
+  { key: 'ip', label: 'IP' },
+  { key: 'ha', label: 'HA' },
+  { key: 'er', label: 'ER' },
+  { key: 'bbAllowed', label: 'BB' },
+  { key: 'k', label: "K'S" },
+  { key: 'hrAllowed', label: 'HR' },
+  { key: 'e', label: 'E' },
+];
+
+// Parses Tesseract's TSV recognition output into text rows, grouped by the
+// engine's own line detection and ordered top-to-bottom, left-to-right —
+// robust to column x-position without needing to calibrate pixel ranges.
+function parseOcrTsvToLines(tsv) {
+  const rows = (tsv || '').split('\n').map(l => l.split('\t')).filter(c => c.length >= 12);
+  const lineMap = new Map();
+  rows.forEach(cols => {
+    const level = Number(cols[0]);
+    if (level !== 5) return; // word-level rows only
+    const text = (cols[11] || '').trim();
+    if (!text) return;
+    const key = `${cols[2]}-${cols[3]}-${cols[4]}`;
+    const left = Number(cols[6]), top = Number(cols[7]);
+    if (!lineMap.has(key)) lineMap.set(key, { top, words: [] });
+    lineMap.get(key).words.push({ text, left });
+  });
+  return [...lineMap.values()]
+    .sort((a, b) => a.top - b.top)
+    .map(line => line.words.sort((a, b) => a.left - b.left).map(w => w.text));
+}
+
+// Turns each OCR'd line's tokens into a guessed player-name + stat-values row.
+// The stat block is always the last 13 tokens (fixed column count) — whatever
+// comes before that, however many tokens it OCR'd as, is the player name.
+function ocrLinesToStatRows(lines) {
+  return lines
+    .map(tokens => {
+      if (tokens.length < STAT_COLUMNS.length + 1) return null;
+      const statTokens = tokens.slice(tokens.length - STAT_COLUMNS.length);
+      const nameTokens = tokens.slice(0, tokens.length - STAT_COLUMNS.length);
+      const values = {};
+      let numericHits = 0;
+      STAT_COLUMNS.forEach((col, i) => {
+        const n = parseFloat((statTokens[i] || '').replace(/[^0-9.]/g, ''));
+        if (!Number.isNaN(n)) numericHits++;
+        values[col.key] = Number.isNaN(n) ? 0 : n;
+      });
+      return { name: nameTokens.join(' '), values, confident: numericHits >= STAT_COLUMNS.length - 2 };
+    })
+    .filter(row => row && row.name && /[a-z]/i.test(row.name));
+}
+
 // Play-in tournament: a single-elimination mini-bracket among bubble teams
 // (seeded just below the automatic playoff cutoff) that determines who takes
 // the final playoff spot — the last seed is "up for grabs" rather than locked
@@ -3241,7 +3303,208 @@ function RoundRobinGenerator({ season, teamsById, generateSchedule }) {
   );
 }
 
-function ScheduleView({ season, settings, saveScore, deleteGame, declareForfeit, setWinnerOverride, teamsById, sport, updateGameNotes, updateGameStreamUrl, setGameOngoing, swapHomeAway }) {
+// Matches an OCR'd name against a team roster: exact first (normalized —
+// lowercase, punctuation stripped), then a loose substring fallback, since
+// in-game usernames often get a character or two mangled by the scan.
+function matchRosterPlayer(name, roster) {
+  const norm = (s) => (s || '').toLowerCase().replace(/[^a-z0-9]/g, '');
+  const n = norm(name);
+  if (!n) return '';
+  let hit = roster.find(p => norm(p.name) === n);
+  if (hit) return hit.id;
+  hit = roster.find(p => norm(p.name).includes(n) || n.includes(norm(p.name)));
+  return hit ? hit.id : '';
+}
+
+// Drag-to-select crop tool: draws a selection box over the uploaded image and
+// hands back a canvas cropped (and scaled to the image's real resolution) to
+// just that region, so OCR only has to read the stats table itself.
+function ImageCropper({ src, onDone, onCancel }) {
+  const containerRef = useRef(null);
+  const imgRef = useRef(null);
+  const [rect, setRect] = useState(null);
+  const dragRef = useRef(null);
+
+  const getPos = (e) => {
+    const box = containerRef.current.getBoundingClientRect();
+    return { x: Math.min(Math.max(e.clientX - box.left, 0), box.width), y: Math.min(Math.max(e.clientY - box.top, 0), box.height) };
+  };
+  const onPointerDown = (e) => { e.preventDefault(); const p = getPos(e); dragRef.current = p; setRect({ x: p.x, y: p.y, w: 0, h: 0 }); };
+  const onPointerMove = (e) => {
+    if (!dragRef.current) return;
+    const p = getPos(e), start = dragRef.current;
+    setRect({ x: Math.min(start.x, p.x), y: Math.min(start.y, p.y), w: Math.abs(p.x - start.x), h: Math.abs(p.y - start.y) });
+  };
+  const onPointerUp = () => { dragRef.current = null; };
+
+  const applyCrop = (useFull) => {
+    const img = imgRef.current;
+    if (!img) return;
+    const scaleX = img.naturalWidth / img.clientWidth, scaleY = img.naturalHeight / img.clientHeight;
+    const r = (!useFull && rect && rect.w > 8 && rect.h > 8) ? rect : { x: 0, y: 0, w: img.clientWidth, h: img.clientHeight };
+    const canvas = document.createElement('canvas');
+    canvas.width = Math.max(1, Math.round(r.w * scaleX));
+    canvas.height = Math.max(1, Math.round(r.h * scaleY));
+    canvas.getContext('2d').drawImage(img, r.x * scaleX, r.y * scaleY, r.w * scaleX, r.h * scaleY, 0, 0, canvas.width, canvas.height);
+    onDone(canvas);
+  };
+
+  return (
+    <div className="space-y-3">
+      <p className="text-xs" style={{ color: CHALK_DIM }}>Drag over just the stats table to crop to it — tighter crops usually read better. Or skip straight to using the full image.</p>
+      <div ref={containerRef} className="relative select-none" style={{ cursor: 'crosshair', touchAction: 'none' }}
+        onPointerDown={onPointerDown} onPointerMove={onPointerMove} onPointerUp={onPointerUp} onPointerLeave={onPointerUp}>
+        <img ref={imgRef} src={src} alt="" className="w-full block rounded" draggable={false} />
+        {rect && rect.w > 0 && rect.h > 0 && (
+          <div className="absolute border-2 pointer-events-none" style={{ left: rect.x, top: rect.y, width: rect.w, height: rect.h, borderColor: PRIMARY, boxShadow: '0 0 0 9999px rgba(0,0,0,0.6)' }} />
+        )}
+      </div>
+      <div className="flex flex-wrap items-center gap-2">
+        <button onClick={() => applyCrop(false)} disabled={!rect || rect.w < 8 || rect.h < 8} className="px-3 py-2 rounded font-bold text-sm disabled:opacity-40" style={{ background: PRIMARY, color: INK }}>Crop &amp; continue</button>
+        <button onClick={() => applyCrop(true)} className="px-3 py-2 rounded font-bold text-sm" style={{ background: PANEL2, color: CHALK, border: `1px solid ${LINE}` }}>Use full image</button>
+        {rect && <button onClick={() => setRect(null)} className="px-2 py-2 rounded text-xs" style={{ color: CHALK_DIM }}>Clear selection</button>}
+        <button onClick={onCancel} className="px-2 py-2 rounded text-xs ml-auto" style={{ color: CHALK_DIM }}>Cancel</button>
+      </div>
+    </div>
+  );
+}
+
+// Upload → crop → OCR → review-and-fix-up-before-saving flow for importing
+// one team's box score from a screenshot of the in-game stat screen. Also
+// doubles as the editor for stats already saved on this game/side (opens
+// straight to the review step, pre-filled, when existingRows is passed).
+function StatImportModal({ game, side, team, roster, existingRows, onSave, onClose }) {
+  const [step, setStep] = useState(existingRows ? 'review' : 'upload');
+  const [imgSrc, setImgSrc] = useState(null);
+  const [error, setError] = useState(null);
+  const emptyValues = () => Object.fromEntries(STAT_COLUMNS.map(c => [c.key, 0]));
+  const [rows, setRows] = useState(() => (existingRows || []).map(r => ({
+    name: r.name || '', playerId: r.playerId || '',
+    values: Object.fromEntries(STAT_COLUMNS.map(c => [c.key, r[c.key] || 0])),
+    hr: r.hr || 0,
+  })));
+  const fileRef = useRef(null);
+
+  const onPickFile = (e) => {
+    const file = e.target.files && e.target.files[0];
+    if (!file) return;
+    const reader = new FileReader();
+    reader.onload = () => { setImgSrc(reader.result); setStep('crop'); };
+    reader.readAsDataURL(file);
+  };
+
+  const runOcr = async (canvas) => {
+    setStep('ocr'); setError(null);
+    try {
+      const { createWorker } = await import('tesseract.js');
+      const worker = await createWorker('eng');
+      const { data } = await worker.recognize(canvas.toDataURL('image/png'));
+      await worker.terminate();
+      const parsed = ocrLinesToStatRows(parseOcrTsvToLines(data.tsv));
+      if (parsed.length === 0) setError("Couldn't find any rows in that image — try a tighter crop, or add rows manually below.");
+      setRows(parsed.map(p => ({ name: p.name, playerId: matchRosterPlayer(p.name, roster), values: p.values, hr: 0 })));
+      setStep('review');
+    } catch (e) {
+      setError('Could not read the screenshot automatically. Add rows and enter stats by hand below.');
+      setRows(rows.length ? rows : [{ name: '', playerId: '', values: emptyValues(), hr: 0 }]);
+      setStep('review');
+    }
+  };
+
+  const updateRow = (i, patch) => setRows(rs => rs.map((r, idx) => idx === i ? { ...r, ...patch } : r));
+  const updateRowValue = (i, key, v) => setRows(rs => rs.map((r, idx) => idx === i ? { ...r, values: { ...r.values, [key]: v } } : r));
+  const removeRow = (i) => setRows(rs => rs.filter((_, idx) => idx !== i));
+  const addRow = () => setRows(rs => [...rs, { name: '', playerId: '', values: emptyValues(), hr: 0 }]);
+
+  const save = () => {
+    const entries = rows.filter(r => r.playerId).map(r => {
+      const values = {};
+      STAT_COLUMNS.forEach(c => { values[c.key] = Number(r.values[c.key]) || 0; });
+      return { playerId: r.playerId, name: r.name, ...values, hr: Number(r.hr) || 0 };
+    });
+    onSave(entries);
+    onClose();
+  };
+
+  return (
+    <div className="fixed inset-0 z-50 flex items-center justify-center p-3" style={{ background: 'rgba(0,0,0,0.75)' }}>
+      <div className="w-full max-w-3xl max-h-[90vh] overflow-y-auto rounded-xl" style={{ background: PANEL, border: `1px solid ${LINE}` }}>
+        <div className="flex items-center justify-between px-4 py-3" style={{ borderBottom: `1px solid ${LINE}` }}>
+          <div>
+            <div className="text-[10px] uppercase font-bold" style={{ color: PRIMARY }}>Import stats</div>
+            <div className="text-sm font-bold" style={{ color: CHALK }}>{team ? team.name : (side === 'home' ? 'Home' : 'Away')} · {side === 'home' ? 'Home' : 'Away'}</div>
+          </div>
+          <button onClick={onClose} className="p-1 rounded" style={{ color: CHALK_DIM }}><X size={18} /></button>
+        </div>
+        <div className="p-4">
+          {step === 'upload' && (
+            <div className="space-y-3">
+              <p className="text-sm" style={{ color: CHALK_DIM }}>Upload a screenshot of {team ? team.name : 'this team'}'s in-game stat screen. You'll get to crop it and check the results before anything saves.</p>
+              <input ref={fileRef} type="file" accept="image/*" onChange={onPickFile} className="hidden" />
+              <button onClick={() => fileRef.current && fileRef.current.click()} className="px-4 py-3 rounded font-bold text-sm flex items-center gap-2" style={{ background: PRIMARY, color: INK }}><Upload size={16} /> Choose screenshot</button>
+              <div>
+                <button onClick={() => { setRows([{ name: '', playerId: '', values: emptyValues(), hr: 0 }]); setStep('review'); }} className="text-xs font-semibold" style={{ color: CHALK_DIM }}>Skip — enter stats manually instead</button>
+              </div>
+            </div>
+          )}
+          {step === 'crop' && imgSrc && (
+            <ImageCropper src={imgSrc} onDone={runOcr} onCancel={() => setStep('upload')} />
+          )}
+          {step === 'ocr' && (
+            <div className="py-10 flex flex-col items-center gap-3">
+              <RefreshCw size={22} className="animate-spin" style={{ color: PRIMARY }} />
+              <p className="text-sm" style={{ color: CHALK_DIM }}>Reading the screenshot…</p>
+            </div>
+          )}
+          {step === 'review' && (
+            <div className="space-y-3">
+              {error && <p className="text-xs" style={{ color: NEGATIVE }}>{error}</p>}
+              <p className="text-xs" style={{ color: CHALK_DIM }}>Check each row, match it to a roster player, and fix anything the scan misread — nothing saves until you hit Save. Batting home runs aren't on the stat screen, so add those by hand.</p>
+              <div className="overflow-x-auto">
+                <table className="text-xs" style={{ color: CHALK, borderCollapse: 'collapse' }}>
+                  <thead>
+                    <tr>
+                      <th className="text-left px-1 pb-1">Name</th>
+                      <th className="text-left px-1 pb-1">Matched to</th>
+                      {STAT_COLUMNS.map((c, i) => <th key={i} className="px-1 pb-1">{c.label}</th>)}
+                      <th className="px-1 pb-1" style={{ color: GOLD }}>HR</th>
+                      <th></th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {rows.map((r, i) => (
+                      <tr key={i} style={{ borderTop: `1px solid ${LINE}` }}>
+                        <td className="px-1 py-1"><input value={r.name} onChange={e => updateRow(i, { name: e.target.value })} className="w-28 bg-[#242424] border rounded px-1 py-1" style={{ borderColor: LINE, color: CHALK }} /></td>
+                        <td className="px-1 py-1">
+                          <select value={r.playerId} onChange={e => updateRow(i, { playerId: e.target.value })} className="bg-[#242424] border rounded px-1 py-1" style={{ borderColor: r.playerId ? LINE : NEGATIVE, color: CHALK }}>
+                            <option value="">— unmatched —</option>
+                            {roster.map(p => <option key={p.id} value={p.id}>{p.name}</option>)}
+                          </select>
+                        </td>
+                        {STAT_COLUMNS.map(c => (
+                          <td key={c.key} className="px-1 py-1"><input value={r.values[c.key]} onChange={e => updateRowValue(i, c.key, e.target.value)} className="w-10 bg-[#242424] border rounded px-1 py-1 text-center" style={{ borderColor: LINE, color: CHALK }} /></td>
+                        ))}
+                        <td className="px-1 py-1"><input value={r.hr} onChange={e => updateRow(i, { hr: e.target.value })} className="w-10 bg-[#242424] border rounded px-1 py-1 text-center" style={{ borderColor: GOLD, color: CHALK }} /></td>
+                        <td className="px-1 py-1"><button onClick={() => removeRow(i)} style={{ color: NEGATIVE }}><Trash2 size={13} /></button></td>
+                      </tr>
+                    ))}
+                    {rows.length === 0 && <tr><td colSpan={STAT_COLUMNS.length + 4} className="px-1 py-3 text-center" style={{ color: CHALK_DIM }}>No rows yet — add one below.</td></tr>}
+                  </tbody>
+                </table>
+              </div>
+              <div className="flex flex-wrap items-center gap-2">
+                <button onClick={addRow} className="px-2 py-1.5 rounded text-xs font-semibold flex items-center gap-1" style={{ background: PANEL2, color: CHALK, border: `1px solid ${LINE}` }}><Plus size={13} /> Add row</button>
+                <button onClick={save} className="px-3 py-2 rounded font-bold text-sm ml-auto flex items-center gap-1" style={{ background: PRIMARY, color: INK }}><Save size={14} /> Save stats</button>
+              </div>
+            </div>
+          )}
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function ScheduleView({ season, settings, saveScore, deleteGame, declareForfeit, setWinnerOverride, teamsById, sport, updateGameNotes, updateGameStreamUrl, saveGamePlayerStats, setGameOngoing, swapHomeAway }) {
   const { isLoggedIn } = useAuth();
   const scheduleMode = settings.scheduleMode || 'date';
   const [editingId, setEditingId] = useState(null);
@@ -3250,6 +3513,7 @@ function ScheduleView({ season, settings, saveScore, deleteGame, declareForfeit,
   const [liveForm, setLiveForm] = useState({ away: '0', home: '0', period: '1', half: 'top' });
   const [filter, setFilter] = useState('all');
   const [openLabel, setOpenLabel] = useState(null);
+  const [statImport, setStatImport] = useState(null); // { gameId, side } | null
   // Byes never appear on the schedule — there's no game to score, so they'd
   // just be a dead row. advancePlayoffs/advancePlayIn still use the
   // underlying isBye game objects in season.games to resolve slot winners;
@@ -3486,6 +3750,15 @@ function ScheduleView({ season, settings, saveScore, deleteGame, declareForfeit,
                             <span className="text-[10px] uppercase flex-shrink-0 flex items-center gap-1" style={{ color: CHALK_DIM }}><Video size={11} /> Stream:</span>
                             <input defaultValue={g.streamUrl || ''} onBlur={e => updateGameStreamUrl(g.id, e.target.value.trim())} placeholder="Twitch or YouTube link" className="flex-1 bg-[#242424] border rounded px-2 py-1 text-xs" style={{ borderColor: LINE, color: CHALK }} />
                           </div>
+                          <div className="flex flex-wrap items-center gap-2 pt-1" style={{ borderTop: `1px solid ${LINE}` }}>
+                            <span className="text-[10px] uppercase flex-shrink-0" style={{ color: CHALK_DIM }}>Stats:</span>
+                            <button onClick={() => setStatImport({ gameId: g.id, side: 'away' })} className="px-2 py-1 rounded text-[11px] font-semibold" style={{ background: PANEL, color: CHALK, border: `1px solid ${LINE}` }}>
+                              {g.playerStats && g.playerStats.away && g.playerStats.away.length > 0 ? `Away: ${g.playerStats.away.length} players ✓` : 'Import away stats'}
+                            </button>
+                            <button onClick={() => setStatImport({ gameId: g.id, side: 'home' })} className="px-2 py-1 rounded text-[11px] font-semibold" style={{ background: PANEL, color: CHALK, border: `1px solid ${LINE}` }}>
+                              {g.playerStats && g.playerStats.home && g.playerStats.home.length > 0 ? `Home: ${g.playerStats.home.length} players ✓` : 'Import home stats'}
+                            </button>
+                          </div>
                         </div>
                       )}
                       {editingId !== g.id && g.notes && (
@@ -3499,6 +3772,22 @@ function ScheduleView({ season, settings, saveScore, deleteGame, declareForfeit,
           })}
         </div>
       </Panel>
+      {statImport && (() => {
+        const g = (season.games || []).find(gg => gg.id === statImport.gameId);
+        if (!g) return null;
+        const teamId = statImport.side === 'home' ? g.homeTeamId : g.awayTeamId;
+        const team = teamsById[teamId];
+        const member = (season.members || []).find(m => m.teamId === teamId);
+        const roster = (member && member.roster) || [];
+        const existingRows = g.playerStats && g.playerStats[statImport.side];
+        return (
+          <StatImportModal
+            game={g} side={statImport.side} team={team} roster={roster} existingRows={existingRows}
+            onSave={(entries) => saveGamePlayerStats(g.id, statImport.side, entries)}
+            onClose={() => setStatImport(null)}
+          />
+        );
+      })()}
     </div>
   );
 }
@@ -5921,6 +6210,11 @@ function App() {
     const seasons = league.seasons.map(s => s.id === activeSeason.id ? { ...s, games: s.games.map(g => g.id === gameId ? { ...g, streamUrl } : g) } : s);
     persistLeague({ ...league, seasons });
   };
+  const saveGamePlayerStats = (gameId, side, entries) => {
+    if (!league || !activeSeason) return;
+    const seasons = league.seasons.map(s => s.id === activeSeason.id ? { ...s, games: s.games.map(g => g.id === gameId ? { ...g, playerStats: { ...(g.playerStats || {}), [side]: entries } } : g) } : s);
+    persistLeague({ ...league, seasons });
+  };
   const saveSettings = (settings) => {
     if (!league || !activeSeason) return;
     const seasons = league.seasons.map(s => s.id === activeSeason.id ? { ...s, settings } : s);
@@ -6011,7 +6305,7 @@ function App() {
     } else if (tab === 'roster' && isLoggedIn) {
       body = <RosterManagementView season={activeSeason} teamsById={teamsById} updatePlayerField={updatePlayerField} removePlayer={removePlayer} addPlayer={addPlayer} addPlayersBulk={addPlayersBulk} tradePlayer={tradePlayer} setPlayerSuspended={setPlayerSuspended} />;
     } else if (tab === 'schedule') {
-      body = <ScheduleView season={activeSeason} settings={activeSeason.settings} saveScore={saveScore} deleteGame={deleteGame} declareForfeit={declareForfeit} setWinnerOverride={setWinnerOverride} teamsById={teamsById} sport={sport} updateGameNotes={updateGameNotes} updateGameStreamUrl={updateGameStreamUrl} setGameOngoing={setGameOngoing} swapHomeAway={swapHomeAway} />;
+      body = <ScheduleView season={activeSeason} settings={activeSeason.settings} saveScore={saveScore} deleteGame={deleteGame} declareForfeit={declareForfeit} setWinnerOverride={setWinnerOverride} teamsById={teamsById} sport={sport} updateGameNotes={updateGameNotes} updateGameStreamUrl={updateGameStreamUrl} saveGamePlayerStats={saveGamePlayerStats} setGameOngoing={setGameOngoing} swapHomeAway={swapHomeAway} />;
     } else if (tab === 'stats') {
       body = <StatsView standings={standings} onOpenTeam={onOpenTeam} season={activeSeason} />;
     } else if (tab === 'awards') {
