@@ -1865,15 +1865,21 @@ async function saveObj(key, obj) { return storSet(key, JSON.stringify(obj)); }
 function TabBtn({ active, onClick, icon: Icon, label }) {
   return (
     <button onClick={onClick}
-      className="font-head flex flex-col items-center justify-center gap-1 px-2 py-2 rounded-full text-[10px] font-semibold uppercase tracking-wide transition-colors flex-shrink-0"
-      style={{ minWidth: 54, background: active ? PRIMARY : 'transparent', color: active ? INK : CHALK_DIM, boxShadow: active ? `0 2px 8px ${PRIMARY}55` : 'none' }}>
-      <Icon size={15} />
+      className="font-head relative flex items-center gap-1.5 px-3 py-3 text-[12px] font-semibold uppercase tracking-wide transition-colors flex-shrink-0 whitespace-nowrap"
+      style={{ color: active ? PRIMARY : CHALK_DIM }}>
+      <Icon size={14} />
       {label}
+      <span className="absolute left-2 right-2 bottom-0 rounded-t" style={{ height: 2, background: active ? PRIMARY : 'transparent' }} />
     </button>
   );
 }
-function Panel({ children, className = '', style = {} }) {
-  return <div className={`rounded-xl border ${className}`} style={{ background: PANEL, borderColor: LINE, boxShadow: '0 1px 3px rgba(0,0,0,0.3)', ...style }}>{children}</div>;
+function Panel({ children, className = '', style = {}, accent }) {
+  return (
+    <div className={`rounded-lg border overflow-hidden ${className}`} style={{ background: PANEL, borderColor: LINE, boxShadow: '0 1px 3px rgba(0,0,0,0.3)', ...style }}>
+      {accent && <div style={{ height: 3, background: accent }} />}
+      {children}
+    </div>
+  );
 }
 function SectionTitle({ children, right, accent = PRIMARY }) {
   return (
@@ -2299,7 +2305,7 @@ function TeamRegistryView({ teamsIndex, teamsById, onBack, onCreate, onOpenHisto
       </Panel>
       <Panel className="overflow-hidden" style={{ borderColor: PRIMARY }}>
         <SectionTitle accent={PRIMARY}>All teams ({teamsIndex.length})</SectionTitle>
-        <div className="px-3 pb-3 space-y-3">
+        <div className="px-3 pb-3 grid grid-cols-1 md:grid-cols-2 gap-3">
           {teamsIndex.length === 0 && <p className="px-1 py-4 text-sm" style={{ color: CHALK_DIM }}>No teams yet.</p>}
           {teamsIndex.map(t => {
             const gt = teamsById[t.id] || { id: t.id, name: t.name, color: null, logoUrl: null, wordmarkUrl: null };
@@ -2510,26 +2516,27 @@ function HomeView({ season, teamsById, settings, onOpenTeam, h2hMatrix, sport, o
   const seededStandings = buildMainBracketSeeds(liveStandings, settings, playInWinnerId);
   const allGamesChrono = sortGamesChronologically((season.games || []).filter(g => !g.isBye), settings.scheduleMode || 'date');
 
+  const newsPanel = (news || []).length > 0 && (
+    <Panel accent={PRIMARY} className="overflow-hidden">
+      <SectionTitle accent={PRIMARY} right={<button onClick={onViewNews} className="text-[11px] font-bold" style={{ color: PRIMARY }}>View all</button>}>Latest news</SectionTitle>
+      <div className="px-2 pb-3">
+        {news.slice(0, 3).map(n => (
+          <button key={n.id} onClick={onViewNews} className="w-full flex items-center gap-2 text-left px-2 py-2 rounded" style={{ borderBottom: `1px solid ${LINE}` }}>
+            {n.imageUrl && <img src={n.imageUrl} alt="" className="w-10 h-10 object-cover rounded flex-shrink-0" />}
+            <div className="min-w-0 flex-1">
+              <div className="font-head text-sm font-semibold truncate" style={{ color: CHALK }}>{n.title}</div>
+              <div className="text-[11px] truncate" style={{ color: CHALK_DIM }}>{new Date(n.at).toLocaleDateString(undefined, { month: 'short', day: 'numeric' })}{n.author ? ` · By ${n.author}` : ''}{n.body ? ` · ${n.body.slice(0, 60)}${n.body.length > 60 ? '…' : ''}` : ''}</div>
+            </div>
+          </button>
+        ))}
+      </div>
+    </Panel>
+  );
+
   return (
     <div className="p-4 space-y-4">
       <style>{`@keyframes lt-live-pulse { 0%, 100% { opacity: 1; } 50% { opacity: 0.3; } }`}</style>
       {season.championTeamId && <ChampionBanner team={teamsById[season.championTeamId]} />}
-      {(news || []).length > 0 && (
-        <Panel className="overflow-hidden" style={{ borderColor: PRIMARY }}>
-          <SectionTitle accent={PRIMARY} right={<button onClick={onViewNews} className="text-[11px] font-bold" style={{ color: PRIMARY }}>View all</button>}>Latest news</SectionTitle>
-          <div className="px-2 pb-3">
-            {news.slice(0, 3).map(n => (
-              <button key={n.id} onClick={onViewNews} className="w-full flex items-center gap-2 text-left px-2 py-2 rounded" style={{ borderBottom: `1px solid ${LINE}` }}>
-                {n.imageUrl && <img src={n.imageUrl} alt="" className="w-10 h-10 object-cover rounded flex-shrink-0" />}
-                <div className="min-w-0 flex-1">
-                  <div className="font-head text-sm font-semibold truncate" style={{ color: CHALK }}>{n.title}</div>
-                  <div className="text-[11px] truncate" style={{ color: CHALK_DIM }}>{new Date(n.at).toLocaleDateString(undefined, { month: 'short', day: 'numeric' })}{n.author ? ` · By ${n.author}` : ''}{n.body ? ` · ${n.body.slice(0, 60)}${n.body.length > 60 ? '…' : ''}` : ''}</div>
-                </div>
-              </button>
-            ))}
-          </div>
-        </Panel>
-      )}
       {playInGames.length > 0 && (
         <PlayInBracket standings={liveStandings} settings={settings} playInGames={playInGames} teamsById={teamsById} onStart={onStartPlayIn} onClear={onClearPlayIn} onOpenTeam={onOpenTeam} onOpenCompare={onOpenCompare} />
       )}
@@ -2617,6 +2624,8 @@ function HomeView({ season, teamsById, settings, onOpenTeam, h2hMatrix, sport, o
         );
       })()}
 
+      <div className="grid grid-cols-1 lg:grid-cols-3 gap-4 items-start">
+      <div className="lg:col-span-2 space-y-4">
       <Panel>
         <SectionTitle>Around the league</SectionTitle>
         <div className="grid grid-cols-1 sm:grid-cols-2 gap-2 px-3 pb-4">
@@ -2728,6 +2737,11 @@ function HomeView({ season, teamsById, settings, onOpenTeam, h2hMatrix, sport, o
           <p className="px-4 pb-4 text-[11px]" style={{ color: CHALK_DIM }}>"What needs to happen" for the #1 seed, a 1st-round bye (if the bracket has one), and each division title.</p>
         </Panel>
       )}
+      </div>
+      <div className="space-y-4">
+        {newsPanel}
+      </div>
+      </div>
     </div>
   );
 }
@@ -4770,23 +4784,8 @@ function TeamPage({ season, settings, team, standingsRow, teamsById, h2hMatrix, 
         </div>
       </div>
 
-      {isLoggedIn && <RebrandPanel team={team} color={color} onRebrand={onRebrand} onClearRebrand={onClearRebrand} />}
-
-      {nextGameInfo && (
-        <Panel className="overflow-hidden" style={{ borderColor: color }}>
-          <SectionTitle accent={color}>Next game</SectionTitle>
-          <div className="px-4 pb-4 flex items-center justify-between gap-2">
-            <div className="flex items-center gap-2 min-w-0">
-              <span className="text-sm" style={{ color: CHALK }}>{nextGameInfo.isHome ? 'vs' : '@'}</span>
-              {nextGameInfo.oppTeam && <TeamMark team={nextGameInfo.oppTeam} size={20} />}
-              <span className="text-sm font-semibold truncate" style={{ color: CHALK }}>{nextGameInfo.oppTeam ? nextGameInfo.oppTeam.name : 'TBD'}</span>
-              {nextGameInfo.date && <span className="text-xs flex-shrink-0" style={{ color: CHALK_DIM }}>{nextGameInfo.date}</span>}
-            </div>
-            <span className="font-mono text-sm font-bold flex-shrink-0" style={{ color: nextGameInfo.myOdds >= 50 ? WIN : CHALK_DIM }}>{nextGameInfo.myOdds.toFixed(0)}%</span>
-          </div>
-        </Panel>
-      )}
-
+      <div className="grid grid-cols-1 lg:grid-cols-3 gap-4 items-start">
+      <div className="lg:col-span-2 space-y-4">
       {standingsRow && (
         <>
           <Panel className="overflow-hidden" style={{ borderColor: color }}>
@@ -4855,20 +4854,6 @@ function TeamPage({ season, settings, team, standingsRow, teamsById, h2hMatrix, 
       <RosterPanel member={member} color={color} updatePlayerField={(pid, f, v) => updatePlayerField(team.id, pid, f, v)} removePlayer={(pid) => removePlayer(team.id, pid)} addPlayer={(n, s) => addPlayer(team.id, n, s)} addPlayersBulk={(rows) => addPlayersBulk(team.id, rows)} teamOptions={season.members.filter(m => m.teamId !== team.id).map(m => ({ id: m.teamId, name: (teamsById[m.teamId] && teamsById[m.teamId].name) || m.scheduleName || 'Unknown team' }))} onTrade={(toTeamId, playerId) => tradePlayer(team.id, toTeamId, playerId)} onSuspend={(pid, susp, reason, dur) => setPlayerSuspended(team.id, pid, susp, reason, dur)} onOpenPlayer={onOpenPlayer} teamGamesPlayed={games.filter(g => g.played && !g.isBye).length} />
 
       <Panel className="overflow-hidden" style={{ borderColor: color }}>
-        <SectionTitle accent={color}>Head-to-head</SectionTitle>
-        <div className="px-2 pb-3">
-          {h2hRows.length === 0 && <p className="px-2 py-3 text-sm" style={{ color: CHALK_DIM }}>No games played against anyone yet this season.</p>}
-          {h2hRows.map(r => (
-            <div key={r.id} className="flex items-center gap-2 px-2 py-2 text-sm" style={{ borderBottom: `1px solid ${LINE}` }}>
-              <span className="flex-1 truncate" style={{ color: CHALK }}>{r.name}</span>
-              <span className="font-mono text-xs" style={{ color: r.w >= r.l ? WIN : NEGATIVE }}>{r.w}-{r.l}</span>
-              <span className="font-mono text-xs w-14 text-right" style={{ color: CHALK_DIM }}>{r.diff > 0 ? `+${r.diff}` : r.diff} rd</span>
-            </div>
-          ))}
-        </div>
-      </Panel>
-
-      <Panel className="overflow-hidden" style={{ borderColor: color }}>
         <SectionTitle accent={color}>Schedule &amp; results</SectionTitle>
         <div className="px-2 pb-3 max-h-[440px] overflow-y-auto">
           {games.length === 0 && <p className="px-2 py-4 text-sm" style={{ color: CHALK_DIM }}>No games scheduled for this team.</p>}
@@ -4894,6 +4879,41 @@ function TeamPage({ season, settings, team, standingsRow, teamsById, h2hMatrix, 
           })}
         </div>
       </Panel>
+      </div>
+
+      <div className="space-y-4">
+        {isLoggedIn && <RebrandPanel team={team} color={color} onRebrand={onRebrand} onClearRebrand={onClearRebrand} />}
+
+        {nextGameInfo && (
+          <Panel className="overflow-hidden" style={{ borderColor: color }}>
+            <SectionTitle accent={color}>Next game</SectionTitle>
+            <div className="px-4 pb-4 flex items-center justify-between gap-2">
+              <div className="flex items-center gap-2 min-w-0">
+                <span className="text-sm" style={{ color: CHALK }}>{nextGameInfo.isHome ? 'vs' : '@'}</span>
+                {nextGameInfo.oppTeam && <TeamMark team={nextGameInfo.oppTeam} size={20} />}
+                <span className="text-sm font-semibold truncate" style={{ color: CHALK }}>{nextGameInfo.oppTeam ? nextGameInfo.oppTeam.name : 'TBD'}</span>
+              </div>
+              <span className="font-mono text-sm font-bold flex-shrink-0" style={{ color: nextGameInfo.myOdds >= 50 ? WIN : CHALK_DIM }}>{nextGameInfo.myOdds.toFixed(0)}%</span>
+            </div>
+            {nextGameInfo.date && <p className="px-4 pb-3 text-xs" style={{ color: CHALK_DIM }}>{nextGameInfo.date}</p>}
+          </Panel>
+        )}
+
+        <Panel className="overflow-hidden" style={{ borderColor: color }}>
+          <SectionTitle accent={color}>Head-to-head</SectionTitle>
+          <div className="px-2 pb-3">
+            {h2hRows.length === 0 && <p className="px-2 py-3 text-sm" style={{ color: CHALK_DIM }}>No games played against anyone yet this season.</p>}
+            {h2hRows.map(r => (
+              <div key={r.id} className="flex items-center gap-2 px-2 py-2 text-sm" style={{ borderBottom: `1px solid ${LINE}` }}>
+                <span className="flex-1 truncate" style={{ color: CHALK }}>{r.name}</span>
+                <span className="font-mono text-xs" style={{ color: r.w >= r.l ? WIN : NEGATIVE }}>{r.w}-{r.l}</span>
+                <span className="font-mono text-xs w-14 text-right" style={{ color: CHALK_DIM }}>{r.diff > 0 ? `+${r.diff}` : r.diff} rd</span>
+              </div>
+            ))}
+          </div>
+        </Panel>
+      </div>
+      </div>
     </div>
   );
 }
@@ -5143,26 +5163,28 @@ function PlayerPage({ league, teamsById, playerName, onBack, onOpenTeam, onOpenP
         </div>
       </div>
 
-      <Panel>
-        <SectionTitle>Teams played on</SectionTitle>
-        <div className="px-2 pb-2">
-          {seasonsInfo.map((info, i) => {
-            const t = teamsById[info.teamId];
-            return (
-              <button key={i} onClick={() => onOpenTeam(info.teamId)} className="w-full flex items-center gap-2 px-2 py-2 text-left" style={{ borderTop: i > 0 ? `1px solid ${LINE}` : 'none' }}>
-                {t && <TeamMark team={t} size={18} />}
-                <span className="flex-1 text-sm font-semibold truncate" style={{ color: CHALK }}>{t ? t.name : 'Unknown team'}</span>
-                <span className="text-xs flex-shrink-0" style={{ color: CHALK_DIM }}>{info.season.name}</span>
-              </button>
-            );
-          })}
-        </div>
-      </Panel>
-
       {gameLog.length === 0 ? (
-        <Panel><p className="px-4 py-8 text-sm text-center" style={{ color: CHALK_DIM }}>No stats imported for this player yet.</p></Panel>
-      ) : (
         <>
+          <Panel>
+            <SectionTitle>Teams played on</SectionTitle>
+            <div className="px-2 pb-2">
+              {seasonsInfo.map((info, i) => {
+                const t = teamsById[info.teamId];
+                return (
+                  <button key={i} onClick={() => onOpenTeam(info.teamId)} className="w-full flex items-center gap-2 px-2 py-2 text-left" style={{ borderTop: i > 0 ? `1px solid ${LINE}` : 'none' }}>
+                    {t && <TeamMark team={t} size={18} />}
+                    <span className="flex-1 text-sm font-semibold truncate" style={{ color: CHALK }}>{t ? t.name : 'Unknown team'}</span>
+                    <span className="text-xs flex-shrink-0" style={{ color: CHALK_DIM }}>{info.season.name}</span>
+                  </button>
+                );
+              })}
+            </div>
+          </Panel>
+          <Panel><p className="px-4 py-8 text-sm text-center" style={{ color: CHALK_DIM }}>No stats imported for this player yet.</p></Panel>
+        </>
+      ) : (
+        <div className="grid grid-cols-1 lg:grid-cols-3 gap-4 items-start">
+        <div className="lg:col-span-2 space-y-4">
           {regBattingRows.length > 0 && (
             <Panel>
               <SectionTitle accent={PRIMARY}>Regular season batting</SectionTitle>
@@ -5223,6 +5245,64 @@ function PlayerPage({ league, teamsById, playerName, onBack, onOpenTeam, onOpenP
             </Panel>
           )}
 
+          <Panel>
+            <SectionTitle>Recent games</SectionTitle>
+            <div className="overflow-x-auto px-2 pb-4">
+              <table className="w-full text-xs" style={{ color: CHALK }}>
+                <thead><tr className="text-[10px] uppercase" style={{ color: CHALK_DIM }}>
+                  <th className="text-left px-2 py-1">Date</th><th className="text-left px-2 py-1">Opp</th><th className="px-2 py-1">AB</th><th className="px-2 py-1">H</th><th className="px-2 py-1">HR</th><th className="px-2 py-1">RBI</th><th className="px-2 py-1">IP</th><th className="px-2 py-1">K</th><th className="px-2 py-1">ER</th>
+                </tr></thead>
+                <tbody>
+                  {recentGames.map((row, i) => {
+                    const opp = teamsById[row.oppTeamId];
+                    return (
+                      <tr key={i} style={{ borderTop: `1px solid ${LINE}` }}>
+                        <td className="px-2 py-1.5 font-mono whitespace-nowrap">{row.date || '—'}</td>
+                        <td className="px-2 py-1.5 truncate">{opp ? opp.name : '—'}</td>
+                        <td className="px-2 py-1.5 text-center font-mono">{row.ab}</td>
+                        <td className="px-2 py-1.5 text-center font-mono">{row.h}</td>
+                        <td className="px-2 py-1.5 text-center font-mono">{row.hr}</td>
+                        <td className="px-2 py-1.5 text-center font-mono">{row.rbi}</td>
+                        <td className="px-2 py-1.5 text-center font-mono">{ipDisplayToOuts(row.ip) > 0 ? outsToIpDisplay(ipDisplayToOuts(row.ip)) : '—'}</td>
+                        <td className="px-2 py-1.5 text-center font-mono">{row.k}</td>
+                        <td className="px-2 py-1.5 text-center font-mono">{row.er}</td>
+                      </tr>
+                    );
+                  })}
+                </tbody>
+              </table>
+            </div>
+          </Panel>
+        </div>
+
+        <div className="space-y-4">
+          <Panel>
+            <SectionTitle>Teams played on</SectionTitle>
+            <div className="px-2 pb-2">
+              {seasonsInfo.map((info, i) => {
+                const t = teamsById[info.teamId];
+                return (
+                  <button key={i} onClick={() => onOpenTeam(info.teamId)} className="w-full flex items-center gap-2 px-2 py-2 text-left" style={{ borderTop: i > 0 ? `1px solid ${LINE}` : 'none' }}>
+                    {t && <TeamMark team={t} size={18} />}
+                    <span className="flex-1 text-sm font-semibold truncate" style={{ color: CHALK }}>{t ? t.name : 'Unknown team'}</span>
+                    <span className="text-xs flex-shrink-0" style={{ color: CHALK_DIM }}>{info.season.name}</span>
+                  </button>
+                );
+              })}
+            </div>
+          </Panel>
+
+          {awards.length > 0 && (
+            <Panel className="overflow-hidden" style={{ borderColor: GOLD }}>
+              <SectionTitle accent={GOLD}>Awards</SectionTitle>
+              <div className="px-4 pb-4 space-y-1">
+                {awards.map((a, i) => (
+                  <div key={i} className="flex items-center gap-2 text-sm" style={{ color: GOLD }}><Crown size={14} /> {a.name} <span style={{ color: CHALK_DIM }}>({a.seasonName})</span></div>
+                ))}
+              </div>
+            </Panel>
+          )}
+
           {highs.length > 0 && (
             <Panel>
               <SectionTitle accent={GOLD}>Game highs</SectionTitle>
@@ -5261,47 +5341,8 @@ function PlayerPage({ league, teamsById, playerName, onBack, onOpenTeam, onOpenP
               ))}
             </div>
           </Panel>
-
-          <Panel>
-            <SectionTitle>Recent games</SectionTitle>
-            <div className="overflow-x-auto px-2 pb-4">
-              <table className="w-full text-xs" style={{ color: CHALK }}>
-                <thead><tr className="text-[10px] uppercase" style={{ color: CHALK_DIM }}>
-                  <th className="text-left px-2 py-1">Date</th><th className="text-left px-2 py-1">Opp</th><th className="px-2 py-1">AB</th><th className="px-2 py-1">H</th><th className="px-2 py-1">HR</th><th className="px-2 py-1">RBI</th><th className="px-2 py-1">IP</th><th className="px-2 py-1">K</th><th className="px-2 py-1">ER</th>
-                </tr></thead>
-                <tbody>
-                  {recentGames.map((row, i) => {
-                    const opp = teamsById[row.oppTeamId];
-                    return (
-                      <tr key={i} style={{ borderTop: `1px solid ${LINE}` }}>
-                        <td className="px-2 py-1.5 font-mono whitespace-nowrap">{row.date || '—'}</td>
-                        <td className="px-2 py-1.5 truncate">{opp ? opp.name : '—'}</td>
-                        <td className="px-2 py-1.5 text-center font-mono">{row.ab}</td>
-                        <td className="px-2 py-1.5 text-center font-mono">{row.h}</td>
-                        <td className="px-2 py-1.5 text-center font-mono">{row.hr}</td>
-                        <td className="px-2 py-1.5 text-center font-mono">{row.rbi}</td>
-                        <td className="px-2 py-1.5 text-center font-mono">{ipDisplayToOuts(row.ip) > 0 ? outsToIpDisplay(ipDisplayToOuts(row.ip)) : '—'}</td>
-                        <td className="px-2 py-1.5 text-center font-mono">{row.k}</td>
-                        <td className="px-2 py-1.5 text-center font-mono">{row.er}</td>
-                      </tr>
-                    );
-                  })}
-                </tbody>
-              </table>
-            </div>
-          </Panel>
-
-          {awards.length > 0 && (
-            <Panel className="overflow-hidden" style={{ borderColor: GOLD }}>
-              <SectionTitle accent={GOLD}>Awards</SectionTitle>
-              <div className="px-4 pb-4 space-y-1">
-                {awards.map((a, i) => (
-                  <div key={i} className="flex items-center gap-2 text-sm" style={{ color: GOLD }}><Crown size={14} /> {a.name} <span style={{ color: CHALK_DIM }}>({a.seasonName})</span></div>
-                ))}
-              </div>
-            </Panel>
-          )}
-        </>
+        </div>
+        </div>
       )}
     </div>
   );
@@ -5975,6 +6016,7 @@ function NewsView({ league, addNewsPost, updateNewsPost, removeNewsPost }) {
   const [editBody, setEditBody] = useState('');
   const [editAuthor, setEditAuthor] = useState('');
   const [editImageUrl, setEditImageUrl] = useState(null);
+  const [expandedId, setExpandedId] = useState(null);
 
   const handleImageFile = async (file, setUrl) => {
     if (!file) return;
@@ -6011,45 +6053,66 @@ function NewsView({ league, addNewsPost, updateNewsPost, removeNewsPost }) {
 
       {news.length === 0 && <Panel><p className="px-4 py-8 text-sm text-center" style={{ color: CHALK_DIM }}>No news posted yet.</p></Panel>}
 
-      {news.map(n => (
-        <Panel key={n.id} className="overflow-hidden">
-          {editingId === n.id ? (
-            <div className="p-4 space-y-2">
-              <input value={editTitle} onChange={e => setEditTitle(e.target.value)} className="w-full bg-[#242424] border rounded px-3 py-2 text-sm font-bold" style={{ borderColor: LINE, color: CHALK }} />
-              <textarea value={editBody} onChange={e => setEditBody(e.target.value)} rows={4} className="w-full bg-[#242424] border rounded px-3 py-2 text-sm resize-none" style={{ borderColor: LINE, color: CHALK }} />
-              <input value={editAuthor} onChange={e => setEditAuthor(e.target.value)} placeholder="Writer credit (optional)" className="w-full bg-[#242424] border rounded px-3 py-2 text-sm" style={{ borderColor: LINE, color: CHALK }} />
-              <div className="flex items-center gap-2">
-                {editImageUrl && <img src={editImageUrl} alt="" className="w-16 h-16 object-cover rounded" style={{ border: `1px solid ${LINE}` }} />}
-                <label className="text-[11px] px-3 py-2 rounded cursor-pointer font-semibold" style={{ background: PANEL2, color: PRIMARY, border: `1px solid ${LINE}` }}>
-                  {imageBusy ? 'Uploading…' : editImageUrl ? 'Change thumbnail' : 'Add thumbnail'}
-                  <input type="file" accept="image/*" className="hidden" onChange={e => handleImageFile(e.target.files[0], setEditImageUrl)} />
-                </label>
-                {editImageUrl && <button onClick={() => setEditImageUrl(null)} className="text-[11px]" style={{ color: CHALK_DIM }}>Remove</button>}
-              </div>
-              <div className="flex items-center gap-2">
-                <button onClick={() => { updateNewsPost(n.id, { title: editTitle, body: editBody, author: editAuthor, imageUrl: editImageUrl }); setEditingId(null); }} className="px-3 py-1.5 rounded font-bold text-xs" style={{ background: PRIMARY, color: INK }}>Save</button>
-                <button onClick={() => setEditingId(null)} className="px-3 py-1.5 rounded text-xs" style={{ color: CHALK_DIM }}>Cancel</button>
-              </div>
-            </div>
-          ) : (
-            <>
-              {n.imageUrl && <img src={n.imageUrl} alt="" className="w-full object-cover" style={{ maxHeight: 220 }} />}
-              <SectionTitle right={isLoggedIn && (
-                <div className="flex items-center gap-1">
-                  <button onClick={() => { setEditingId(n.id); setEditTitle(n.title); setEditBody(n.body); setEditAuthor(n.author || ''); setEditImageUrl(n.imageUrl || null); }} className="p-1 rounded" style={{ color: PRIMARY }}><Pencil size={14} /></button>
-                  <button onClick={() => removeNewsPost(n.id)} className="p-1 rounded" style={{ color: NEGATIVE }}><Trash2 size={14} /></button>
+      <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
+        {news.map(n => {
+          if (editingId === n.id) {
+            return (
+              <Panel key={n.id} className="sm:col-span-2 lg:col-span-3">
+                <div className="p-4 space-y-2">
+                  <input value={editTitle} onChange={e => setEditTitle(e.target.value)} className="w-full bg-[#242424] border rounded px-3 py-2 text-sm font-bold" style={{ borderColor: LINE, color: CHALK }} />
+                  <textarea value={editBody} onChange={e => setEditBody(e.target.value)} rows={4} className="w-full bg-[#242424] border rounded px-3 py-2 text-sm resize-none" style={{ borderColor: LINE, color: CHALK }} />
+                  <input value={editAuthor} onChange={e => setEditAuthor(e.target.value)} placeholder="Writer credit (optional)" className="w-full bg-[#242424] border rounded px-3 py-2 text-sm" style={{ borderColor: LINE, color: CHALK }} />
+                  <div className="flex items-center gap-2">
+                    {editImageUrl && <img src={editImageUrl} alt="" className="w-16 h-16 object-cover rounded" style={{ border: `1px solid ${LINE}` }} />}
+                    <label className="text-[11px] px-3 py-2 rounded cursor-pointer font-semibold" style={{ background: PANEL2, color: PRIMARY, border: `1px solid ${LINE}` }}>
+                      {imageBusy ? 'Uploading…' : editImageUrl ? 'Change thumbnail' : 'Add thumbnail'}
+                      <input type="file" accept="image/*" className="hidden" onChange={e => handleImageFile(e.target.files[0], setEditImageUrl)} />
+                    </label>
+                    {editImageUrl && <button onClick={() => setEditImageUrl(null)} className="text-[11px]" style={{ color: CHALK_DIM }}>Remove</button>}
+                  </div>
+                  <div className="flex items-center gap-2">
+                    <button onClick={() => { updateNewsPost(n.id, { title: editTitle, body: editBody, author: editAuthor, imageUrl: editImageUrl }); setEditingId(null); }} className="px-3 py-1.5 rounded font-bold text-xs" style={{ background: PRIMARY, color: INK }}>Save</button>
+                    <button onClick={() => setEditingId(null)} className="px-3 py-1.5 rounded text-xs" style={{ color: CHALK_DIM }}>Cancel</button>
+                  </div>
                 </div>
-              )}>{n.title}</SectionTitle>
-              <div className="px-4 pb-4">
-                <div className="text-[10px] uppercase mb-2" style={{ color: CHALK_DIM }}>
+              </Panel>
+            );
+          }
+          const isExpanded = expandedId === n.id;
+          const excerpt = n.body && n.body.length > 140 ? `${n.body.slice(0, 140)}…` : n.body;
+          return (
+            <Panel key={n.id} className="flex flex-col">
+              {n.imageUrl ? (
+                <img src={n.imageUrl} alt="" className="w-full object-cover aspect-video" />
+              ) : (
+                <div className="w-full aspect-video flex items-center justify-center" style={{ background: PANEL2 }}><Newspaper size={28} style={{ color: CHALK_DIM }} /></div>
+              )}
+              <div className="p-3 flex-1 flex flex-col">
+                <div className="flex items-start justify-between gap-2">
+                  <h3 className="font-head text-base font-semibold leading-snug flex-1" style={{ color: CHALK }}>{n.title}</h3>
+                  {isLoggedIn && (
+                    <div className="flex items-center gap-1 flex-shrink-0">
+                      <button onClick={() => { setEditingId(n.id); setEditTitle(n.title); setEditBody(n.body); setEditAuthor(n.author || ''); setEditImageUrl(n.imageUrl || null); }} className="p-1 rounded" style={{ color: PRIMARY }}><Pencil size={13} /></button>
+                      <button onClick={() => removeNewsPost(n.id)} className="p-1 rounded" style={{ color: NEGATIVE }}><Trash2 size={13} /></button>
+                    </div>
+                  )}
+                </div>
+                <div className="text-[10px] uppercase mt-1 mb-2" style={{ color: CHALK_DIM }}>
                   {new Date(n.at).toLocaleDateString(undefined, { year: 'numeric', month: 'short', day: 'numeric' })}{n.author ? ` · By ${n.author}` : ''}
                 </div>
-                {n.body && <p className="text-sm whitespace-pre-wrap" style={{ color: CHALK }}>{n.body}</p>}
+                {n.body && (
+                  <>
+                    <p className="text-sm whitespace-pre-wrap flex-1" style={{ color: CHALK_DIM }}>{isExpanded ? n.body : excerpt}</p>
+                    {n.body.length > 140 && (
+                      <button onClick={() => setExpandedId(isExpanded ? null : n.id)} className="text-xs font-bold mt-2 self-start" style={{ color: PRIMARY }}>{isExpanded ? 'Show less' : 'Read more'}</button>
+                    )}
+                  </>
+                )}
               </div>
-            </>
-          )}
-        </Panel>
-      ))}
+            </Panel>
+          );
+        })}
+      </div>
     </div>
   );
 }
@@ -7459,21 +7522,20 @@ function App() {
 
   return (
     <div className="min-h-screen flex flex-col" style={{ background: INK, color: CHALK, fontFamily: 'ui-sans-serif, system-ui, sans-serif' }}>
-      <header className="relative px-4 pt-4 pb-4 overflow-hidden" style={{ background: `linear-gradient(105deg, ${PANEL2}, ${INK} 60%)`, borderBottom: `3px solid ${PRIMARY}`, boxShadow: '0 2px 14px rgba(0,0,0,0.35)' }}>
-        <div className="pointer-events-none absolute inset-0" style={{ background: `radial-gradient(ellipse 60% 100% at 100% 0%, ${PRIMARY}26, transparent 70%)` }} />
-        <div className="relative flex items-center gap-3">
-          {screen === 'league' && !FIXED_LEAGUE_ID && <button onClick={backToLeagues} className="p-1 rounded" style={{ color: CHALK_DIM }}><ArrowLeft size={18} /></button>}
-          {(screen === 'registry' || screen === 'history') && screen !== 'league' && <button onClick={() => setScreen(screen === 'history' ? historyBack : 'leagues')} className="p-1 rounded" style={{ color: CHALK_DIM }}><ArrowLeft size={18} /></button>}
+      <header className="sticky top-0 z-20" style={{ background: `${PANEL}f2`, backdropFilter: 'blur(10px)', WebkitBackdropFilter: 'blur(10px)', borderBottom: `1px solid ${LINE}` }}>
+        <div className="max-w-6xl mx-auto px-4 flex items-center gap-3" style={{ height: 60 }}>
+          {screen === 'league' && !FIXED_LEAGUE_ID && <button onClick={backToLeagues} className="p-1 rounded flex-shrink-0" style={{ color: CHALK_DIM }}><ArrowLeft size={18} /></button>}
+          {(screen === 'registry' || screen === 'history') && screen !== 'league' && <button onClick={() => setScreen(screen === 'history' ? historyBack : 'leagues')} className="p-1 rounded flex-shrink-0" style={{ color: CHALK_DIM }}><ArrowLeft size={18} /></button>}
           {screen === 'league' && league && league.logoUrl ? (
-            <img src={league.logoUrl} alt="" className="w-10 h-10 object-contain flex-shrink-0" />
+            <img src={league.logoUrl} alt="" className="w-8 h-8 object-contain flex-shrink-0" />
           ) : (
-            <div className="w-10 h-10 rounded-full flex items-center justify-center flex-shrink-0" style={{ background: `${PRIMARY}1f`, border: `1.5px solid ${PRIMARY}` }}>
-              <Trophy size={19} style={{ color: PRIMARY }} />
+            <div className="w-8 h-8 rounded-full flex items-center justify-center flex-shrink-0" style={{ background: `${PRIMARY}1f`, border: `1.5px solid ${PRIMARY}` }}>
+              <Trophy size={15} style={{ color: PRIMARY }} />
             </div>
           )}
           <div className="flex-1 min-w-0">
-            <div className="text-[10px] font-bold uppercase tracking-[0.22em] truncate" style={{ color: PRIMARY }}>{screen === 'league' && league && league.tagline ? league.tagline : 'League Tracker'}</div>
-            <h1 className="font-head text-2xl font-bold tracking-tight truncate uppercase" style={{ color: CHALK, letterSpacing: '-0.01em' }}>
+            <div className="text-[9px] font-bold uppercase tracking-[0.2em] truncate" style={{ color: PRIMARY }}>{screen === 'league' && league && league.tagline ? league.tagline : 'League Tracker'}</div>
+            <h1 className="font-head text-lg font-bold tracking-tight truncate uppercase leading-none" style={{ color: CHALK, letterSpacing: '-0.01em' }}>
               {screen === 'league' && league ? league.name : screen === 'registry' ? 'All Teams' : screen === 'history' ? 'Team History' : screen === 'appearance' ? 'Settings & Appearance' : 'Your Leagues'}
             </h1>
           </div>
@@ -7482,9 +7544,9 @@ function App() {
           )}
           {screen === 'league' && isLoggedIn && (
             saveStatus === 'error' ? (
-              <button onClick={retrySave} className="text-[10px] font-bold underline flex-shrink-0" style={{ color: NEGATIVE }}>Save failed — Retry</button>
+              <button onClick={retrySave} className="text-[10px] font-bold underline flex-shrink-0 hidden sm:inline" style={{ color: NEGATIVE }}>Save failed — Retry</button>
             ) : (
-              <span className="text-[10px] font-semibold flex-shrink-0" style={{ color: CHALK_DIM }}>
+              <span className="text-[10px] font-semibold flex-shrink-0 hidden sm:inline" style={{ color: CHALK_DIM }}>
                 {saveStatus === 'saving' ? 'Saving…' : saveStatus === 'saved' ? 'Saved' : ''}
               </span>
             )
@@ -7494,28 +7556,29 @@ function App() {
           </button>
           <LoginControl chalk={CHALK} chalkDim={CHALK_DIM} primary={PRIMARY} ink={INK} panel={PANEL} panel2={PANEL2} line={LINE} />
         </div>
+        {inSeasonTabs && (
+          <nav className="max-w-6xl mx-auto px-2 flex gap-1 overflow-x-auto" style={{ borderTop: `1px solid ${LINE}` }}>
+            <TabBtn active={tab === 'home'} onClick={() => setTab('home')} icon={HomeIcon} label="Home" />
+            <TabBtn active={tab === 'news'} onClick={() => setTab('news')} icon={Newspaper} label="News" />
+            <TabBtn active={tab === 'standings'} onClick={() => setTab('standings')} icon={Trophy} label="Standings" />
+            {isLoggedIn && <TabBtn active={tab === 'teams'} onClick={() => setTab('teams')} icon={Users} label="Teams" />}
+            {isLoggedIn && <TabBtn active={tab === 'roster'} onClick={() => setTab('roster')} icon={ClipboardList} label="Roster" />}
+            <TabBtn active={tab === 'schedule'} onClick={() => setTab('schedule')} icon={Calendar} label="Schedule" />
+            <TabBtn active={tab === 'stats'} onClick={() => setTab('stats')} icon={Activity} label="Stats" />
+            <TabBtn active={tab === 'leaders'} onClick={() => setTab('leaders')} icon={TrendingUp} label="Leaders" />
+            <TabBtn active={tab === 'awards'} onClick={() => setTab('awards')} icon={AwardIcon} label="Awards" />
+            <TabBtn active={tab === 'odds'} onClick={() => setTab('odds')} icon={Percent} label="Odds" />
+            <TabBtn active={tab === 'extras'} onClick={() => setTab('extras')} icon={Sparkles} label="Extras" />
+            <TabBtn active={tab === 'graphs'} onClick={() => setTab('graphs')} icon={BarChart3} label="Graphs" />
+            <TabBtn active={tab === 'info'} onClick={() => setTab('info')} icon={InfoIcon} label="Info" />
+            <TabBtn active={tab === 'settings'} onClick={() => setTab('settings')} icon={SettingsIcon} label="Settings" />
+          </nav>
+        )}
       </header>
 
-      <main className="flex-1 overflow-y-auto pb-20">{body}</main>
-
-      {inSeasonTabs && (
-        <nav className="fixed bottom-0 left-0 right-0 flex gap-1 px-2 py-2 overflow-x-auto" style={{ background: PANEL, borderTop: `1px solid ${LINE}` }}>
-          <TabBtn active={tab === 'home'} onClick={() => setTab('home')} icon={HomeIcon} label="Home" />
-          <TabBtn active={tab === 'news'} onClick={() => setTab('news')} icon={Newspaper} label="News" />
-          <TabBtn active={tab === 'standings'} onClick={() => setTab('standings')} icon={Trophy} label="Standings" />
-          {isLoggedIn && <TabBtn active={tab === 'teams'} onClick={() => setTab('teams')} icon={Users} label="Teams" />}
-          {isLoggedIn && <TabBtn active={tab === 'roster'} onClick={() => setTab('roster')} icon={ClipboardList} label="Roster" />}
-          <TabBtn active={tab === 'schedule'} onClick={() => setTab('schedule')} icon={Calendar} label="Schedule" />
-          <TabBtn active={tab === 'stats'} onClick={() => setTab('stats')} icon={Activity} label="Stats" />
-          <TabBtn active={tab === 'leaders'} onClick={() => setTab('leaders')} icon={TrendingUp} label="Leaders" />
-          <TabBtn active={tab === 'awards'} onClick={() => setTab('awards')} icon={AwardIcon} label="Awards" />
-          <TabBtn active={tab === 'odds'} onClick={() => setTab('odds')} icon={Percent} label="Odds" />
-          <TabBtn active={tab === 'extras'} onClick={() => setTab('extras')} icon={Sparkles} label="Extras" />
-          <TabBtn active={tab === 'graphs'} onClick={() => setTab('graphs')} icon={BarChart3} label="Graphs" />
-          <TabBtn active={tab === 'info'} onClick={() => setTab('info')} icon={InfoIcon} label="Info" />
-          <TabBtn active={tab === 'settings'} onClick={() => setTab('settings')} icon={SettingsIcon} label="Settings" />
-        </nav>
-      )}
+      <main className="flex-1">
+        <div className="max-w-6xl mx-auto w-full">{body}</div>
+      </main>
     </div>
   );
 }
