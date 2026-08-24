@@ -1823,7 +1823,10 @@ function Panel({ children, className = '', style = {} }) {
 function SectionTitle({ children, right, accent = PRIMARY }) {
   return (
     <div className="flex items-center justify-between px-4 pt-4 pb-2 gap-2">
-      <h3 className="text-xs font-bold tracking-[0.14em] uppercase" style={{ color: accent }}>{children}</h3>
+      <h3 className="flex items-center gap-2 text-xs font-bold tracking-[0.14em] uppercase" style={{ color: accent }}>
+        <span className="inline-block flex-shrink-0" style={{ width: 3, height: 13, background: accent, borderRadius: 1 }} />
+        {children}
+      </h3>
       {right}
     </div>
   );
@@ -1858,8 +1861,8 @@ function TeamAccentCell({ team, children, className = '' }) {
 function StatBox({ label, value, color = CHALK }) {
   return (
     <div className="p-3" style={{ background: PANEL }}>
-      <div className="text-[9px] uppercase" style={{ color: CHALK_DIM }}>{label}</div>
-      <div className="text-sm font-mono font-bold" style={{ color }}>{value}</div>
+      <div className="text-[9px] font-bold uppercase tracking-wide" style={{ color: CHALK_DIM }}>{label}</div>
+      <div className="text-xl font-mono font-black tabular-nums" style={{ color }}>{value}</div>
     </div>
   );
 }
@@ -2295,7 +2298,7 @@ function TeamHistoryPage({ team, history, onBack, loading }) {
 /* ==================================================================== */
 /* Seasons management                                                    */
 /* ==================================================================== */
-function SeasonsView({ league, onBack, onSwitch, onCreate, onRename, onDelete, onSetChampion, onSetPublic, teamsById, onSetTagline }) {
+function SeasonsView({ league, onBack, onSwitch, onCreate, onRename, onDelete, onSetChampion, onSetPublic, teamsById, onSetTagline, onSetLogo }) {
   const { isLoggedIn } = useAuth();
   const [newName, setNewName] = useState('');
   const [copyRoster, setCopyRoster] = useState(true);
@@ -2303,10 +2306,36 @@ function SeasonsView({ league, onBack, onSwitch, onCreate, onRename, onDelete, o
   const [renameVal, setRenameVal] = useState('');
   const [champPickerId, setChampPickerId] = useState(null);
   const [tagline, setTagline] = useState(league.tagline || '');
+  const [logoBusy, setLogoBusy] = useState(false);
+  const handleLogoFile = async (file) => {
+    if (!file) return;
+    setLogoBusy(true);
+    try {
+      const dataUrl = await resizeImageFile(file, 320);
+      if (dataUrl.length > 1_500_000) alert('That image is too large even after resizing — try a smaller file.');
+      else onSetLogo(dataUrl);
+    } catch (e) { alert('Could not read that image file.'); }
+    setLogoBusy(false);
+  };
 
   return (
     <div className="p-4 space-y-4">
       <button onClick={onBack} className="flex items-center gap-1 text-sm" style={{ color: CHALK_DIM }}><ArrowLeft size={14} /> Back</button>
+      <Panel className="overflow-hidden" style={{ borderColor: PRIMARY }}>
+        <SectionTitle accent={PRIMARY}>League logo</SectionTitle>
+        <div className="px-4 pb-4 flex items-center gap-3">
+          {league.logoUrl ? <img src={league.logoUrl} alt="" className="w-14 h-14 object-contain rounded-lg" style={{ background: PANEL2, border: `1px solid ${LINE}` }} /> : <div className="w-14 h-14 rounded-lg flex items-center justify-center" style={{ background: PANEL2, border: `1px solid ${LINE}` }}><Trophy size={22} style={{ color: CHALK_DIM }} /></div>}
+          {isLoggedIn && (
+            <div className="flex items-center gap-2">
+              <label className="text-[11px] px-3 py-2 rounded cursor-pointer font-semibold" style={{ background: PANEL2, color: PRIMARY, border: `1px solid ${LINE}` }}>
+                {logoBusy ? 'Uploading…' : league.logoUrl ? 'Change logo' : 'Upload logo'}
+                <input type="file" accept="image/*" className="hidden" onChange={e => handleLogoFile(e.target.files[0])} />
+              </label>
+              {league.logoUrl && <button onClick={() => onSetLogo(null)} className="text-[11px]" style={{ color: CHALK_DIM }}>Remove</button>}
+            </div>
+          )}
+        </div>
+      </Panel>
       <Panel className="overflow-hidden" style={{ borderColor: PRIMARY }}>
         <SectionTitle accent={PRIMARY}>League tagline</SectionTitle>
         <div className="px-4 pb-4 flex gap-2">
@@ -2646,26 +2675,26 @@ function StandingsView({ standings, updateMemberField, season, settings, movemen
             <Panel key={g.division.id}>
               <SectionTitle>{g.division.conference ? `${g.division.conference} — ${g.division.name}` : g.division.name}</SectionTitle>
               <div className="overflow-x-auto px-2 pb-4">
-                <table className="w-full text-sm" style={{ color: CHALK }}>
-                  <thead><tr className="text-[10px] uppercase tracking-wide" style={{ color: CHALK_DIM }}>
-                    <th className="text-left px-2 py-1">Team</th><th className="px-2 py-1">W</th><th className="px-2 py-1">L</th><th className="px-2 py-1">PCT</th><th className="px-2 py-1">GB</th><th className="px-2 py-1">Strk</th>
+                <table className="w-full text-sm border-separate" style={{ color: CHALK, borderSpacing: 0 }}>
+                  <thead><tr className="text-[10px] font-bold uppercase tracking-wide" style={{ color: CHALK_DIM, borderBottom: `2px solid ${PRIMARY}` }}>
+                    <th className="text-left px-2 py-2">Team</th><th className="px-2 py-2">W</th><th className="px-2 py-2">L</th><th className="px-2 py-2">PCT</th><th className="px-2 py-2">GB</th><th className="px-2 py-2">Strk</th>
                   </tr></thead>
                   <tbody>
-                    {g.teams.map(t => {
+                    {g.teams.map((t, i) => {
                       const symbols = clinchSymbols[t.id] || [];
                       return (
-                        <tr key={t.id} style={{ borderTop: `1px solid ${LINE}` }}>
-                          <td className="px-2 py-1.5 font-semibold" style={{ borderLeft: `3px solid ${teamColor(t)}` }}>
+                        <tr key={t.id} style={{ background: i % 2 === 1 ? PANEL2 : 'transparent' }}>
+                          <td className="px-2 py-2 font-semibold" style={{ borderLeft: `4px solid ${teamColor(t)}` }}>
                             <button onClick={() => onOpenTeam(t.id)} className="flex items-center gap-2 text-left pl-1.5" style={{ color: CHALK }}>
-                              <TeamMark team={t} size={16} /> <span className="truncate max-w-[120px]">{t.displayName}</span>
+                              <TeamMark team={t} size={18} /> <span className="truncate max-w-[120px] font-bold">{t.displayName}</span>
                               {symbols.map(s => <ClinchBadge key={s} symbol={s} />)}
                             </button>
                           </td>
-                          <td className="px-2 py-1.5 text-center font-mono">{t.w}</td>
-                          <td className="px-2 py-1.5 text-center font-mono">{t.l}</td>
-                          <td className="px-2 py-1.5 text-center font-mono">{t.pct.toFixed(3).replace(/^0/, '')}</td>
-                          <td className="px-2 py-1.5 text-center font-mono">{t.divGb === 0 ? '-' : t.divGb.toFixed(1)}</td>
-                          <td className="px-2 py-1.5 text-center font-mono" style={{ color: t.streak.type === 'W' ? WIN : t.streak.type === 'L' ? NEGATIVE : CHALK_DIM }}>{t.streak.label}</td>
+                          <td className="px-2 py-2 text-center font-mono font-bold">{t.w}</td>
+                          <td className="px-2 py-2 text-center font-mono font-bold">{t.l}</td>
+                          <td className="px-2 py-2 text-center font-mono font-bold">{t.pct.toFixed(3).replace(/^0/, '')}</td>
+                          <td className="px-2 py-2 text-center font-mono">{t.divGb === 0 ? '-' : t.divGb.toFixed(1)}</td>
+                          <td className="px-2 py-2 text-center font-mono" style={{ color: t.streak.type === 'W' ? WIN : t.streak.type === 'L' ? NEGATIVE : CHALK_DIM }}>{t.streak.label}</td>
                         </tr>
                       );
                     })}
@@ -2700,42 +2729,43 @@ function StandingsView({ standings, updateMemberField, season, settings, movemen
           Standings
         </SectionTitle>
         <div className="overflow-x-auto px-2 pb-4">
-          <table className="w-full text-sm" style={{ color: CHALK }}>
-            <thead><tr className="text-[10px] uppercase tracking-wide" style={{ color: CHALK_DIM }}>
-              <th className="text-left px-2 py-1"></th><th className="text-left px-2 py-1">Team</th><th className="px-2 py-1">GP</th><th className="px-2 py-1">W</th><th className="px-2 py-1">L</th>
-              <th className="px-2 py-1">PCT</th><th className="px-2 py-1">GB</th><th className="px-2 py-1">Strk</th><th className="px-2 py-1">L10</th><th className="px-2 py-1">RF</th><th className="px-2 py-1">RA</th><th className="px-2 py-1">DIFF</th>
+          <table className="w-full text-sm border-separate" style={{ color: CHALK, borderSpacing: 0 }}>
+            <thead><tr className="text-[10px] font-bold uppercase tracking-wide" style={{ color: CHALK_DIM, borderBottom: `2px solid ${PRIMARY}` }}>
+              <th className="text-center px-1.5 py-2 w-6">#</th><th className="text-left px-2 py-2"></th><th className="text-left px-2 py-2">Team</th><th className="px-2 py-2">GP</th><th className="px-2 py-2">W</th><th className="px-2 py-2">L</th>
+              <th className="px-2 py-2">PCT</th><th className="px-2 py-2">GB</th><th className="px-2 py-2">Strk</th><th className="px-2 py-2">L10</th><th className="px-2 py-2">RF</th><th className="px-2 py-2">RA</th><th className="px-2 py-2">DIFF</th>
             </tr></thead>
             <tbody>
-              {standings.map(t => {
+              {standings.map((t, i) => {
                 const member = season.members.find(x => x.teamId === t.id);
                 const delta = movementById ? movementById[t.id] : null;
                 const l10W = t.last10.filter(r => r === 'W').length, l10L = t.last10.filter(r => r === 'L').length;
                 const symbols = clinchSymbols[t.id] || [];
                 return (
-                  <tr key={t.id} style={{ borderTop: `1px solid ${LINE}` }}>
-                    <td className="pl-2 py-1.5 text-xs font-mono" style={{ borderLeft: `3px solid ${teamColor(t)}` }}><MoveIndicator delta={delta} /></td>
-                    <td className="px-2 py-1.5 font-semibold">
+                  <tr key={t.id} style={{ background: i % 2 === 1 ? PANEL2 : 'transparent' }}>
+                    <td className="text-center py-2 text-xs font-mono font-bold" style={{ color: CHALK_DIM }}>{i + 1}</td>
+                    <td className="pl-1 py-2 text-xs font-mono" style={{ borderLeft: `4px solid ${teamColor(t)}` }}><MoveIndicator delta={delta} /></td>
+                    <td className="px-2 py-2 font-semibold">
                       <button onClick={() => onOpenTeam(t.id)} className="flex items-center gap-2 text-left" style={{ color: CHALK }}>
-                        <TeamMark team={t} size={18} /> <span className="truncate max-w-[110px]">{t.displayName}</span>
+                        <TeamMark team={t} size={20} /> <span className="truncate max-w-[110px] font-bold">{t.displayName}</span>
                         {symbols.map(s => <ClinchBadge key={s} symbol={s} />)}
                         {t.gp >= 3 && t.l === 0 && <span title="Undefeated" style={{ fontSize: 12 }}>🔥</span>}
                         {t.gp >= 3 && t.w === 0 && <span title="Winless" style={{ fontSize: 12 }}>🥶</span>}
                       </button>
                     </td>
-                    <td className="px-2 py-1.5 text-center font-mono">{t.gp}</td>
-                    <td className="px-2 py-1.5 text-center font-mono">{editBaseline ? <NumInput value={member?.baselineW ?? 0} onChange={v => updateMemberField(t.id, 'baselineW', v)} /> : t.w}</td>
-                    <td className="px-2 py-1.5 text-center font-mono">{editBaseline ? <NumInput value={member?.baselineL ?? 0} onChange={v => updateMemberField(t.id, 'baselineL', v)} /> : t.l}</td>
-                    <td className="px-2 py-1.5 text-center font-mono">{t.pct.toFixed(3).replace(/^0/, '')}</td>
-                    <td className="px-2 py-1.5 text-center font-mono">{t.gb === 0 ? '-' : t.gb.toFixed(1)}</td>
-                    <td className="px-2 py-1.5 text-center font-mono" style={{ color: t.streak.type === 'W' ? WIN : t.streak.type === 'L' ? NEGATIVE : CHALK_DIM }}>{t.streak.label}</td>
-                    <td className="px-2 py-1.5 text-center font-mono">{l10W}-{l10L}</td>
-                    <td className="px-2 py-1.5 text-center font-mono">{editBaseline ? <NumInput value={member?.baselineRF ?? 0} onChange={v => updateMemberField(t.id, 'baselineRF', v)} /> : t.rf}</td>
-                    <td className="px-2 py-1.5 text-center font-mono">{editBaseline ? <NumInput value={member?.baselineRA ?? 0} onChange={v => updateMemberField(t.id, 'baselineRA', v)} /> : t.ra}</td>
-                    <td className="px-2 py-1.5 text-center font-mono" style={{ color: t.diff > 0 ? WIN : t.diff < 0 ? NEGATIVE : CHALK_DIM }}>{t.diff > 0 ? `+${t.diff}` : t.diff}</td>
+                    <td className="px-2 py-2 text-center font-mono">{t.gp}</td>
+                    <td className="px-2 py-2 text-center font-mono font-bold">{editBaseline ? <NumInput value={member?.baselineW ?? 0} onChange={v => updateMemberField(t.id, 'baselineW', v)} /> : t.w}</td>
+                    <td className="px-2 py-2 text-center font-mono font-bold">{editBaseline ? <NumInput value={member?.baselineL ?? 0} onChange={v => updateMemberField(t.id, 'baselineL', v)} /> : t.l}</td>
+                    <td className="px-2 py-2 text-center font-mono font-bold">{t.pct.toFixed(3).replace(/^0/, '')}</td>
+                    <td className="px-2 py-2 text-center font-mono">{t.gb === 0 ? '-' : t.gb.toFixed(1)}</td>
+                    <td className="px-2 py-2 text-center font-mono" style={{ color: t.streak.type === 'W' ? WIN : t.streak.type === 'L' ? NEGATIVE : CHALK_DIM }}>{t.streak.label}</td>
+                    <td className="px-2 py-2 text-center font-mono">{l10W}-{l10L}</td>
+                    <td className="px-2 py-2 text-center font-mono">{editBaseline ? <NumInput value={member?.baselineRF ?? 0} onChange={v => updateMemberField(t.id, 'baselineRF', v)} /> : t.rf}</td>
+                    <td className="px-2 py-2 text-center font-mono">{editBaseline ? <NumInput value={member?.baselineRA ?? 0} onChange={v => updateMemberField(t.id, 'baselineRA', v)} /> : t.ra}</td>
+                    <td className="px-2 py-2 text-center font-mono font-bold" style={{ color: t.diff > 0 ? WIN : t.diff < 0 ? NEGATIVE : CHALK_DIM }}>{t.diff > 0 ? `+${t.diff}` : t.diff}</td>
                   </tr>
                 );
               })}
-              {standings.length === 0 && <tr><td colSpan={12} className="text-center py-6 text-sm" style={{ color: CHALK_DIM }}>Add teams in the Teams tab, or import a schedule, to see standings.</td></tr>}
+              {standings.length === 0 && <tr><td colSpan={13} className="text-center py-6 text-sm" style={{ color: CHALK_DIM }}>Add teams in the Teams tab, or import a schedule, to see standings.</td></tr>}
             </tbody>
           </table>
         </div>
@@ -3304,29 +3334,48 @@ function ScheduleView({ season, settings, saveScore, deleteGame, declareForfeit,
                   const w = gameWinner(g);
                   return (
                     <div key={g.id} style={{ borderTop: `1px solid ${LINE}` }}>
-                      <div className="flex items-center gap-2 px-3 py-2 text-sm" style={{ borderLeft: `3px solid ${awayColor}`, borderRight: `3px solid ${homeColor}` }}>
-                        <span className="flex-1 truncate flex items-center gap-1.5" style={{ color: CHALK }}>
-                          {away && <TeamMark team={away} size={14} />}
-                          {away ? away.name : g.awayScheduleName} <span style={{ color: CHALK_DIM }}>@</span> {home ? home.name : g.homeScheduleName}
-                          {home && <TeamMark team={home} size={14} />}
-                        </span>
-                        {g.played
-                          ? <span className="font-mono text-xs px-2 py-0.5 rounded" style={{ background: PANEL, color: PRIMARY }}>
-                              {g.awayScore}–{g.homeScore}{g.innings && g.innings !== (settings.standardInnings || 7) && !g.isPlayoff ? ` (${g.innings})` : ''}
-                              {g.isForfeit ? ' (F)' : ''}{g.winnerOverride ? ' *' : ''}
-                            </span>
-                          : g.isOngoing
-                            ? <span className="flex items-center gap-1 font-mono text-xs px-2 py-0.5 rounded" style={{ background: `${NEGATIVE}22`, color: NEGATIVE }}>
-                                <span className="w-1.5 h-1.5 rounded-full" style={{ background: NEGATIVE, animation: 'lt-live-pulse 1.4s ease-in-out infinite' }} />
-                                LIVE{g.liveAwayScore != null && g.liveHomeScore != null ? ` ${g.liveAwayScore}–${g.liveHomeScore}` : ''}{formatLivePeriod(sport, g.livePeriod, g.liveHalf) ? ` · ${formatLivePeriod(sport, g.livePeriod, g.liveHalf)}` : ''}
+                      <div className="px-3 py-2.5" style={{ borderLeft: `4px solid ${awayColor}`, borderRight: `4px solid ${homeColor}` }}>
+                        <div className="flex items-center gap-2">
+                          <div className="flex-1 min-w-0 flex items-center gap-1.5">
+                            {away && <TeamMark team={away} size={20} />}
+                            <span className="font-bold text-sm truncate" style={{ color: w === 'away' ? CHALK : CHALK_DIM }}>{away ? away.name : g.awayScheduleName}</span>
+                          </div>
+                          <div className="flex-shrink-0 text-center px-1">
+                            {g.played ? (
+                              <div className="font-mono font-black text-lg tabular-nums" style={{ color: CHALK }}>{g.awayScore}<span style={{ color: CHALK_DIM, fontWeight: 400 }}>–</span>{g.homeScore}</div>
+                            ) : g.isOngoing ? (
+                              <div className="font-mono font-black text-base tabular-nums" style={{ color: NEGATIVE }}>{g.liveAwayScore ?? 0}<span style={{ fontWeight: 400 }}>–</span>{g.liveHomeScore ?? 0}</div>
+                            ) : (
+                              <span className="text-[10px] font-bold uppercase" style={{ color: CHALK_DIM }}>@</span>
+                            )}
+                          </div>
+                          <div className="flex-1 min-w-0 flex items-center gap-1.5 justify-end">
+                            <span className="font-bold text-sm truncate text-right" style={{ color: w === 'home' ? CHALK : CHALK_DIM }}>{home ? home.name : g.homeScheduleName}</span>
+                            {home && <TeamMark team={home} size={20} />}
+                          </div>
+                        </div>
+                        <div className="flex items-center justify-center gap-2 mt-1.5">
+                          {g.played
+                            ? <span className="text-[10px] font-bold uppercase tracking-wide px-2 py-0.5 rounded" style={{ background: PANEL2, color: CHALK_DIM }}>
+                                Final{g.innings && g.innings !== (settings.standardInnings || 7) && !g.isPlayoff ? `/${g.innings}` : ''}{g.isForfeit ? ' (F)' : ''}{g.winnerOverride ? ' *' : ''}
                               </span>
-                            : <span className="text-[11px]" style={{ color: CHALK_DIM }}>unplayed</span>}
-                        {!g.played && isLoggedIn && (
-                          <button onClick={() => { setLiveForm({ away: String(g.liveAwayScore ?? 0), home: String(g.liveHomeScore ?? 0), period: String(g.livePeriod ?? 1), half: g.liveHalf || 'top' }); setLiveEditingId(g.id); setEditingId(null); }} className="p-1 rounded" style={{ color: g.isOngoing ? NEGATIVE : CHALK_DIM }} title={g.isOngoing ? 'Update live game' : 'Mark as ongoing'}><Activity size={13} /></button>
+                            : g.isOngoing
+                              ? <span className="flex items-center gap-1 font-bold text-[10px] uppercase tracking-wide px-2 py-0.5 rounded" style={{ background: `${NEGATIVE}22`, color: NEGATIVE }}>
+                                  <span className="w-1.5 h-1.5 rounded-full" style={{ background: NEGATIVE, animation: 'lt-live-pulse 1.4s ease-in-out infinite' }} />
+                                  Live{formatLivePeriod(sport, g.livePeriod, g.liveHalf) ? ` · ${formatLivePeriod(sport, g.livePeriod, g.liveHalf)}` : ''}
+                                </span>
+                              : <span className="text-[10px] font-bold uppercase tracking-wide px-2 py-0.5 rounded" style={{ background: PANEL2, color: CHALK_DIM }}>Upcoming</span>}
+                        </div>
+                        {isLoggedIn && (
+                          <div className="flex items-center justify-center gap-1 mt-1.5 pt-1.5" style={{ borderTop: `1px solid ${LINE}` }}>
+                            {!g.played && (
+                              <button onClick={() => { setLiveForm({ away: String(g.liveAwayScore ?? 0), home: String(g.liveHomeScore ?? 0), period: String(g.livePeriod ?? 1), half: g.liveHalf || 'top' }); setLiveEditingId(g.id); setEditingId(null); }} className="p-1 rounded" style={{ color: g.isOngoing ? NEGATIVE : CHALK_DIM }} title={g.isOngoing ? 'Update live game' : 'Mark as ongoing'}><Activity size={13} /></button>
+                            )}
+                            <button onClick={() => swapHomeAway(g.id)} className="p-1 rounded font-bold text-xs" style={{ color: CHALK_DIM }} title="Swap home/away">⇄</button>
+                            <button onClick={() => openScoreEditor(g)} className="p-1 rounded" style={{ color: PRIMARY }}><Pencil size={13} /></button>
+                            <button onClick={() => deleteGame(g.id)} className="p-1 rounded" style={{ color: NEGATIVE }}><Trash2 size={13} /></button>
+                          </div>
                         )}
-                        {isLoggedIn && <button onClick={() => swapHomeAway(g.id)} className="p-1 rounded font-bold text-xs" style={{ color: CHALK_DIM }} title="Swap home/away">⇄</button>}
-                        {isLoggedIn && <button onClick={() => openScoreEditor(g)} className="p-1 rounded" style={{ color: PRIMARY }}><Pencil size={13} /></button>}
-                        {isLoggedIn && <button onClick={() => deleteGame(g.id)} className="p-1 rounded" style={{ color: NEGATIVE }}><Trash2 size={13} /></button>}
                       </div>
                       {liveEditingId === g.id && (
                         <div className="px-3 pb-3 space-y-2" style={{ borderLeft: `3px solid ${awayColor}`, borderRight: `3px solid ${homeColor}` }}>
@@ -5075,6 +5124,7 @@ function App() {
     else { const lg = await loadObj(`league:${id}`); if (lg) await saveObj(`league:${id}`, { ...lg, name }); }
   };
   const setLeagueTagline = (tagline) => { if (league) persistLeague({ ...league, tagline }); };
+  const setLeagueLogo = (logoUrl) => { if (league) persistLeague({ ...league, logoUrl }); };
   const backToLeagues = async () => {
     try { await flushAllQueues(); } catch (e) { /* best effort */ }
     setLeague(null); setSelectedTeamId(null); setScreen('leagues'); setLoadError(null);
@@ -5591,7 +5641,7 @@ function App() {
   } else if (screen === 'league' && league) {
     const activeSeasonPublic = activeSeason ? activeSeason.public !== false : true;
     if (tab === 'seasons') {
-      body = <SeasonsView league={league} onBack={() => setTab('home')} onSwitch={switchSeason} onCreate={createSeason} onRename={renameSeason} onDelete={deleteSeason} onSetChampion={setChampion} onSetPublic={setSeasonPublic} teamsById={teamsById} onSetTagline={setLeagueTagline} />;
+      body = <SeasonsView league={league} onBack={() => setTab('home')} onSwitch={switchSeason} onCreate={createSeason} onRename={renameSeason} onDelete={deleteSeason} onSetChampion={setChampion} onSetPublic={setSeasonPublic} teamsById={teamsById} onSetTagline={setLeagueTagline} onSetLogo={setLeagueLogo} />;
     } else if (!activeSeason) {
       body = <div className="p-4"><Panel><p className="px-4 py-8 text-sm text-center" style={{ color: CHALK_DIM }}>This league has no seasons yet.</p></Panel></div>;
     } else if (!activeSeasonPublic && !isLoggedIn) {
@@ -5627,14 +5677,20 @@ function App() {
 
   return (
     <div className="min-h-screen flex flex-col" style={{ background: INK, color: CHALK, fontFamily: 'ui-sans-serif, system-ui, sans-serif' }}>
-      <header className="px-4 pt-4 pb-3" style={{ background: `linear-gradient(160deg, ${PANEL2}, ${INK})`, borderBottom: `2px solid ${PRIMARY}` }}>
-        <div className="flex items-center gap-2">
+      <header className="px-4 pt-4 pb-4" style={{ background: `linear-gradient(180deg, ${PANEL2}, ${INK} 85%)`, borderBottom: `3px solid ${PRIMARY}`, boxShadow: '0 2px 14px rgba(0,0,0,0.35)' }}>
+        <div className="flex items-center gap-3">
           {screen === 'league' && !FIXED_LEAGUE_ID && <button onClick={backToLeagues} className="p-1 rounded" style={{ color: CHALK_DIM }}><ArrowLeft size={18} /></button>}
           {(screen === 'registry' || screen === 'history') && screen !== 'league' && <button onClick={() => setScreen(screen === 'history' ? historyBack : 'leagues')} className="p-1 rounded" style={{ color: CHALK_DIM }}><ArrowLeft size={18} /></button>}
-          <Trophy size={20} style={{ color: PRIMARY }} />
+          {screen === 'league' && league && league.logoUrl ? (
+            <img src={league.logoUrl} alt="" className="w-10 h-10 object-contain flex-shrink-0" />
+          ) : (
+            <div className="w-10 h-10 rounded-full flex items-center justify-center flex-shrink-0" style={{ background: `${PRIMARY}1f`, border: `1.5px solid ${PRIMARY}` }}>
+              <Trophy size={19} style={{ color: PRIMARY }} />
+            </div>
+          )}
           <div className="flex-1 min-w-0">
-            <div className="text-[10px] uppercase tracking-[0.2em]" style={{ color: CHALK_DIM }}>{screen === 'league' && league && league.tagline ? league.tagline : 'League Tracker'}</div>
-            <h1 className="text-lg font-black tracking-tight truncate" style={{ color: CHALK }}>
+            <div className="text-[10px] font-bold uppercase tracking-[0.22em] truncate" style={{ color: PRIMARY }}>{screen === 'league' && league && league.tagline ? league.tagline : 'League Tracker'}</div>
+            <h1 className="text-xl font-black tracking-tight truncate uppercase" style={{ color: CHALK, letterSpacing: '-0.01em' }}>
               {screen === 'league' && league ? league.name : screen === 'registry' ? 'All Teams' : screen === 'history' ? 'Team History' : screen === 'appearance' ? 'Settings & Appearance' : 'Your Leagues'}
             </h1>
           </div>
