@@ -9,7 +9,7 @@ import {
   Trophy, Calendar, Users, BarChart3, Percent, Plus, Trash2, Upload,
   ChevronRight, ChevronLeft, Pencil, Check, X, Folder, Save, RefreshCw, ArrowLeft,
   Activity, AlertTriangle, Image as ImageIcon, Layers, Crown, History, Sparkles, Home as HomeIcon, Settings as SettingsIcon,
-  Award as AwardIcon, Eye, EyeOff, Sun, Moon, Video, ClipboardList
+  Award as AwardIcon, Eye, EyeOff, Sun, Moon, Video, ClipboardList, Newspaper, Info as InfoIcon
 } from 'lucide-react';
 import { supabase } from '../lib/supabaseClient';
 import { AuthProvider, useAuth } from '../lib/AuthContext';
@@ -2388,7 +2388,7 @@ function ChampionBanner({ team }) {
   );
 }
 
-function HomeView({ season, teamsById, settings, onOpenTeam, h2hMatrix, sport, onStartPlayoffs, onClearPlayoffs, onStartPlayIn, onClearPlayIn, onOpenCompare }) {
+function HomeView({ season, teamsById, settings, onOpenTeam, h2hMatrix, sport, onStartPlayoffs, onClearPlayoffs, onStartPlayIn, onClearPlayIn, onOpenCompare, news, onViewNews }) {
   if ((season.games || []).length === 0) {
     return <div className="p-4"><Panel><p className="px-4 py-8 text-sm text-center" style={{ color: CHALK_DIM }}>Import a schedule to see standings and scores here.</p></Panel></div>;
   }
@@ -2406,11 +2406,25 @@ function HomeView({ season, teamsById, settings, onOpenTeam, h2hMatrix, sport, o
   const playInGames = (season.games || []).filter(g => g.isPlayIn);
   const playInWinnerId = getPlayInWinner(playInGames);
   const seededStandings = buildMainBracketSeeds(liveStandings, settings, playInWinnerId);
+  const allGamesChrono = sortGamesChronologically((season.games || []).filter(g => !g.isBye), settings.scheduleMode || 'date');
 
   return (
     <div className="p-4 space-y-4">
       <style>{`@keyframes lt-live-pulse { 0%, 100% { opacity: 1; } 50% { opacity: 0.3; } }`}</style>
       {season.championTeamId && <ChampionBanner team={teamsById[season.championTeamId]} />}
+      {(news || []).length > 0 && (
+        <Panel className="overflow-hidden" style={{ borderColor: PRIMARY }}>
+          <SectionTitle accent={PRIMARY} right={<button onClick={onViewNews} className="text-[11px] font-bold" style={{ color: PRIMARY }}>View all</button>}>Latest news</SectionTitle>
+          <div className="px-2 pb-3">
+            {news.slice(0, 3).map(n => (
+              <button key={n.id} onClick={onViewNews} className="w-full text-left px-2 py-2 rounded" style={{ borderBottom: `1px solid ${LINE}` }}>
+                <div className="text-sm font-bold truncate" style={{ color: CHALK }}>{n.title}</div>
+                <div className="text-[11px]" style={{ color: CHALK_DIM }}>{new Date(n.at).toLocaleDateString(undefined, { month: 'short', day: 'numeric' })}{n.body ? ` · ${n.body.slice(0, 80)}${n.body.length > 80 ? '…' : ''}` : ''}</div>
+              </button>
+            ))}
+          </div>
+        </Panel>
+      )}
       {playInGames.length > 0 && (
         <PlayInBracket standings={liveStandings} settings={settings} playInGames={playInGames} teamsById={teamsById} onStart={onStartPlayIn} onClear={onClearPlayIn} onOpenTeam={onOpenTeam} onOpenCompare={onOpenCompare} />
       )}
@@ -2444,7 +2458,7 @@ function HomeView({ season, teamsById, settings, onOpenTeam, h2hMatrix, sport, o
       {(() => {
         // Scores: no round pagination — just the last played game, the next
         // few upcoming, and (during playoffs) which series is currently on.
-        const allGames = sortGamesChronologically((season.games || []).filter(g => !g.isBye), settings.scheduleMode || 'date');
+        const allGames = allGamesChrono;
         const playedGames = allGames.filter(g => g.played);
         const upcomingGames = allGames.filter(g => !g.played && !g.isOngoing);
         const previousGame = playedGames[playedGames.length - 1] || null;
@@ -2470,6 +2484,9 @@ function HomeView({ season, teamsById, settings, onOpenTeam, h2hMatrix, sport, o
               {g.played
                 ? <span className="font-mono text-xs px-2 py-0.5 rounded font-bold" style={{ background: PANEL2, color: PRIMARY }}>{g.awayScore}–{g.homeScore}</span>
                 : <span className="text-[11px]" style={{ color: CHALK_DIM }}>{g.date || 'upcoming'}</span>}
+              {g.streamUrl && !g.played && (
+                <a href={g.streamUrl} target="_blank" rel="noopener noreferrer" className="flex items-center gap-1 text-[10px] font-bold uppercase px-1.5 py-0.5 rounded flex-shrink-0" style={{ background: `${PRIMARY}22`, color: PRIMARY }}><Video size={10} /> Watch</a>
+              )}
             </div>
           );
         };
@@ -2494,6 +2511,49 @@ function HomeView({ season, teamsById, settings, onOpenTeam, h2hMatrix, sport, o
           </Panel>
         );
       })()}
+
+      <Panel>
+        <SectionTitle>Around the league</SectionTitle>
+        <div className="grid grid-cols-1 sm:grid-cols-2 gap-2 px-3 pb-4">
+          {liveStandings.map(t => {
+            const teamGames = allGamesChrono.filter(g => g.homeTeamId === t.id || g.awayTeamId === t.id);
+            const played = teamGames.filter(g => g.played);
+            const lastGame = played[played.length - 1] || null;
+            const nextGame = teamGames.find(g => !g.played && !g.isOngoing) || null;
+            let lastResultText = 'No games played yet';
+            let lastResultColor = CHALK_DIM;
+            if (lastGame) {
+              const isHome = lastGame.homeTeamId === t.id;
+              const oppId = isHome ? lastGame.awayTeamId : lastGame.homeTeamId;
+              const opp = teamsById[oppId];
+              const oppName = opp ? opp.name : (isHome ? lastGame.awayScheduleName : lastGame.homeScheduleName) || 'TBD';
+              const us = isHome ? lastGame.homeScore : lastGame.awayScore;
+              const them = isHome ? lastGame.awayScore : lastGame.homeScore;
+              const won = us > them;
+              lastResultText = `${won ? 'W' : 'L'} ${us}-${them} ${isHome ? 'vs' : '@'} ${oppName}`;
+              lastResultColor = won ? WIN : NEGATIVE;
+            }
+            let nextGameText = 'Season complete';
+            if (nextGame) {
+              const isHome = nextGame.homeTeamId === t.id;
+              const oppId = isHome ? nextGame.awayTeamId : nextGame.homeTeamId;
+              const opp = teamsById[oppId];
+              const oppName = opp ? opp.name : (isHome ? nextGame.awayScheduleName : nextGame.homeScheduleName) || 'TBD';
+              nextGameText = `Next: ${isHome ? 'vs' : '@'} ${oppName}${nextGame.date ? ` · ${nextGame.date}` : ''}`;
+            }
+            return (
+              <button key={t.id} onClick={() => onOpenTeam(t.id)} className="text-left px-3 py-2 rounded-lg" style={{ background: PANEL2, borderLeft: `3px solid ${teamColor(t)}` }}>
+                <div className="flex items-center justify-between gap-2">
+                  <span className="flex items-center gap-1.5 font-bold text-sm truncate" style={{ color: CHALK }}><TeamMark team={t} size={16} /> {t.displayName}</span>
+                  <span className="text-xs font-mono flex-shrink-0" style={{ color: CHALK_DIM }}>{t.w}-{t.l}</span>
+                </div>
+                <div className="text-[11px] mt-1" style={{ color: lastResultColor }}>{lastResultText}</div>
+                <div className="text-[11px]" style={{ color: CHALK_DIM }}>{nextGameText}</div>
+              </button>
+            );
+          })}
+        </div>
+      </Panel>
 
       <Panel>
         <SectionTitle>Standings</SectionTitle>
@@ -3181,7 +3241,7 @@ function RoundRobinGenerator({ season, teamsById, generateSchedule }) {
   );
 }
 
-function ScheduleView({ season, settings, saveScore, deleteGame, declareForfeit, setWinnerOverride, teamsById, sport, updateGameNotes, setGameOngoing, swapHomeAway }) {
+function ScheduleView({ season, settings, saveScore, deleteGame, declareForfeit, setWinnerOverride, teamsById, sport, updateGameNotes, updateGameStreamUrl, setGameOngoing, swapHomeAway }) {
   const { isLoggedIn } = useAuth();
   const scheduleMode = settings.scheduleMode || 'date';
   const [editingId, setEditingId] = useState(null);
@@ -3356,6 +3416,9 @@ function ScheduleView({ season, settings, saveScore, deleteGame, declareForfeit,
                                   Live{formatLivePeriod(sport, g.livePeriod, g.liveHalf) ? ` · ${formatLivePeriod(sport, g.livePeriod, g.liveHalf)}` : ''}
                                 </span>
                               : <span className="text-[10px] font-bold uppercase tracking-wide px-2 py-0.5 rounded" style={{ background: PANEL2, color: CHALK_DIM }}>Upcoming</span>}
+                          {g.streamUrl && !g.played && (
+                            <a href={g.streamUrl} target="_blank" rel="noopener noreferrer" className="flex items-center gap-1 text-[10px] font-bold uppercase tracking-wide px-2 py-0.5 rounded" style={{ background: `${PRIMARY}22`, color: PRIMARY }}><Video size={11} /> Watch</a>
+                          )}
                         </div>
                         {isLoggedIn && (
                           <div className="flex items-center justify-center gap-1 mt-1.5 pt-1.5" style={{ borderTop: `1px solid ${LINE}` }}>
@@ -3418,6 +3481,10 @@ function ScheduleView({ season, settings, saveScore, deleteGame, declareForfeit,
                           <div className="flex items-center gap-2 pt-1" style={{ borderTop: `1px solid ${LINE}` }}>
                             <span className="text-[10px] uppercase flex-shrink-0" style={{ color: CHALK_DIM }}>Note:</span>
                             <input defaultValue={g.notes || ''} onBlur={e => updateGameNotes(g.id, e.target.value)} placeholder="e.g. walk-off, rain delay…" className="flex-1 bg-[#242424] border rounded px-2 py-1 text-xs" style={{ borderColor: LINE, color: CHALK }} />
+                          </div>
+                          <div className="flex items-center gap-2 pt-1" style={{ borderTop: `1px solid ${LINE}` }}>
+                            <span className="text-[10px] uppercase flex-shrink-0 flex items-center gap-1" style={{ color: CHALK_DIM }}><Video size={11} /> Stream:</span>
+                            <input defaultValue={g.streamUrl || ''} onBlur={e => updateGameStreamUrl(g.id, e.target.value.trim())} placeholder="Twitch or YouTube link" className="flex-1 bg-[#242424] border rounded px-2 py-1 text-xs" style={{ borderColor: LINE, color: CHALK }} />
                           </div>
                         </div>
                       )}
@@ -4578,6 +4645,145 @@ function AwardsView({ league, season, standings, teamsById, addAwardDef, updateA
   );
 }
 
+function LeagueInfoView({ league, updateLeagueInfo, addStaffMember, updateStaffMember, removeStaffMember }) {
+  const { isLoggedIn } = useAuth();
+  const info = league.info || {};
+  const staff = league.staff || [];
+  const [descDraft, setDescDraft] = useState(info.description || '');
+  useEffect(() => { setDescDraft(info.description || ''); }, [info.description]);
+  const [discordDraft, setDiscordDraft] = useState(info.discordUrl || '');
+  useEffect(() => { setDiscordDraft(info.discordUrl || ''); }, [info.discordUrl]);
+  const [creatorDraft, setCreatorDraft] = useState(info.creatorName || '');
+  useEffect(() => { setCreatorDraft(info.creatorName || ''); }, [info.creatorName]);
+  const [staffName, setStaffName] = useState('');
+  const [staffRole, setStaffRole] = useState('');
+
+  return (
+    <div className="p-4 space-y-4">
+      <Panel>
+        <SectionTitle>About the league</SectionTitle>
+        <div className="px-4 pb-4">
+          {isLoggedIn ? (
+            <textarea value={descDraft} onChange={e => setDescDraft(e.target.value)} onBlur={() => updateLeagueInfo({ description: descDraft })} placeholder="A short description of the league…" rows={4} className="w-full bg-[#242424] border rounded px-3 py-2 text-sm resize-none" style={{ borderColor: LINE, color: CHALK }} />
+          ) : info.description ? (
+            <p className="text-sm whitespace-pre-wrap" style={{ color: CHALK }}>{info.description}</p>
+          ) : (
+            <p className="text-sm" style={{ color: CHALK_DIM }}>No description yet.</p>
+          )}
+        </div>
+      </Panel>
+
+      <Panel>
+        <SectionTitle>League staff</SectionTitle>
+        <div className="px-4 pb-2 space-y-2">
+          {staff.length === 0 && <p className="text-sm pb-2" style={{ color: CHALK_DIM }}>No staff listed yet.</p>}
+          {staff.map(s => (
+            <div key={s.id} className="flex items-center gap-2">
+              {isLoggedIn ? (
+                <>
+                  <input defaultValue={s.name} onBlur={e => updateStaffMember(s.id, 'name', e.target.value)} placeholder="Name" className="flex-1 bg-[#242424] border rounded px-2 py-1.5 text-sm" style={{ borderColor: LINE, color: CHALK }} />
+                  <input defaultValue={s.role} onBlur={e => updateStaffMember(s.id, 'role', e.target.value)} placeholder="Role (e.g. Commissioner)" className="flex-1 bg-[#242424] border rounded px-2 py-1.5 text-sm" style={{ borderColor: LINE, color: CHALK }} />
+                  <button onClick={() => removeStaffMember(s.id)} className="p-1 rounded flex-shrink-0" style={{ color: NEGATIVE }}><Trash2 size={14} /></button>
+                </>
+              ) : (
+                <div className="flex-1 flex items-center justify-between px-3 py-2 rounded" style={{ background: PANEL2 }}>
+                  <span className="text-sm font-semibold" style={{ color: CHALK }}>{s.name}</span>
+                  <span className="text-xs" style={{ color: CHALK_DIM }}>{s.role}</span>
+                </div>
+              )}
+            </div>
+          ))}
+        </div>
+        {isLoggedIn && (
+          <div className="px-4 pb-4 flex flex-wrap items-center gap-2 pt-2" style={{ borderTop: `1px solid ${LINE}` }}>
+            <input value={staffName} onChange={e => setStaffName(e.target.value)} placeholder="Name" className="flex-1 min-w-[120px] bg-[#242424] border rounded px-2 py-1.5 text-sm" style={{ borderColor: LINE, color: CHALK }} />
+            <input value={staffRole} onChange={e => setStaffRole(e.target.value)} placeholder="Role (e.g. Commissioner)" className="flex-1 min-w-[120px] bg-[#242424] border rounded px-2 py-1.5 text-sm" style={{ borderColor: LINE, color: CHALK }} />
+            <button onClick={() => { if (staffName.trim()) { addStaffMember(staffName.trim(), staffRole.trim()); setStaffName(''); setStaffRole(''); } }} className="px-3 py-1.5 rounded font-bold text-xs flex items-center gap-1 flex-shrink-0" style={{ background: PRIMARY, color: INK }}><Plus size={14} /> Add</button>
+          </div>
+        )}
+      </Panel>
+
+      <Panel>
+        <SectionTitle>Links</SectionTitle>
+        <div className="px-4 pb-4 space-y-3">
+          <div>
+            <div className="text-[10px] uppercase mb-1" style={{ color: CHALK_DIM }}>Discord</div>
+            {isLoggedIn ? (
+              <input value={discordDraft} onChange={e => setDiscordDraft(e.target.value)} onBlur={() => updateLeagueInfo({ discordUrl: discordDraft })} placeholder="https://discord.gg/…" className="w-full bg-[#242424] border rounded px-3 py-2 text-sm" style={{ borderColor: LINE, color: CHALK }} />
+            ) : info.discordUrl ? (
+              <a href={info.discordUrl} target="_blank" rel="noopener noreferrer" className="inline-flex items-center gap-2 px-3 py-2 rounded font-bold text-sm" style={{ background: PANEL2, color: PRIMARY, border: `1px solid ${LINE}` }}>Join our Discord</a>
+            ) : (
+              <p className="text-sm" style={{ color: CHALK_DIM }}>No Discord link yet.</p>
+            )}
+          </div>
+          <div>
+            <div className="text-[10px] uppercase mb-1" style={{ color: CHALK_DIM }}>Site created by</div>
+            {isLoggedIn ? (
+              <input value={creatorDraft} onChange={e => setCreatorDraft(e.target.value)} onBlur={() => updateLeagueInfo({ creatorName: creatorDraft })} placeholder="Name / handle" className="w-full bg-[#242424] border rounded px-3 py-2 text-sm" style={{ borderColor: LINE, color: CHALK }} />
+            ) : (
+              <p className="text-sm" style={{ color: CHALK_DIM }}>{info.creatorName || 'Not listed.'}</p>
+            )}
+          </div>
+        </div>
+      </Panel>
+    </div>
+  );
+}
+
+function NewsView({ league, addNewsPost, updateNewsPost, removeNewsPost }) {
+  const { isLoggedIn } = useAuth();
+  const news = league.news || [];
+  const [title, setTitle] = useState('');
+  const [body, setBody] = useState('');
+  const [editingId, setEditingId] = useState(null);
+  const [editTitle, setEditTitle] = useState('');
+  const [editBody, setEditBody] = useState('');
+
+  return (
+    <div className="p-4 space-y-4">
+      {isLoggedIn && (
+        <Panel>
+          <SectionTitle>Post news</SectionTitle>
+          <div className="px-4 pb-4 space-y-2">
+            <input value={title} onChange={e => setTitle(e.target.value)} placeholder="Headline" className="w-full bg-[#242424] border rounded px-3 py-2 text-sm font-bold" style={{ borderColor: LINE, color: CHALK }} />
+            <textarea value={body} onChange={e => setBody(e.target.value)} placeholder="Story…" rows={4} className="w-full bg-[#242424] border rounded px-3 py-2 text-sm resize-none" style={{ borderColor: LINE, color: CHALK }} />
+            <button onClick={() => { if (title.trim()) { addNewsPost(title.trim(), body.trim()); setTitle(''); setBody(''); } }} className="px-3 py-2 rounded font-bold text-sm flex items-center gap-1" style={{ background: PRIMARY, color: INK }}><Plus size={16} /> Publish</button>
+          </div>
+        </Panel>
+      )}
+
+      {news.length === 0 && <Panel><p className="px-4 py-8 text-sm text-center" style={{ color: CHALK_DIM }}>No news posted yet.</p></Panel>}
+
+      {news.map(n => (
+        <Panel key={n.id}>
+          {editingId === n.id ? (
+            <div className="p-4 space-y-2">
+              <input value={editTitle} onChange={e => setEditTitle(e.target.value)} className="w-full bg-[#242424] border rounded px-3 py-2 text-sm font-bold" style={{ borderColor: LINE, color: CHALK }} />
+              <textarea value={editBody} onChange={e => setEditBody(e.target.value)} rows={4} className="w-full bg-[#242424] border rounded px-3 py-2 text-sm resize-none" style={{ borderColor: LINE, color: CHALK }} />
+              <div className="flex items-center gap-2">
+                <button onClick={() => { updateNewsPost(n.id, { title: editTitle, body: editBody }); setEditingId(null); }} className="px-3 py-1.5 rounded font-bold text-xs" style={{ background: PRIMARY, color: INK }}>Save</button>
+                <button onClick={() => setEditingId(null)} className="px-3 py-1.5 rounded text-xs" style={{ color: CHALK_DIM }}>Cancel</button>
+              </div>
+            </div>
+          ) : (
+            <>
+              <SectionTitle right={isLoggedIn && (
+                <div className="flex items-center gap-1">
+                  <button onClick={() => { setEditingId(n.id); setEditTitle(n.title); setEditBody(n.body); }} className="p-1 rounded" style={{ color: PRIMARY }}><Pencil size={14} /></button>
+                  <button onClick={() => removeNewsPost(n.id)} className="p-1 rounded" style={{ color: NEGATIVE }}><Trash2 size={14} /></button>
+                </div>
+              )}>{n.title}</SectionTitle>
+              <div className="px-4 pb-4">
+                <div className="text-[10px] uppercase mb-2" style={{ color: CHALK_DIM }}>{new Date(n.at).toLocaleDateString(undefined, { year: 'numeric', month: 'short', day: 'numeric' })}</div>
+                {n.body && <p className="text-sm whitespace-pre-wrap" style={{ color: CHALK }}>{n.body}</p>}
+              </div>
+            </>
+          )}
+        </Panel>
+      ))}
+    </div>
+  );
+}
 
 function ExtrasView({ extras, teamsById, leagueRecords, activityLog, season, standings }) {
   if (!extras) return <div className="p-4 space-y-4"><Panel><p className="px-4 py-8 text-sm text-center" style={{ color: CHALK_DIM }}>Enter some scores to unlock fun stats here.</p></Panel></div>;
@@ -5495,6 +5701,41 @@ function App() {
     });
     persistLeague({ ...league, seasons });
   };
+  /* ---- league info & staff ---- */
+  const updateLeagueInfo = (patch) => {
+    if (!league) return;
+    persistLeague({ ...league, info: { ...(league.info || {}), ...patch } });
+  };
+  const addStaffMember = (name, role) => {
+    if (!league) return;
+    const member = { id: uid('staff'), name, role };
+    persistLeague({ ...league, staff: [...(league.staff || []), member] });
+  };
+  const updateStaffMember = (id, field, value) => {
+    if (!league) return;
+    persistLeague({ ...league, staff: (league.staff || []).map(s => s.id === id ? { ...s, [field]: value } : s) });
+  };
+  const removeStaffMember = (id) => {
+    if (!league) return;
+    persistLeague({ ...league, staff: (league.staff || []).filter(s => s.id !== id) });
+  };
+
+  /* ---- news ---- */
+  const addNewsPost = (title, body) => {
+    if (!league) return;
+    const post = { id: uid('news'), title, body, at: Date.now() };
+    persistLeague({ ...league, news: [post, ...(league.news || [])] });
+  };
+  const updateNewsPost = (id, patch) => {
+    if (!league) return;
+    persistLeague({ ...league, news: (league.news || []).map(n => n.id === id ? { ...n, ...patch } : n) });
+  };
+  const removeNewsPost = (id) => {
+    if (!league) return;
+    if (!confirm('Delete this news post?')) return;
+    persistLeague({ ...league, news: (league.news || []).filter(n => n.id !== id) });
+  };
+
   const updateGlobalTeamField = (teamId, field, value) => {
     const gt = teamsById[teamId] || { id: teamId, name: (teamsIndex.find(t => t.id === teamId) || {}).name || '', color: null, logoUrl: null, wordmarkUrl: null, createdAt: Date.now() };
     const updated = { ...gt, [field]: value };
@@ -5675,6 +5916,11 @@ function App() {
     const seasons = league.seasons.map(s => s.id === activeSeason.id ? { ...s, games: s.games.map(g => g.id === gameId ? { ...g, notes } : g) } : s);
     persistLeague({ ...league, seasons });
   };
+  const updateGameStreamUrl = (gameId, streamUrl) => {
+    if (!league || !activeSeason) return;
+    const seasons = league.seasons.map(s => s.id === activeSeason.id ? { ...s, games: s.games.map(g => g.id === gameId ? { ...g, streamUrl } : g) } : s);
+    persistLeague({ ...league, seasons });
+  };
   const saveSettings = (settings) => {
     if (!league || !activeSeason) return;
     const seasons = league.seasons.map(s => s.id === activeSeason.id ? { ...s, settings } : s);
@@ -5757,7 +6003,7 @@ function App() {
     } else if (!activeSeasonPublic && !isLoggedIn) {
       body = <div className="p-4"><Panel><p className="px-4 py-8 text-sm text-center" style={{ color: CHALK_DIM }}>This season isn't public yet. Check back later, or log in if you're an admin.</p></Panel></div>;
     } else if (tab === 'home') {
-      body = <HomeView season={activeSeason} teamsById={teamsById} settings={activeSeason.settings} onOpenTeam={onOpenTeam} h2hMatrix={h2hMatrix} sport={sport} onStartPlayoffs={startPlayoffs} onClearPlayoffs={clearPlayoffs} onStartPlayIn={startPlayIn} onClearPlayIn={clearPlayIn} onOpenCompare={onOpenCompare} />;
+      body = <HomeView season={activeSeason} teamsById={teamsById} settings={activeSeason.settings} onOpenTeam={onOpenTeam} h2hMatrix={h2hMatrix} sport={sport} onStartPlayoffs={startPlayoffs} onClearPlayoffs={clearPlayoffs} onStartPlayIn={startPlayIn} onClearPlayIn={clearPlayIn} onOpenCompare={onOpenCompare} news={league.news || []} onViewNews={() => setTab('news')} />;
     } else if (tab === 'standings') {
       body = <StandingsView standings={standings} updateMemberField={updateMemberField} season={activeSeason} settings={activeSeason.settings} movementById={movementById} onOpenTeam={onOpenTeam} />;
     } else if (tab === 'teams' && isLoggedIn) {
@@ -5765,7 +6011,7 @@ function App() {
     } else if (tab === 'roster' && isLoggedIn) {
       body = <RosterManagementView season={activeSeason} teamsById={teamsById} updatePlayerField={updatePlayerField} removePlayer={removePlayer} addPlayer={addPlayer} addPlayersBulk={addPlayersBulk} tradePlayer={tradePlayer} setPlayerSuspended={setPlayerSuspended} />;
     } else if (tab === 'schedule') {
-      body = <ScheduleView season={activeSeason} settings={activeSeason.settings} saveScore={saveScore} deleteGame={deleteGame} declareForfeit={declareForfeit} setWinnerOverride={setWinnerOverride} teamsById={teamsById} sport={sport} updateGameNotes={updateGameNotes} setGameOngoing={setGameOngoing} swapHomeAway={swapHomeAway} />;
+      body = <ScheduleView season={activeSeason} settings={activeSeason.settings} saveScore={saveScore} deleteGame={deleteGame} declareForfeit={declareForfeit} setWinnerOverride={setWinnerOverride} teamsById={teamsById} sport={sport} updateGameNotes={updateGameNotes} updateGameStreamUrl={updateGameStreamUrl} setGameOngoing={setGameOngoing} swapHomeAway={swapHomeAway} />;
     } else if (tab === 'stats') {
       body = <StatsView standings={standings} onOpenTeam={onOpenTeam} season={activeSeason} />;
     } else if (tab === 'awards') {
@@ -5776,6 +6022,10 @@ function App() {
       body = <ExtrasView extras={extras} teamsById={teamsById} leagueRecords={leagueRecords} activityLog={activeSeason.activityLog || []} season={activeSeason} standings={standings} />;
     } else if (tab === 'graphs') {
       body = <GraphsView league={Object.values(teamsById).filter(t => activeSeason.members.some(m => m.teamId === t.id))} roundHistory={roundHistory} standings={standings} scoringTrend={scoringTrend} season={activeSeason} h2hMatrix={h2hMatrix} onOpenTeam={onOpenTeam} sport={sport} />;
+    } else if (tab === 'news') {
+      body = <NewsView league={league} addNewsPost={addNewsPost} updateNewsPost={updateNewsPost} removeNewsPost={removeNewsPost} />;
+    } else if (tab === 'info') {
+      body = <LeagueInfoView league={league} updateLeagueInfo={updateLeagueInfo} addStaffMember={addStaffMember} updateStaffMember={updateStaffMember} removeStaffMember={removeStaffMember} />;
     } else if (tab === 'settings') {
       body = <SettingsView settings={activeSeason.settings} saveSettings={saveSettings} theme={theme} saveTheme={saveTheme} sport={sport} season={activeSeason} teamsById={teamsById} importGames={importGames} addManualGame={addManualGame} generateSchedule={generateSchedule} />;
     } else if (tab === 'team') {
@@ -5830,6 +6080,7 @@ function App() {
       {inSeasonTabs && (
         <nav className="fixed bottom-0 left-0 right-0 flex gap-1 px-2 py-2 overflow-x-auto" style={{ background: PANEL, borderTop: `1px solid ${LINE}` }}>
           <TabBtn active={tab === 'home'} onClick={() => setTab('home')} icon={HomeIcon} label="Home" />
+          <TabBtn active={tab === 'news'} onClick={() => setTab('news')} icon={Newspaper} label="News" />
           <TabBtn active={tab === 'standings'} onClick={() => setTab('standings')} icon={Trophy} label="Standings" />
           {isLoggedIn && <TabBtn active={tab === 'teams'} onClick={() => setTab('teams')} icon={Users} label="Teams" />}
           {isLoggedIn && <TabBtn active={tab === 'roster'} onClick={() => setTab('roster')} icon={ClipboardList} label="Roster" />}
@@ -5839,6 +6090,7 @@ function App() {
           <TabBtn active={tab === 'odds'} onClick={() => setTab('odds')} icon={Percent} label="Odds" />
           <TabBtn active={tab === 'extras'} onClick={() => setTab('extras')} icon={Sparkles} label="Extras" />
           <TabBtn active={tab === 'graphs'} onClick={() => setTab('graphs')} icon={BarChart3} label="Graphs" />
+          <TabBtn active={tab === 'info'} onClick={() => setTab('info')} icon={InfoIcon} label="Info" />
           <TabBtn active={tab === 'settings'} onClick={() => setTab('settings')} icon={SettingsIcon} label="Settings" />
         </nav>
       )}
