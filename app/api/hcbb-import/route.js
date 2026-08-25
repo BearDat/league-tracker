@@ -6,8 +6,13 @@ const KPB_LEAGUE = 'BE1E0C';
 export async function GET(request) {
   const { searchParams } = new URL(request.url);
   const season = (searchParams.get('season') || '').trim();
-  if (!['1', '2', '3'].includes(season)) {
-    return Response.json({ error: 'season must be 1, 2, or 3' }, { status: 400 });
+  // hcbb.info controls which season numbers actually have data — this just
+  // sanity-checks it's a positive integer and lets hcbb.info's own response
+  // (it 403s with "This season is not authorized" for one it hasn't
+  // published yet) be the real source of truth, rather than us guessing a
+  // fixed cutoff that goes stale every time a new season starts.
+  if (!/^[1-9][0-9]*$/.test(season)) {
+    return Response.json({ error: 'season must be a positive whole number' }, { status: 400 });
   }
   try {
     const res = await fetch(`https://hcbb.info/api/leaderboard/?league=${KPB_LEAGUE}&season=${season}`, {

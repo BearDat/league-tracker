@@ -3206,14 +3206,25 @@ function ManageAdminsPanel() {
 // Bulk-imports KPB (hcbb.info) season totals for players already tracked in
 // this league, matched by Roblox account rather than name so a stale local
 // name or a Roblox username change doesn't cause a miss. One mapping row per
-// hcbb season (S1-S3) picks which local season that data lands in — skip any
-// that don't apply to this league.
+// hcbb season picks which local season that data lands in — skip any that
+// don't apply to this league. Starts at S1-S3 (what's been available since
+// this was built) with an "Add another season" control rather than a fixed
+// cutoff, since hcbb.info opens up a new season number each time one
+// finishes and there's no way to know that ahead of time from here — trying
+// a season hcbb.info hasn't published yet just reports back that it isn't
+// available (nothing saves), so there's no harm in adding one early.
 function KpbImportPanel({ league, onRunImport }) {
+  const [seasonNumbers, setSeasonNumbers] = useState(['1', '2', '3']);
   const [mapping, setMapping] = useState({ '1': '', '2': '', '3': '' });
   const [running, setRunning] = useState(false);
   const [result, setResult] = useState(null);
   const seasons = (league && league.seasons) || [];
   const anyMapped = Object.values(mapping).some(Boolean);
+  const addSeasonNumber = () => {
+    const next = String(Math.max(0, ...seasonNumbers.map(Number)) + 1);
+    setSeasonNumbers(ns => [...ns, next]);
+    setMapping(m => ({ ...m, [next]: '' }));
+  };
   const run = async () => {
     setRunning(true); setResult(null);
     const clean = Object.fromEntries(Object.entries(mapping).filter(([, v]) => v));
@@ -3226,15 +3237,16 @@ function KpbImportPanel({ league, onRunImport }) {
       <SectionTitle accent={PRIMARY}>Import KPB stats (hcbb.info)</SectionTitle>
       <div className="px-4 pb-4 space-y-3 text-sm">
         <p className="text-xs" style={{ color: CHALK_DIM }}>Pulls full-season batting and pitching totals for the KPB league from hcbb.info and matches players by their Roblox account — checking every player already tracked here, on a roster or in free agency, in any season — rather than just their current on-site name. Unfiltered totals (Qualify: any games, no minimum AB/IP). Unmatched hcbb players are skipped; matched players not yet in the target season are added there as free agents so the stats have somewhere to attach. Re-running with the same mapping replaces the previous import instead of duplicating it.</p>
-        {['1', '2', '3'].map(s => (
+        {seasonNumbers.map(s => (
           <div key={s} className="flex items-center justify-between gap-2">
             <span style={{ color: CHALK }}>KPB Season {s}</span>
-            <select value={mapping[s]} onChange={e => setMapping(m => ({ ...m, [s]: e.target.value }))} className="bg-[#242424] border rounded px-2 py-1.5 text-xs" style={{ borderColor: LINE, color: CHALK }}>
+            <select value={mapping[s] || ''} onChange={e => setMapping(m => ({ ...m, [s]: e.target.value }))} className="bg-[#242424] border rounded px-2 py-1.5 text-xs" style={{ borderColor: LINE, color: CHALK }}>
               <option value="" style={{ background: PANEL2, color: CHALK }}>Skip</option>
               {seasons.map(se => <option key={se.id} value={se.id} style={{ background: PANEL2, color: CHALK }}>{se.name}</option>)}
             </select>
           </div>
         ))}
+        <button onClick={addSeasonNumber} className="text-xs font-semibold" style={{ color: PRIMARY }}>+ Add another hcbb season</button>
         <button onClick={run} disabled={running || !anyMapped} className="px-3 py-2 rounded font-bold text-sm disabled:opacity-40" style={{ background: PRIMARY, color: INK }}>
           {running ? 'Importing…' : 'Run import'}
         </button>
