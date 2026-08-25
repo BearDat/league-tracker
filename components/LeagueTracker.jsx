@@ -3273,8 +3273,9 @@ function BadgeManagerPanel({ league, onAddBadgeDef, onRemoveBadgeDef }) {
   );
 }
 
-function SettingsView({ settings, saveSettings, theme, saveTheme, sport, season, teamsById, importGames, addManualGame, generateSchedule, league, onRunKpbImport, onAddBadgeDef, onRemoveBadgeDef }) {
-  const { hasPermission } = useAuth();
+function SettingsView({ settings, saveSettings, theme, saveTheme, sport, season, teamsById, importGames, addManualGame, generateSchedule, league, onRunKpbImport, onAddBadgeDef, onRemoveBadgeDef, onOpenRegistry }) {
+  const { hasPermission, role } = useAuth();
+  const isSiteOwner = role === 'site_owner';
   const canManageSettings = hasPermission('manageSettings');
   const canManageSchedule = hasPermission('manageSchedule');
   return (
@@ -3389,6 +3390,15 @@ function SettingsView({ settings, saveSettings, theme, saveTheme, sport, season,
       )}
       {canManageSettings && <KpbImportPanel league={league} onRunImport={onRunKpbImport} />}
       <BadgeManagerPanel league={league} onAddBadgeDef={onAddBadgeDef} onRemoveBadgeDef={onRemoveBadgeDef} />
+      {isSiteOwner && (
+        <Panel>
+          <SectionTitle>Team registry</SectionTitle>
+          <div className="px-4 pb-4 space-y-2">
+            <p className="text-xs" style={{ color: CHALK_DIM }}>Create brand-new teams for the site-wide registry, or edit any existing team's colors/logo from one place. Site Owner only.</p>
+            <button onClick={onOpenRegistry} className="px-3 py-2 rounded font-bold text-sm" style={{ background: PRIMARY, color: INK }}>Open team registry</button>
+          </div>
+        </Panel>
+      )}
       {canManageSettings && (
         <Panel>
           <SectionTitle>Odds display</SectionTitle>
@@ -9030,7 +9040,7 @@ function App() {
       </div>
     );
   } else if (screen === 'registry') {
-    body = <TeamRegistryView teamsIndex={teamsIndex} teamsById={teamsById} onBack={() => setScreen('leagues')} onCreate={createGlobalTeam} onOpenHistory={(id) => openTeamHistory(id, 'registry')} updateGlobalTeamField={updateGlobalTeamField} />;
+    body = <TeamRegistryView teamsIndex={teamsIndex} teamsById={teamsById} onBack={() => setScreen(FIXED_LEAGUE_ID ? 'league' : 'leagues')} onCreate={createGlobalTeam} onOpenHistory={(id) => openTeamHistory(id, 'registry')} updateGlobalTeamField={updateGlobalTeamField} />;
   } else if (screen === 'history') {
     body = <TeamHistoryPage team={historyTeam} history={historyData} loading={historyLoading} onBack={() => setScreen(historyBack)} />;
   } else if (screen === 'league' && league) {
@@ -9070,7 +9080,7 @@ function App() {
     } else if (tab === 'info') {
       body = <LeagueInfoView league={league} updateLeagueInfo={updateLeagueInfo} addStaffMember={addStaffMember} updateStaffMember={updateStaffMember} removeStaffMember={removeStaffMember} />;
     } else if (tab === 'settings') {
-      body = <SettingsView settings={activeSeason.settings} saveSettings={saveSettings} theme={theme} saveTheme={saveTheme} sport={sport} season={activeSeason} teamsById={teamsById} importGames={importGames} addManualGame={addManualGame} generateSchedule={generateSchedule} league={league} onRunKpbImport={runKpbImport} onAddBadgeDef={addBadgeDef} onRemoveBadgeDef={removeBadgeDef} />;
+      body = <SettingsView settings={activeSeason.settings} saveSettings={saveSettings} theme={theme} saveTheme={saveTheme} sport={sport} season={activeSeason} teamsById={teamsById} importGames={importGames} addManualGame={addManualGame} generateSchedule={generateSchedule} league={league} onRunKpbImport={runKpbImport} onAddBadgeDef={addBadgeDef} onRemoveBadgeDef={removeBadgeDef} onOpenRegistry={openRegistry} />;
     } else if (tab === 'team') {
       body = <TeamPage season={activeSeason} settings={activeSeason.settings} team={selectedTeamMerged} standingsRow={selectedStandingsRow} teamsById={displayTeamsById} h2hMatrix={h2hMatrix} championshipCount={selectedTeamId ? (teamChampionshipCounts[selectedTeamId] || 0) : 0} onBack={backFromTeam} onOpenGlobalHistory={(id) => openTeamHistory(id, 'league')} onOpenCompare={onOpenCompare} updatePlayerField={updatePlayerField} removePlayer={removePlayer} addPlayer={addPlayer} addPlayersBulk={addPlayersBulk} tradePlayer={tradePlayer} updateMemberField={updateMemberField} setPlayerSuspended={setPlayerSuspended} setPlayerBanned={setPlayerBanned} onOpenPlayer={onOpenPlayer} onRebrand={rebrandTeam} onClearRebrand={clearRebrand} />;
     } else if (tab === 'compare') {
@@ -9089,7 +9099,7 @@ function App() {
       <header className="sticky top-0 z-20" style={{ background: `${PANEL}f2`, backdropFilter: 'blur(10px)', WebkitBackdropFilter: 'blur(10px)', borderBottom: `1px solid ${LINE}` }}>
         <div className="max-w-6xl mx-auto px-4 flex items-center gap-3" style={{ height: 60 }}>
           {screen === 'league' && !FIXED_LEAGUE_ID && <button onClick={backToLeagues} className="p-1 rounded flex-shrink-0" style={{ color: CHALK_DIM }}><ArrowLeft size={18} /></button>}
-          {(screen === 'registry' || screen === 'history') && screen !== 'league' && <button onClick={() => setScreen(screen === 'history' ? historyBack : 'leagues')} className="p-1 rounded flex-shrink-0" style={{ color: CHALK_DIM }}><ArrowLeft size={18} /></button>}
+          {(screen === 'registry' || screen === 'history') && screen !== 'league' && <button onClick={() => setScreen(screen === 'history' ? historyBack : (FIXED_LEAGUE_ID ? 'league' : 'leagues'))} className="p-1 rounded flex-shrink-0" style={{ color: CHALK_DIM }}><ArrowLeft size={18} /></button>}
           {screen === 'league' && league && league.logoUrl ? (
             <img src={league.logoUrl} alt="" className="w-8 h-8 object-contain flex-shrink-0" />
           ) : (
