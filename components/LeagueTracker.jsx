@@ -1255,28 +1255,6 @@ function computeExtras(season, teamsById) {
 }
 
 /* ---- simulation ---- */
-// Fills in a single random result for every remaining regular-season game
-// (using the same win-probability model as everything else) and returns the
-// resulting hypothetical final standings — a quick "what might happen"
-// preview, not a saved result and not the same as the full Monte Carlo odds.
-function simulateRestOfSeasonOnce(season, teamsById, h2hMatrix) {
-  const standings = computeStandings(season, teamsById).active;
-  const byId = {};
-  standings.forEach(t => { byId[t.id] = t; });
-  const simGames = (season.games || []).map(g => {
-    if (g.played || g.isPlayoff || g.isPlayIn || !g.homeTeamId || !g.awayTeamId) return g;
-    const home = byId[g.homeTeamId], away = byId[g.awayTeamId];
-    if (!home || !away) return g;
-    const h2h = h2hRecord(h2hMatrix, home.id, away.id);
-    const pHome = winProb(home, away, h2h);
-    const homeWins = Math.random() < pHome;
-    const winnerRuns = 4 + Math.floor(Math.random() * 5);
-    const loserRuns = Math.max(0, winnerRuns - 1 - Math.floor(Math.random() * 4));
-    return { ...g, played: true, homeScore: homeWins ? winnerRuns : loserRuns, awayScore: homeWins ? loserRuns : winnerRuns };
-  });
-  return computeStandings({ ...season, games: simGames }, teamsById).active;
-}
-
 function runSimulation(season, teamsById, simRuns, playoffSpots, h2hMatrix) {
   const base = computeStandings(season, teamsById).active;
   const remaining = (season.games || []).filter(g => !g.played && !g.isPlayoff && g.homeTeamId && g.awayTeamId
@@ -2385,24 +2363,75 @@ function TeamRegistryView({ teamsIndex, teamsById, onBack, onCreate, onOpenHisto
         <p className="px-4 pb-4 text-xs" style={{ color: CHALK_DIM }}>Site Owner only. Teams created here can be added to any season of any league, keep their colors and logos everywhere they're used, and keep one history across all of them.</p>
       </Panel>
       )}
+      <TeamRegistryFolders teamsIndex={teamsIndex} teamsById={teamsById} isLoggedIn={isLoggedIn} onOpenHistory={onOpenHistory} updateGlobalTeamField={updateGlobalTeamField} />
+    </div>
+  );
+}
+
+function TeamRegistryCard({ gt, isLoggedIn, onOpenHistory, updateGlobalTeamField, folderNames }) {
+  return (
+    <div className="rounded-lg p-3" style={{ background: PANEL2, border: `1px solid ${LINE}`, borderLeft: `4px solid ${teamColor(gt)}` }}>
+      <div className="flex items-center gap-2 mb-2">
+        <input value={gt.name} onChange={e => updateGlobalTeamField(gt.id, 'name', e.target.value)} disabled={!isLoggedIn} className="flex-1 min-w-0 bg-[#242424] border rounded px-2 py-1 text-sm font-semibold disabled:opacity-50" style={{ borderColor: LINE, color: CHALK }} />
+        <button onClick={() => onOpenHistory(gt.id)} className="flex items-center gap-1 text-[11px] font-semibold px-2 py-1.5 rounded flex-shrink-0" style={{ background: PANEL, color: PRIMARY, border: `1px solid ${LINE}` }}>
+          <History size={13} /> History
+        </button>
+      </div>
+      <BrandEditor gt={gt} updateGlobalTeamField={updateGlobalTeamField} />
+      {isLoggedIn && (
+        <div className="mt-2 flex items-center gap-1.5">
+          <Folder size={12} style={{ color: CHALK_DIM, flexShrink: 0 }} />
+          <input value={gt.folder || ''} onChange={e => updateGlobalTeamField(gt.id, 'folder', e.target.value || null)} list="team-folder-names" placeholder="No folder" className="flex-1 min-w-0 bg-[#242424] border rounded px-2 py-1 text-xs" style={{ borderColor: LINE, color: CHALK_DIM }} />
+          {gt.folder && <button onClick={() => updateGlobalTeamField(gt.id, 'folder', null)} className="text-[11px] flex-shrink-0" style={{ color: CHALK_DIM }}>Clear</button>}
+        </div>
+      )}
+    </div>
+  );
+}
+
+// Teams can be sorted into free-form folders (e.g. by league, region, tier)
+// so the registry doesn't stay one giant flat list as it grows — purely
+// organizational, doesn't affect anything outside this page. Grouping only
+// kicks in once at least one team actually has a folder set; until then this
+// renders exactly like the old flat list.
+function TeamRegistryFolders({ teamsIndex, teamsById, isLoggedIn, onOpenHistory, updateGlobalTeamField }) {
+  const teams = teamsIndex.map(t => teamsById[t.id] || { id: t.id, name: t.name, color: null, logoUrl: null, wordmarkUrl: null });
+  const folderNames = [...new Set(teams.map(t => t.folder).filter(Boolean))].sort((a, b) => a.localeCompare(b));
+  const cardProps = { isLoggedIn, onOpenHistory, updateGlobalTeamField, folderNames };
+
+  if (folderNames.length === 0) {
+    return (
       <Panel className="overflow-hidden" style={{ borderColor: PRIMARY }}>
-        <SectionTitle accent={PRIMARY}>All teams ({teamsIndex.length})</SectionTitle>
+        <SectionTitle accent={PRIMARY}>All teams ({teams.length})</SectionTitle>
         <div className="px-3 pb-3 grid grid-cols-1 md:grid-cols-2 gap-3">
-          {teamsIndex.length === 0 && <p className="px-1 py-4 text-sm" style={{ color: CHALK_DIM }}>No teams yet.</p>}
-          {teamsIndex.map(t => {
-            const gt = teamsById[t.id] || { id: t.id, name: t.name, color: null, logoUrl: null, wordmarkUrl: null };
-            return (
-              <div key={t.id} className="rounded-lg p-3" style={{ background: PANEL2, border: `1px solid ${LINE}`, borderLeft: `4px solid ${teamColor(gt)}` }}>
-                <div className="flex items-center gap-2 mb-2">
-                  <input value={gt.name} onChange={e => updateGlobalTeamField(gt.id, 'name', e.target.value)} disabled={!isLoggedIn} className="flex-1 min-w-0 bg-[#242424] border rounded px-2 py-1 text-sm font-semibold disabled:opacity-50" style={{ borderColor: LINE, color: CHALK }} />
-                  <button onClick={() => onOpenHistory(gt.id)} className="flex items-center gap-1 text-[11px] font-semibold px-2 py-1.5 rounded flex-shrink-0" style={{ background: PANEL, color: PRIMARY, border: `1px solid ${LINE}` }}>
-                    <History size={13} /> History
-                  </button>
-                </div>
-                <BrandEditor gt={gt} updateGlobalTeamField={updateGlobalTeamField} />
-              </div>
-            );
-          })}
+          {teams.length === 0 && <p className="px-1 py-4 text-sm" style={{ color: CHALK_DIM }}>No teams yet.</p>}
+          {teams.map(gt => <TeamRegistryCard key={gt.id} gt={gt} {...cardProps} />)}
+        </div>
+        <datalist id="team-folder-names" />
+      </Panel>
+    );
+  }
+
+  const unfiled = teams.filter(t => !t.folder);
+  return (
+    <div className="space-y-3">
+      <datalist id="team-folder-names">{folderNames.map(f => <option key={f} value={f} />)}</datalist>
+      {folderNames.map(folder => {
+        const inFolder = teams.filter(t => t.folder === folder);
+        return (
+          <Panel key={folder} className="overflow-hidden" style={{ borderColor: PRIMARY }}>
+            <SectionTitle accent={PRIMARY}><span className="flex items-center gap-1.5"><Folder size={14} /> {folder} ({inFolder.length})</span></SectionTitle>
+            <div className="px-3 pb-3 grid grid-cols-1 md:grid-cols-2 gap-3">
+              {inFolder.map(gt => <TeamRegistryCard key={gt.id} gt={gt} {...cardProps} />)}
+            </div>
+          </Panel>
+        );
+      })}
+      <Panel className="overflow-hidden" style={{ borderColor: LINE }}>
+        <SectionTitle>Unfiled ({unfiled.length})</SectionTitle>
+        <div className="px-3 pb-3 grid grid-cols-1 md:grid-cols-2 gap-3">
+          {unfiled.length === 0 && <p className="px-1 py-4 text-sm" style={{ color: CHALK_DIM }}>Every team is in a folder.</p>}
+          {unfiled.map(gt => <TeamRegistryCard key={gt.id} gt={gt} {...cardProps} />)}
         </div>
       </Panel>
     </div>
@@ -2456,6 +2485,7 @@ function SeasonsView({ league, viewingSeasonId, onBack, onSwitch, onSetDefault, 
   const isLoggedIn = hasPermission('manageSeasons');
   const [newName, setNewName] = useState('');
   const [copyRoster, setCopyRoster] = useState(true);
+  const [tournamentMode, setTournamentMode] = useState(false);
   const [renamingId, setRenamingId] = useState(null);
   const [renameVal, setRenameVal] = useState('');
   const [champPickerId, setChampPickerId] = useState(null);
@@ -2497,7 +2527,10 @@ function SeasonsView({ league, viewingSeasonId, onBack, onSwitch, onSetDefault, 
             <label className="flex items-center gap-2 text-xs" style={{ color: CHALK_DIM }}>
               <input type="checkbox" checked={copyRoster} onChange={e => setCopyRoster(e.target.checked)} style={{ accentColor: PRIMARY }} /> Bring over teams from the current season (stats reset to 0)
             </label>
-            <button onClick={() => { if (newName.trim()) { onCreate(newName.trim(), copyRoster); setNewName(''); } }} className="px-3 py-2 rounded font-bold text-sm flex items-center gap-1" style={{ background: PRIMARY, color: INK }}>
+            <label className="flex items-center gap-2 text-xs" style={{ color: CHALK_DIM }}>
+              <input type="checkbox" checked={tournamentMode} onChange={e => setTournamentMode(e.target.checked)} style={{ accentColor: PRIMARY }} /> WBC-style tournament (divisions as pool-play groups feeding a knockout stage — set up divisions after creating, in the Teams tab)
+            </label>
+            <button onClick={() => { if (newName.trim()) { onCreate(newName.trim(), copyRoster, tournamentMode); setNewName(''); setTournamentMode(false); } }} className="px-3 py-2 rounded font-bold text-sm flex items-center gap-1" style={{ background: PRIMARY, color: INK }}>
               <Plus size={16} /> Create season
             </button>
           </div>
@@ -3934,8 +3967,19 @@ function StatImportModal({ game, side, team, roster, existingRows, onSave, onClo
   const runOcr = async (canvas) => {
     setStep('ocr'); setError(null);
     try {
-      const { createWorker } = await import('tesseract.js');
-      const worker = await createWorker('eng');
+      const { createWorker, OEM } = await import('tesseract.js');
+      // tesseract.js defaults to fetching its worker script, core WASM, and
+      // language data from the jsdelivr CDN at OCR time — three separate
+      // external requests that break the whole import for anyone whose
+      // browser/network blocks that CDN (ad blockers, school/office
+      // filtering, etc. all commonly do). Self-hosting them under
+      // /public/tesseract and pointing the worker at those instead makes
+      // OCR work the same way the rest of the app's own assets do.
+      const worker = await createWorker('eng', OEM.LSTM_ONLY, {
+        workerPath: '/tesseract/worker.min.js',
+        corePath: '/tesseract/core',
+        langPath: '/tesseract/lang',
+      });
       const { data } = await worker.recognize(canvas.toDataURL('image/png'));
       await worker.terminate();
       const parsed = ocrLinesToStatRows(parseOcrTsvToLines(data.tsv));
@@ -5505,6 +5549,18 @@ function PlayerPage({ league, teamsById, playerName, onBack, onOpenTeam, onOpenP
   const hasBatting = regTotals.ab > 0;
   const hasPitching = regTotals.outs > 0;
 
+  // "Teams played on" needs every team a player suited up for, not just
+  // where they ended up — a mid-season trade means seasonsInfo (one entry
+  // per season, wherever they currently sit) alone would miss whichever
+  // team they were on before the trade. seasonSplits already worked this
+  // out per season (via perTeam, built from gameLog's per-game teamId), so
+  // reuse it instead of re-deriving it.
+  const teamsPlayedOn = seasonsInfo.flatMap((info, i) => {
+    const split = seasonSplits[i];
+    const teamIds = split.perTeam ? split.perTeam.map(pt => pt.teamId) : [info.teamId];
+    return teamIds.map(teamId => ({ season: info.season, teamId }));
+  });
+
   const latest = seasonsInfo[seasonsInfo.length - 1];
   const latestTeam = teamsById[latest.teamId];
   const color = latestTeam ? teamColor(latestTeam) : PRIMARY;
@@ -5571,14 +5627,14 @@ function PlayerPage({ league, teamsById, playerName, onBack, onOpenTeam, onOpenP
           <Panel>
             <SectionTitle>Teams played on</SectionTitle>
             <div className="px-2 pb-2">
-              {seasonsInfo.map((info, i) => {
-                const t = teamsById[info.teamId];
-                const isFA = info.teamId == null;
+              {teamsPlayedOn.map((entry, i) => {
+                const t = teamsById[entry.teamId];
+                const isFA = entry.teamId == null;
                 return (
-                  <button key={i} onClick={() => t && onOpenTeam(info.teamId)} disabled={isFA} className="w-full flex items-center gap-2 px-2 py-2 text-left disabled:cursor-default" style={{ borderTop: i > 0 ? `1px solid ${LINE}` : 'none' }}>
+                  <button key={i} onClick={() => t && onOpenTeam(entry.teamId)} disabled={isFA} className="w-full flex items-center gap-2 px-2 py-2 text-left disabled:cursor-default" style={{ borderTop: i > 0 ? `1px solid ${LINE}` : 'none' }}>
                     {t && <TeamMark team={t} size={18} />}
                     <span className="flex-1 text-sm font-semibold truncate" style={{ color: CHALK }}>{t ? t.name : (isFA ? 'Free Agent' : 'Unknown team')}</span>
-                    <span className="text-xs flex-shrink-0" style={{ color: CHALK_DIM }}>{info.season.name}</span>
+                    <span className="text-xs flex-shrink-0" style={{ color: CHALK_DIM }}>{entry.season.name}</span>
                   </button>
                 );
               })}
@@ -5693,14 +5749,14 @@ function PlayerPage({ league, teamsById, playerName, onBack, onOpenTeam, onOpenP
           <Panel>
             <SectionTitle>Teams played on</SectionTitle>
             <div className="px-2 pb-2">
-              {seasonsInfo.map((info, i) => {
-                const t = teamsById[info.teamId];
-                const isFA = info.teamId == null;
+              {teamsPlayedOn.map((entry, i) => {
+                const t = teamsById[entry.teamId];
+                const isFA = entry.teamId == null;
                 return (
-                  <button key={i} onClick={() => t && onOpenTeam(info.teamId)} disabled={isFA} className="w-full flex items-center gap-2 px-2 py-2 text-left disabled:cursor-default" style={{ borderTop: i > 0 ? `1px solid ${LINE}` : 'none' }}>
+                  <button key={i} onClick={() => t && onOpenTeam(entry.teamId)} disabled={isFA} className="w-full flex items-center gap-2 px-2 py-2 text-left disabled:cursor-default" style={{ borderTop: i > 0 ? `1px solid ${LINE}` : 'none' }}>
                     {t && <TeamMark team={t} size={18} />}
                     <span className="flex-1 text-sm font-semibold truncate" style={{ color: CHALK }}>{t ? t.name : (isFA ? 'Free Agent' : 'Unknown team')}</span>
-                    <span className="text-xs flex-shrink-0" style={{ color: CHALK_DIM }}>{info.season.name}</span>
+                    <span className="text-xs flex-shrink-0" style={{ color: CHALK_DIM }}>{entry.season.name}</span>
                   </button>
                 );
               })}
@@ -6074,10 +6130,9 @@ function OddsView({ season, teamsById, standings, settings, onOpenTeam, h2hMatri
   // triggers a one-time backfill so it gets a cache going forward too.
   const sim = season.oddsCache ? season.oddsCache.sim : null;
   const playoffSim = season.oddsCache ? season.oddsCache.playoffSim : null;
-  const [preview, setPreview] = useState(null);
   const decimals = settings.oddsDecimals ?? 1;
   const [oddsFormat, setOddsFormat] = useLocalOddsFormat(settings.oddsFormat || 'percent');
-  const remaining = (season.games || []).filter(g => !g.played && !g.isPlayoff && !g.isPlayIn && g.homeTeamId && g.awayTeamId);
+  const remainingRegular = (season.games || []).filter(g => !g.played && !g.isPlayoff && !g.isPlayIn && g.homeTeamId && g.awayTeamId);
   const remainingByTeam = computeRemaining(season);
   const clinchElim = computeClinchElim(standings, settings.playoffSpots, remainingByTeam);
   const playoffGames = (season.games || []).filter(g => g.isPlayoff);
@@ -6085,7 +6140,6 @@ function OddsView({ season, teamsById, standings, settings, onOpenTeam, h2hMatri
   const playInWinnerId = getPlayInWinner(playInGames);
   const seededStandings = buildMainBracketSeeds(standings, settings, playInWinnerId);
   const eliminatedIds = useMemo(() => computeEliminatedTeamIds(playoffGames, settings), [playoffGames, settings]);
-  const standingsById = useMemo(() => Object.fromEntries(standings.map(t => [t.id, t])), [standings]);
 
   useEffect(() => {
     if (season.oddsCache || !isLoggedIn || !onBackfillOdds) return;
@@ -6093,29 +6147,22 @@ function OddsView({ season, teamsById, standings, settings, onOpenTeam, h2hMatri
     return () => clearTimeout(t);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [season.id, !!season.oddsCache, isLoggedIn]);
-  useEffect(() => { setPreview(null); }, [season.id]);
   const maxSeed = standings.length;
 
-  // The next unplayed game in each still-undecided playoff series — a
-  // single-game win probability alongside the series-level odds above,
-  // computed directly (no simulation trials needed for one game).
-  const nextPlayoffGameOdds = useMemo(() => {
+  // The next unplayed game in each still-undecided playoff series, folded
+  // into the same "Upcoming game odds" list as the regular-season games
+  // below rather than a separate panel — only the earliest unplayed game
+  // per series/slot, not every queued game in a Bo5/Bo7.
+  const nextPlayoffGames = useMemo(() => {
     const bySlot = new Map();
     playoffGames.filter(g => !g.played && g.homeTeamId && g.awayTeamId).forEach(g => {
       const key = `${g.playoffRound}-${g.bracketSlot}`;
       const existing = bySlot.get(key);
       if (!existing || (g.seriesGame || 0) < (existing.seriesGame || 0)) bySlot.set(key, g);
     });
-    return [...bySlot.values()].map(g => {
-      const home = standingsById[g.homeTeamId], away = standingsById[g.awayTeamId];
-      if (!home || !away) return null;
-      const h2h = h2hRecord(h2hMatrix, g.homeTeamId, g.awayTeamId);
-      let pHome = winProb(home, away, h2h);
-      const boost = (settings.homeFieldBoost || 0) / 100;
-      pHome = Math.min(0.97, Math.max(0.03, pHome + boost));
-      return { game: g, home, away, homePct: pHome * 100, awayPct: (1 - pHome) * 100 };
-    }).filter(Boolean);
-  }, [playoffGames, standingsById, h2hMatrix, settings.homeFieldBoost]);
+    return [...bySlot.values()];
+  }, [playoffGames]);
+  const remaining = [...remainingRegular, ...nextPlayoffGames];
 
   return (
     <div className="p-4 space-y-4">
@@ -6165,29 +6212,6 @@ function OddsView({ season, teamsById, standings, settings, onOpenTeam, h2hMatri
         {playoffSim && <p className="px-4 pb-4 text-[11px]" style={{ color: CHALK_DIM }}>"Rd N" is the chance of reaching that round; Champion is the chance of winning it all. Based on {settings.simRuns.toLocaleString()} simulated brackets. Teams already eliminated from the bracket are dropped from this table.</p>}
       </Panel>
 
-      {nextPlayoffGameOdds.length > 0 && (
-        <Panel>
-          <SectionTitle>Playoff game odds</SectionTitle>
-          <div className="px-2 pb-4 space-y-2">
-            {nextPlayoffGameOdds.map(({ game, home, away, homePct, awayPct }) => (
-              <div key={game.id} className="rounded-lg overflow-hidden" style={{ border: `1px solid ${LINE}` }}>
-                <div className="flex items-center gap-2 px-3 py-2" style={{ borderBottom: `1px solid ${LINE}` }}>
-                  <TeamMark team={away} size={15} />
-                  <button onClick={() => onOpenTeam(away.id)} className="flex-1 text-left text-sm font-semibold truncate" style={{ color: CHALK }}>{away.displayName}</button>
-                  <span className="text-sm font-mono font-bold" style={{ color: awayPct >= 50 ? WIN : CHALK_DIM }}>{fmtOdds(awayPct, oddsFormat, decimals)}</span>
-                </div>
-                <div className="flex items-center gap-2 px-3 py-2">
-                  <TeamMark team={home} size={15} />
-                  <button onClick={() => onOpenTeam(home.id)} className="flex-1 text-left text-sm font-semibold truncate" style={{ color: CHALK }}>{home.displayName}</button>
-                  <span className="text-sm font-mono font-bold" style={{ color: homePct >= 50 ? WIN : CHALK_DIM }}>{fmtOdds(homePct, oddsFormat, decimals)}</span>
-                </div>
-              </div>
-            ))}
-          </div>
-          <p className="px-4 pb-4 text-[11px]" style={{ color: CHALK_DIM }}>Win probability for just the next game in each series — not the same as the series odds above, which look further ahead.</p>
-        </Panel>
-      )}
-
       <Panel>
         <SectionTitle>Magic &amp; elimination numbers</SectionTitle>
         <div className="overflow-x-auto px-2 pb-4">
@@ -6210,47 +6234,6 @@ function OddsView({ season, teamsById, standings, settings, onOpenTeam, h2hMatri
           </table>
         </div>
         <p className="px-4 pb-4 text-[11px]" style={{ color: CHALK_DIM }}>Approximate, based on remaining games count vs. the bubble teams — not a full combinatorial check.</p>
-      </Panel>
-
-      {isLoggedIn && (
-      <Panel className="overflow-hidden" style={{ borderColor: PRIMARY }}>
-        <SectionTitle accent={PRIMARY} right={<button onClick={() => setPreview(simulateRestOfSeasonOnce(season, teamsById, h2hMatrix))} disabled={remaining.length === 0} className="text-[11px] font-bold flex items-center gap-1 disabled:opacity-40" style={{ color: PRIMARY }}><Sparkles size={13} /> {preview ? 'Reroll' : 'Preview'}</button>}>
-          Simulate rest of season
-        </SectionTitle>
-        {!preview ? (
-          <p className="px-4 pb-4 text-sm" style={{ color: CHALK_DIM }}>Instantly fills in one random result for every remaining game and shows where the standings could land — a quick "what if" look, not a saved result or the full odds model above.</p>
-        ) : (
-          <div className="px-2 pb-4">
-            {preview.map(t => (
-              <div key={t.id} className="flex items-center gap-2 px-2 py-1.5 text-sm" style={{ borderTop: `1px solid ${LINE}` }}>
-                <span className="font-mono w-5 flex-shrink-0" style={{ color: t.rank <= settings.playoffSpots ? WIN : CHALK_DIM }}>{t.rank}</span>
-                <button onClick={() => onOpenTeam(t.id)} className="flex-1 min-w-0 flex items-center gap-2 text-left" style={{ color: CHALK }}><TeamMark team={t} size={15} /> <span className="truncate">{t.displayName}</span></button>
-                <span className="font-mono text-xs" style={{ color: CHALK_DIM }}>{t.w}-{t.l}</span>
-              </div>
-            ))}
-            <p className="px-2 pt-2 text-[11px]" style={{ color: CHALK_DIM }}>Green rank = a hypothetical playoff spot in this one random roll. Tap "Reroll" for a different outcome.</p>
-          </div>
-        )}
-      </Panel>
-      )}
-
-      <Panel>
-        <SectionTitle>
-          Playoff odds ({settings.playoffSpots} spot{settings.playoffSpots === 1 ? '' : 's'}, {settings.simRuns.toLocaleString()} runs)
-        </SectionTitle>
-        {!sim ? <p className="px-4 pb-4 text-sm" style={{ color: CHALK_DIM }}>{season.oddsCache ? 'Not enough teams yet to simulate.' : 'Odds haven’t been computed for this season yet — they’ll generate the next time a score is entered.'}</p> : (
-          <div className="px-4 pb-4">
-            <ResponsiveContainer width="100%" height={Math.max(160, standings.length * 34)}>
-              <BarChart data={standings.map(t => ({ name: t.displayName, pct: sim[t.id] ? Number(sim[t.id].playoffPct.toFixed(decimals)) : 0, id: t.id }))} layout="vertical" margin={{ left: 8, right: 24 }}>
-                <CartesianGrid stroke={LINE} horizontal={false} />
-                <XAxis type="number" domain={[0, 100]} tick={{ fill: CHALK_DIM, fontSize: 11 }} unit="%" />
-                <YAxis type="category" dataKey="name" width={100} tick={{ fill: CHALK, fontSize: 11 }} />
-                <Tooltip contentStyle={{ background: PANEL2, border: `1px solid ${LINE}`, color: CHALK }} formatter={v => `${v}%`} />
-                <Bar dataKey="pct" radius={[0, 4, 4, 0]}>{standings.map(t => <Cell key={t.id} fill={teamColor(t)} />)}</Bar>
-              </BarChart>
-            </ResponsiveContainer>
-          </div>
-        )}
       </Panel>
 
       {sim && (
@@ -6297,7 +6280,8 @@ function OddsView({ season, teamsById, standings, settings, onOpenTeam, h2hMatri
                     const pctHome = pHome * 100, pctAway = 100 - pctHome;
                     const h2hGames = h2h.aWins + h2h.aLosses;
                     return (
-                      <div key={g.id} className="rounded-lg overflow-hidden" style={{ border: `1px solid ${LINE}`, background: PANEL2 }}>
+                      <div key={g.id} className="rounded-lg overflow-hidden" style={{ border: `1px solid ${g.isPlayoff ? GOLD : LINE}`, background: PANEL2 }}>
+                        {g.isPlayoff && <div className="px-3 pt-2 text-[9px] uppercase font-bold tracking-wide" style={{ color: GOLD }}>Playoffs</div>}
                         <div className="flex items-center gap-2 px-3 pt-2.5 pb-2">
                           <button onClick={() => onOpenTeam(away.id)} className="flex items-center gap-1.5 min-w-0 flex-1">
                             <TeamMark team={away} size={18} /> <span className="text-sm font-bold truncate" style={{ color: CHALK }}>{away.displayName}</span>
@@ -7091,6 +7075,23 @@ function GraphsView({ league, roundHistory, standings, scoringTrend, season, h2h
         </div>
       </Panel>
 
+      {season.oddsCache && season.oddsCache.sim && (
+        <Panel>
+          <SectionTitle>Playoff odds ({season.settings.playoffSpots} spot{season.settings.playoffSpots === 1 ? '' : 's'}, {season.settings.simRuns.toLocaleString()} runs)</SectionTitle>
+          <div className="px-4 pb-4">
+            <ResponsiveContainer width="100%" height={Math.max(160, standings.length * 34)}>
+              <BarChart data={standings.map(t => ({ name: t.displayName, pct: season.oddsCache.sim[t.id] ? Number(season.oddsCache.sim[t.id].playoffPct.toFixed(1)) : 0, id: t.id }))} layout="vertical" margin={{ left: 8, right: 24 }}>
+                <CartesianGrid stroke={LINE} horizontal={false} />
+                <XAxis type="number" domain={[0, 100]} tick={{ fill: CHALK_DIM, fontSize: 11 }} unit="%" />
+                <YAxis type="category" dataKey="name" width={100} tick={{ fill: CHALK, fontSize: 11 }} />
+                <Tooltip contentStyle={{ background: PANEL2, border: `1px solid ${LINE}`, color: CHALK }} formatter={v => `${v}%`} />
+                <Bar dataKey="pct" radius={[0, 4, 4, 0]}>{standings.map(t => <Cell key={t.id} fill={teamColor(t)} />)}</Bar>
+              </BarChart>
+            </ResponsiveContainer>
+          </div>
+        </Panel>
+      )}
+
       <Panel>
         <SectionTitle>Strength of schedule vs. win %</SectionTitle>
         <div className="px-2 pb-2">
@@ -7523,9 +7524,10 @@ function App() {
 
   const switchSeason = (seasonId) => { setViewSeasonId(seasonId); setSelectedTeamId(null); setRoundIdx(0); setTab('home'); };
   const setDefaultSeason = (seasonId) => { if (!league) return; persistLeague({ ...league, activeSeasonId: seasonId }); };
-  const createSeason = (name, copyRoster) => {
+  const createSeason = (name, copyRoster, tournamentMode) => {
     if (!league) return;
     const s = newSeason(name);
+    if (tournamentMode) s.settings = { ...s.settings, playoffFormat: 'wbc' };
     if (copyRoster && activeSeason) s.members = activeSeason.members.map(m => ({ teamId: m.teamId, scheduleName: m.scheduleName, baselineW: 0, baselineL: 0, baselineRF: 0, baselineRA: 0, active: m.active }));
     const lg = { ...league, seasons: [...league.seasons, s], activeSeasonId: s.id };
     persistLeague(lg); setSelectedTeamId(null); setRoundIdx(0); setTab('home');
