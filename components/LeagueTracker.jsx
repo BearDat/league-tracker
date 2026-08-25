@@ -9,7 +9,7 @@ import {
   Trophy, Calendar, Users, BarChart3, Percent, Plus, Trash2, Upload,
   ChevronRight, ChevronLeft, Pencil, Check, X, Folder, Save, RefreshCw, ArrowLeft,
   Activity, AlertTriangle, Image as ImageIcon, Layers, Crown, History, Sparkles, Home as HomeIcon, Settings as SettingsIcon,
-  Award as AwardIcon, Eye, EyeOff, Sun, Moon, Video, ClipboardList, Newspaper, Info as InfoIcon, TrendingUp, Star
+  Award as AwardIcon, Eye, EyeOff, Sun, Moon, Video, ClipboardList, Newspaper, Info as InfoIcon, TrendingUp, Star, Ban
 } from 'lucide-react';
 import { supabase } from '../lib/supabaseClient';
 import { AuthProvider, useAuth, ROLE_LABELS } from '../lib/AuthContext';
@@ -96,6 +96,13 @@ function hashColor(id) {
   return TEAM_PALETTE[h % TEAM_PALETTE.length];
 }
 function teamColor(t) { return (t && t.color) || hashColor(t ? t.id : uid()); }
+// Falls back to an auto-generated abbreviation (first 3 letters of the name)
+// for teams that haven't set one explicitly.
+function teamAbbr(t) {
+  if (t && t.abbr) return t.abbr;
+  const name = (t && (t.displayName || t.name)) || '';
+  return name.replace(/[^A-Za-z0-9]/g, '').slice(0, 3).toUpperCase() || '???';
+}
 function fmtPct(x, decimals) {
   if (x == null || Number.isNaN(x)) return '—';
   return `${x.toFixed(decimals)}%`;
@@ -560,6 +567,7 @@ function mergeTeam(globalTeam, member) {
     id: member.teamId,
     scheduleName: member.scheduleName || (globalTeam ? globalTeam.name : 'Unknown team'),
     displayName: (rb && rb.name) || (globalTeam ? globalTeam.name : (member.scheduleName || 'Unknown team')),
+    abbr: (rb && rb.abbr) || (globalTeam ? globalTeam.abbr : null),
     color: (rb && rb.color) || (globalTeam ? globalTeam.color : null),
     logoUrl: (rb && rb.logoUrl) || (globalTeam ? globalTeam.logoUrl : null),
     wordmarkUrl: (rb && rb.wordmarkUrl) || (globalTeam ? globalTeam.wordmarkUrl : null),
@@ -1144,34 +1152,6 @@ function computeLeagueRecords(league, teamsById) {
   });
   if (!bestRecord && !bestRunDiff && !longestStreak && !highestScore) return null;
   return { bestRecord, bestRunDiff, longestStreak, highestScore };
-}
-
-// Finds the single game with the biggest standings impact — the winning
-// team's games-behind-the-leader improved more from this one result than
-// from any other game all season. Recomputes standings before/after every
-// played game in chronological order, so cost scales with schedule size.
-function computeTurningPoint(season, teamsById) {
-  const scheduleMode = (season.settings && season.settings.scheduleMode) || 'date';
-  const played = sortGamesChronologically((season.games || []).filter(g => g.played && !g.isPlayoff && !g.isPlayIn && !g.isForfeit && g.homeTeamId && g.awayTeamId), scheduleMode);
-  if (played.length < 2) return null;
-  let cum = [];
-  let best = null;
-  played.forEach(g => {
-    const beforeGb = {};
-    computeStandings({ ...season, games: cum }, teamsById).active.forEach(t => { beforeGb[t.id] = t.gb; });
-    cum = [...cum, g];
-    const afterGb = {};
-    computeStandings({ ...season, games: cum }, teamsById).active.forEach(t => { afterGb[t.id] = t.gb; });
-    const w = gameWinner(g);
-    if (!w) return;
-    const winnerId = w === 'home' ? g.homeTeamId : g.awayTeamId;
-    if (beforeGb[winnerId] == null || afterGb[winnerId] == null) return;
-    const swing = beforeGb[winnerId] - afterGb[winnerId];
-    if (swing > 0 && (!best || swing > best.swing)) {
-      best = { game: g, swing, winnerName: (teamsById[winnerId] || {}).name || 'Unknown', beforeGb: beforeGb[winnerId], afterGb: afterGb[winnerId] };
-    }
-  });
-  return best;
 }
 
 function computeExtras(season, teamsById) {
@@ -1910,6 +1890,35 @@ function NumInput({ value, onChange, w = 'w-14', min, max, step = 1, allowDecima
       style={{ borderColor: LINE, color: CHALK }} />
   );
 }
+function activityIcon(type) {
+  switch (type) {
+    case 'suspend': return <AlertTriangle size={13} style={{ color: NEGATIVE, flexShrink: 0 }} />;
+    case 'unsuspend': return <Check size={13} style={{ color: WIN, flexShrink: 0 }} />;
+    case 'ban': return <Ban size={13} style={{ color: NEGATIVE, flexShrink: 0 }} />;
+    case 'unban': return <Check size={13} style={{ color: WIN, flexShrink: 0 }} />;
+    case 'add': return <Plus size={13} style={{ color: WIN, flexShrink: 0 }} />;
+    case 'remove': return <Trash2 size={13} style={{ color: NEGATIVE, flexShrink: 0 }} />;
+    case 'trade': return <RefreshCw size={13} style={{ color: PRIMARY, flexShrink: 0 }} />;
+    case 'rebrand': return <Sparkles size={13} style={{ color: GOLD, flexShrink: 0 }} />;
+    default: return null;
+  }
+}
+function ActivityRow({ a, teamsById, onRemove }) {
+  const team = a.teamId ? teamsById[a.teamId] : null;
+  const toTeam = a.toTeamId ? teamsById[a.toTeamId] : null;
+  return (
+    <div className="flex items-center gap-2 px-2 py-2 text-sm" style={{ borderTop: `1px solid ${LINE}`, color: CHALK }}>
+      {activityIcon(a.type)}
+      {team && <TeamMark team={team} size={16} />}
+      {toTeam && <><span style={{ color: CHALK_DIM }}>→</span><TeamMark team={toTeam} size={16} /></>}
+      <span className="flex-1 min-w-0">{a.text}</span>
+      <span className="text-[10px] flex-shrink-0" style={{ color: CHALK_DIM }}>{a.at ? new Date(a.at).toLocaleDateString() : ''}</span>
+      {onRemove && (
+        <button onClick={() => { if (confirm('Remove this activity entry?')) onRemove(a.id); }} className="p-1 rounded flex-shrink-0" style={{ color: CHALK_DIM }}><Trash2 size={13} /></button>
+      )}
+    </div>
+  );
+}
 function TeamMark({ team, size = 22 }) {
   const color = teamColor(team);
   if (team.logoUrl) return <img src={team.logoUrl} alt="" style={{ width: size, height: size, objectFit: 'contain', borderRadius: 6, flexShrink: 0, boxShadow: `0 0 0 2px ${color}` }} />;
@@ -2265,6 +2274,7 @@ function BrandEditor({ gt, updateGlobalTeamField }) {
     <div className="flex flex-col gap-3">
       <div className="flex items-center gap-4 flex-wrap">
         <input type="color" value={gt.color || hashColor(gt.id)} disabled={!isLoggedIn} onChange={e => updateGlobalTeamField(gt.id, 'color', e.target.value)} className="w-8 h-8 rounded cursor-pointer bg-transparent flex-shrink-0 disabled:opacity-50 disabled:cursor-not-allowed" style={{ border: `1px solid ${LINE}` }} />
+        <input value={gt.abbr || ''} disabled={!isLoggedIn} onChange={e => updateGlobalTeamField(gt.id, 'abbr', e.target.value.toUpperCase().slice(0, 4))} placeholder={teamAbbr(gt)} maxLength={4} className="w-16 bg-[#242424] border rounded px-2 py-1.5 text-xs font-mono text-center uppercase disabled:opacity-50" style={{ borderColor: LINE, color: CHALK }} title="Abbreviation" />
         <div className="flex items-center gap-2">
           {gt.logoUrl ? <img src={gt.logoUrl} alt="" className="w-8 h-8 object-contain rounded" style={{ background: PANEL }} /> : <div className="w-8 h-8 rounded flex items-center justify-center" style={{ background: PANEL }}><ImageIcon size={14} style={{ color: CHALK_DIM }} /></div>}
           {isLoggedIn && (
@@ -2495,7 +2505,7 @@ function ChampionBanner({ team }) {
   );
 }
 
-function HomeView({ season, teamsById, settings, onOpenTeam, h2hMatrix, sport, onStartPlayoffs, onClearPlayoffs, onStartPlayIn, onClearPlayIn, onOpenCompare, news, onViewNews, onOpenPlayer, onViewLeaders }) {
+function HomeView({ season, teamsById, settings, onOpenTeam, h2hMatrix, sport, onStartPlayoffs, onClearPlayoffs, onStartPlayIn, onClearPlayIn, onOpenCompare, news, onViewNews, onOpenPlayer, onViewLeaders, onViewTransactions }) {
   if ((season.games || []).length === 0) {
     return <div className="p-4"><Panel><p className="px-4 py-8 text-sm text-center" style={{ color: CHALK_DIM }}>Import a schedule to see standings and scores here.</p></Panel></div>;
   }
@@ -2563,6 +2573,17 @@ function HomeView({ season, teamsById, settings, onOpenTeam, h2hMatrix, sport, o
     </Panel>
   );
 
+  const transactionsPanel = (
+    <Panel accent={PRIMARY} className="overflow-hidden">
+      <SectionTitle accent={PRIMARY} right={<button onClick={onViewTransactions} className="text-[11px] font-bold" style={{ color: PRIMARY }}>View all</button>}>Recent transactions</SectionTitle>
+      <div className="px-2 pb-2">
+        {(season.activityLog || []).length === 0 ? (
+          <p className="px-2 py-3 text-sm" style={{ color: CHALK_DIM }}>No transactions yet.</p>
+        ) : season.activityLog.slice().reverse().slice(0, 5).map(a => <ActivityRow key={a.id} a={a} teamsById={teamsById} />)}
+      </div>
+    </Panel>
+  );
+
   return (
     <div className="p-4 space-y-4">
       <style>{`@keyframes lt-live-pulse { 0%, 100% { opacity: 1; } 50% { opacity: 0.3; } }`}</style>
@@ -2574,33 +2595,13 @@ function HomeView({ season, teamsById, settings, onOpenTeam, h2hMatrix, sport, o
         <BracketView standings={seededStandings} settings={settings} playoffGames={playoffGames} teamsById={teamsById} onStart={onStartPlayoffs} onClear={onClearPlayoffs} onOpenTeam={onOpenTeam} h2hMatrix={h2hMatrix} onOpenCompare={onOpenCompare} />
       )}
       {(() => {
-        const liveGames = (season.games || []).filter(g => g.isOngoing && !g.played);
-        if (liveGames.length === 0) return null;
-        return (
-          <div className="rounded-xl p-3 space-y-2" style={{ background: `${NEGATIVE}14`, border: `1px solid ${NEGATIVE}55` }}>
-            <div className="flex items-center gap-1.5">
-              <span className="w-2 h-2 rounded-full" style={{ background: NEGATIVE, animation: 'lt-live-pulse 1.4s ease-in-out infinite' }} />
-              <span className="text-[10px] uppercase font-bold" style={{ color: NEGATIVE }}>Live now</span>
-            </div>
-            {liveGames.map(g => {
-              const away = teamsById[g.awayTeamId], home = teamsById[g.homeTeamId];
-              const periodLabel = formatLivePeriod(sport, g.livePeriod, g.liveHalf);
-              return (
-                <div key={g.id} className="flex items-center gap-1.5 text-sm flex-wrap" style={{ color: CHALK }}>
-                  {away && <TeamMark team={away} size={14} />} {away ? away.name : g.awayScheduleName}
-                  {g.liveAwayScore != null && g.liveHomeScore != null && <span className="font-mono" style={{ color: CHALK_DIM }}>{g.liveAwayScore}–{g.liveHomeScore}</span>}
-                  <span style={{ color: CHALK_DIM }}>@</span> {home ? home.name : g.homeScheduleName} {home && <TeamMark team={home} size={14} />}
-                  {periodLabel && <span className="text-xs font-mono px-1.5 py-0.5 rounded" style={{ background: `${NEGATIVE}22`, color: NEGATIVE }}>{periodLabel}</span>}
-                </div>
-              );
-            })}
-          </div>
-        );
-      })()}
-      {(() => {
-        // Scores: no round pagination — just the last played game, the next
-        // few upcoming, and (during playoffs) which series is currently on.
+        // Scores: live games first (with a pulsing badge and running score),
+        // then the last played game, then the next few upcoming — and
+        // (during playoffs) which series is currently on. Live games used to
+        // live in their own separate red callout above this ticker; folding
+        // them in here means there's one score strip instead of two.
         const allGames = allGamesChrono;
+        const liveGames = (season.games || []).filter(g => g.isOngoing && !g.played);
         const playedGames = allGames.filter(g => g.played);
         const upcomingGames = allGames.filter(g => !g.played && !g.isOngoing);
         const previousGame = playedGames[playedGames.length - 1] || null;
@@ -2615,24 +2616,32 @@ function HomeView({ season, teamsById, settings, onOpenTeam, h2hMatrix, sport, o
         }
         const GameChip = ({ g }) => {
           const home = teamsById[g.homeTeamId], away = teamsById[g.awayTeamId];
+          const isLive = g.isOngoing && !g.played;
+          const periodLabel = isLive ? formatLivePeriod(sport, g.livePeriod, g.liveHalf) : null;
+          const awayScore = isLive ? g.liveAwayScore : g.awayScore;
+          const homeScore = isLive ? g.liveHomeScore : g.homeScore;
+          const showScore = g.played || (isLive && awayScore != null && homeScore != null);
           return (
-            <div className="flex-shrink-0 snap-start rounded-lg p-3" style={{ width: 168, background: PANEL2, border: `1px solid ${LINE}` }}>
-              <div className="text-[9px] uppercase font-bold mb-2 flex items-center justify-between" style={{ color: g.played ? CHALK_DIM : PRIMARY }}>
-                <span>{g.played ? 'Final' : (g.date || 'Upcoming')}</span>
+            <div className="flex-shrink-0 snap-start rounded-lg p-3" style={{ width: 168, background: PANEL2, border: `1px solid ${isLive ? NEGATIVE : LINE}` }}>
+              <div className="text-[9px] uppercase font-bold mb-2 flex items-center justify-between" style={{ color: isLive ? NEGATIVE : g.played ? CHALK_DIM : PRIMARY }}>
+                <span className="flex items-center gap-1">
+                  {isLive && <span className="w-1.5 h-1.5 rounded-full flex-shrink-0" style={{ background: NEGATIVE, animation: 'lt-live-pulse 1.4s ease-in-out infinite' }} />}
+                  {isLive ? (periodLabel || 'Live') : g.played ? 'Final' : (g.date || 'Upcoming')}
+                </span>
                 {g.streamUrl && !g.played && <Video size={11} style={{ color: PRIMARY }} />}
               </div>
               <div className="flex items-center justify-between gap-1.5 mb-1">
                 <span className="flex items-center gap-1 min-w-0 text-xs font-semibold truncate" style={{ color: CHALK }}>{away && <TeamMark team={away} size={13} />} {away ? away.name : g.awayScheduleName}</span>
-                {g.played && <span className="font-head text-sm font-bold flex-shrink-0" style={{ color: CHALK }}>{g.awayScore}</span>}
+                {showScore && <span className="font-head text-sm font-bold flex-shrink-0" style={{ color: CHALK }}>{awayScore}</span>}
               </div>
               <div className="flex items-center justify-between gap-1.5">
                 <span className="flex items-center gap-1 min-w-0 text-xs font-semibold truncate" style={{ color: CHALK }}>{home && <TeamMark team={home} size={13} />} {home ? home.name : g.homeScheduleName}</span>
-                {g.played && <span className="font-head text-sm font-bold flex-shrink-0" style={{ color: CHALK }}>{g.homeScore}</span>}
+                {showScore && <span className="font-head text-sm font-bold flex-shrink-0" style={{ color: CHALK }}>{homeScore}</span>}
               </div>
             </div>
           );
         };
-        const chipGames = [...(previousGame ? [previousGame] : []), ...nextUpcoming];
+        const chipGames = [...liveGames, ...(previousGame ? [previousGame] : []), ...nextUpcoming];
         return (
           <Panel className="overflow-hidden" style={{ borderColor: PRIMARY }}>
             <SectionTitle accent={PRIMARY}>{scoresTitle}</SectionTitle>
@@ -2721,29 +2730,34 @@ function HomeView({ season, teamsById, settings, onOpenTeam, h2hMatrix, sport, o
         )}
       </Panel>
 
-      <Panel className="overflow-hidden" style={{ borderColor: GOLD }}>
-        <SectionTitle accent={GOLD}>Clinch &amp; elimination watch</SectionTitle>
-        <div className="px-4 pb-4 space-y-3">
-          {clinched.length > 0 && (
-            <div className="space-y-1">
-              {clinched.map(t => { const d = describeClinchElim(t, clinchElim[t.id], t.rank, settings.playoffSpots, season, teamsById, bubbleOutTeam); return <p key={t.id} className="text-sm" style={{ color: d.color }}>{d.text}</p>; })}
-            </div>
-          )}
-          {eliminated.length > 0 && (
-            <div className="space-y-1">
-              {eliminated.map(t => { const d = describeClinchElim(t, clinchElim[t.id], t.rank, settings.playoffSpots, season, teamsById, bubbleInTeam); return <p key={t.id} className="text-sm" style={{ color: d.color }}>{d.text}</p>; })}
-            </div>
-          )}
-          {stillAlive.length > 0 && (
-            <div className="space-y-1 pt-1" style={{ borderTop: (clinched.length || eliminated.length) ? `1px solid ${LINE}` : 'none' }}>
-              {stillAlive.map(t => { const bubble = t.rank <= settings.playoffSpots ? bubbleOutTeam : bubbleInTeam; const d = describeClinchElim(t, clinchElim[t.id], t.rank, settings.playoffSpots, season, teamsById, bubble); return <p key={t.id} className="text-sm" style={{ color: d.color }}>{d.text}</p>; })}
-            </div>
-          )}
-          {clinched.length === 0 && eliminated.length === 0 && stillAlive.length === 0 && <p className="text-sm" style={{ color: CHALK_DIM }}>Not enough data yet.</p>}
-        </div>
-      </Panel>
+      {/* Once the playoff bracket has actual games, the regular-season race
+          these two panels track is decided — showing them alongside a live
+          bracket is just noise, so they only render pre-playoffs. */}
+      {playoffGames.length === 0 && (
+        <Panel className="overflow-hidden" style={{ borderColor: GOLD }}>
+          <SectionTitle accent={GOLD}>Clinch &amp; elimination watch</SectionTitle>
+          <div className="px-4 pb-4 space-y-3">
+            {clinched.length > 0 && (
+              <div className="space-y-1">
+                {clinched.map(t => { const d = describeClinchElim(t, clinchElim[t.id], t.rank, settings.playoffSpots, season, teamsById, bubbleOutTeam); return <p key={t.id} className="text-sm" style={{ color: d.color }}>{d.text}</p>; })}
+              </div>
+            )}
+            {eliminated.length > 0 && (
+              <div className="space-y-1">
+                {eliminated.map(t => { const d = describeClinchElim(t, clinchElim[t.id], t.rank, settings.playoffSpots, season, teamsById, bubbleInTeam); return <p key={t.id} className="text-sm" style={{ color: d.color }}>{d.text}</p>; })}
+              </div>
+            )}
+            {stillAlive.length > 0 && (
+              <div className="space-y-1 pt-1" style={{ borderTop: (clinched.length || eliminated.length) ? `1px solid ${LINE}` : 'none' }}>
+                {stillAlive.map(t => { const bubble = t.rank <= settings.playoffSpots ? bubbleOutTeam : bubbleInTeam; const d = describeClinchElim(t, clinchElim[t.id], t.rank, settings.playoffSpots, season, teamsById, bubble); return <p key={t.id} className="text-sm" style={{ color: d.color }}>{d.text}</p>; })}
+              </div>
+            )}
+            {clinched.length === 0 && eliminated.length === 0 && stillAlive.length === 0 && <p className="text-sm" style={{ color: CHALK_DIM }}>Not enough data yet.</p>}
+          </div>
+        </Panel>
+      )}
 
-      {seedScenarios.length > 0 && (
+      {playoffGames.length === 0 && seedScenarios.length > 0 && (
         <Panel className="overflow-hidden" style={{ borderColor: GOLD }}>
           <SectionTitle accent={GOLD}>Seed scenarios</SectionTitle>
           <div className="px-4 pb-4 space-y-3">
@@ -2761,6 +2775,7 @@ function HomeView({ season, teamsById, settings, onOpenTeam, h2hMatrix, sport, o
       <div className="space-y-4">
         {newsPanel}
         {leadersPanel}
+        {transactionsPanel}
       </div>
       </div>
     </div>
@@ -2841,6 +2856,7 @@ function StandingsView({ standings, updateMemberField, season, settings, movemen
                           <td className="px-2 py-2 font-semibold" style={{ borderLeft: `4px solid ${teamColor(t)}` }}>
                             <button onClick={() => onOpenTeam(t.id)} className="flex items-center gap-2 text-left pl-1.5" style={{ color: CHALK }}>
                               <TeamMark team={t} size={18} /> <span className="font-head truncate max-w-[120px] font-semibold">{t.displayName}</span>
+                              <span className="text-[10px] font-mono font-bold" style={{ color: CHALK_DIM }}>{teamAbbr(t)}</span>
                               {symbols.map(s => <ClinchBadge key={s} symbol={s} />)}
                             </button>
                           </td>
@@ -2901,6 +2917,7 @@ function StandingsView({ standings, updateMemberField, season, settings, movemen
                     <td className="px-2 py-2 font-semibold">
                       <button onClick={() => onOpenTeam(t.id)} className="flex items-center gap-2 text-left" style={{ color: CHALK }}>
                         <TeamMark team={t} size={20} /> <span className="font-head truncate max-w-[110px] font-semibold">{t.displayName}</span>
+                        <span className="text-[10px] font-mono font-bold" style={{ color: CHALK_DIM }}>{teamAbbr(t)}</span>
                         {symbols.map(s => <ClinchBadge key={s} symbol={s} />)}
                         {t.gp >= 3 && t.l === 0 && <span title="Undefeated" style={{ fontSize: 12 }}>🔥</span>}
                         {t.gp >= 3 && t.w === 0 && <span title="Winless" style={{ fontSize: 12 }}>🥶</span>}
@@ -3567,6 +3584,9 @@ function getPlayerCareerData(league, playerName) {
         if (norm(p.name) === target) seasonsInfo.push({ season, teamId: member.teamId, playerId: p.id, player: p });
       });
     });
+    (season.freeAgents || []).forEach(p => {
+      if (norm(p.name) === target) seasonsInfo.push({ season, teamId: null, playerId: p.id, player: p });
+    });
   });
   const gameLog = [];
   seasonsInfo.forEach(info => {
@@ -3576,8 +3596,14 @@ function getPlayerCareerData(league, playerName) {
         const rows = (g.playerStats && g.playerStats[side]) || [];
         const row = rows.find(r => r.playerId === info.playerId);
         if (!row) return;
+        // teamId comes from the game itself (which side the player's row is
+        // filed under), not info.teamId (their current/final roster spot) —
+        // a player traded mid-season keeps the team they actually played
+        // for on each individual game, so a trade doesn't retroactively
+        // repaint earlier games as having been played for the new team.
         gameLog.push(normalizeStatRow(row, {
-          seasonId: info.season.id, seasonName: info.season.name, teamId: info.teamId,
+          seasonId: info.season.id, seasonName: info.season.name,
+          teamId: side === 'home' ? g.homeTeamId : g.awayTeamId,
           oppTeamId: side === 'home' ? g.awayTeamId : g.homeTeamId, side,
           gameId: g.id, date: g.date, isPlayoff: !!g.isPlayoff, isPlayIn: !!g.isPlayIn,
         }));
@@ -3643,8 +3669,9 @@ function computePlayerWAR(t, leagueERA) {
 function computeSeasonPlayerLeaders(season, teamsById, mode = 'regular') {
   const byPlayer = new Map();
   (season.members || []).forEach(member => {
-    (member.roster || []).forEach(p => byPlayer.set(p.id, { playerId: p.id, name: p.name, teamId: member.teamId, rows: [] }));
+    (member.roster || []).forEach(p => { if (!p.banned) byPlayer.set(p.id, { playerId: p.id, name: p.name, teamId: member.teamId, rows: [] }); });
   });
+  (season.freeAgents || []).forEach(p => { if (!p.banned) byPlayer.set(p.id, { playerId: p.id, name: p.name, teamId: null, rows: [] }); });
   (season.games || []).forEach(g => {
     if (g.isBye || g.isSpringTraining) return;
     if (!!g.isPlayoff !== (mode === 'playoffs')) return;
@@ -4526,7 +4553,7 @@ function StarLevelEditor({ value, onChange, disabled = false }) {
   );
 }
 
-function RosterPanel({ member, color, updatePlayerField, removePlayer, addPlayer, addPlayersBulk, teamOptions, onTrade, onSuspend, onOpenPlayer, teamGamesPlayed }) {
+function RosterPanel({ member, color, updatePlayerField, removePlayer, addPlayer, addPlayersBulk, teamOptions, onTrade, onSuspend, onBan, onOpenPlayer, teamGamesPlayed }) {
   const { hasPermission } = useAuth();
   const isLoggedIn = hasPermission('manageRosters');
   const [name, setName] = useState('');
@@ -4583,8 +4610,9 @@ function RosterPanel({ member, color, updatePlayerField, removePlayer, addPlayer
               <div className="flex items-center gap-2 px-3 py-2">
                 <button onClick={() => setExpandedId(isOpen ? null : p.id)} className="flex-1 min-w-0 flex items-center gap-2 text-left">
                   {p.role && <span className="text-[10px] font-mono px-1 rounded flex-shrink-0" style={{ background: PANEL, color: CHALK_DIM }}>{p.role}</span>}
-                  <span className="text-sm font-semibold truncate" style={{ color: p.suspended ? NEGATIVE : CHALK }}>{p.name}</span>
+                  <span className="text-sm font-semibold truncate" style={{ color: (p.banned || p.suspended) ? NEGATIVE : CHALK }}>{p.name}</span>
                   {p.number && <span className="text-xs font-mono flex-shrink-0" style={{ color: CHALK_DIM }}>#{p.number}</span>}
+                  {p.banned && <span className="text-[9px] uppercase font-bold px-1.5 py-0.5 rounded flex-shrink-0" style={{ background: `${NEGATIVE}22`, color: NEGATIVE }}>Banned</span>}
                   {p.suspended && (() => {
                     const remaining = p.suspensionGames ? Math.max(0, p.suspensionGames - ((teamGamesPlayed || 0) - (p.suspensionStartGames || 0))) : null;
                     return <span className="text-[9px] uppercase font-bold px-1.5 py-0.5 rounded flex-shrink-0" style={{ background: `${NEGATIVE}22`, color: NEGATIVE }}>{remaining != null ? (remaining > 0 ? `Suspended · ${remaining} left` : 'Suspension served') : 'Suspended'}</span>;
@@ -4602,8 +4630,9 @@ function RosterPanel({ member, color, updatePlayerField, removePlayer, addPlayer
                     <div><div className="text-[10px] uppercase mb-1" style={{ color: CHALK_DIM }}>#</div><input value={p.number} onChange={e => updatePlayerField(p.id, 'number', e.target.value)} className="w-14 bg-[#242424] border rounded px-2 py-1 text-xs" style={{ borderColor: LINE, color: CHALK }} /></div>
                     <div><div className="text-[10px] uppercase mb-1" style={{ color: CHALK_DIM }}>Position</div><input value={p.position} onChange={e => updatePlayerField(p.id, 'position', e.target.value)} className="w-20 bg-[#242424] border rounded px-2 py-1 text-xs" style={{ borderColor: LINE, color: CHALK }} /></div>
                   </div>
-                  {p.suspended && p.suspensionReason && <p className="text-xs italic" style={{ color: NEGATIVE }}>Reason: {p.suspensionReason}</p>}
+                  {p.suspended && p.suspensionReason && <p className="text-xs italic" style={{ color: NEGATIVE }}>Suspension reason: {p.suspensionReason}</p>}
                   {p.suspended && p.suspensionGames && <p className="text-xs" style={{ color: CHALK_DIM }}>Length: {p.suspensionGames} game{p.suspensionGames === 1 ? '' : 's'}</p>}
+                  {p.banned && p.banReason && <p className="text-xs italic" style={{ color: NEGATIVE }}>Ban reason: {p.banReason}</p>}
                   <div className="flex items-center justify-between gap-2 flex-wrap">
                     {teamOptions && teamOptions.length > 0 && (
                       <button onClick={() => setTradingId(tradingId === p.id ? null : p.id)} className="text-xs flex items-center gap-1" style={{ color: PRIMARY }}><RefreshCw size={13} /> Trade</button>
@@ -4618,7 +4647,12 @@ function RosterPanel({ member, color, updatePlayerField, removePlayer, addPlayer
                             onSuspend(p.id, true, reason, Number.isFinite(dur) && dur > 0 ? dur : null);
                           }} className="text-xs flex items-center gap-1" style={{ color: GOLD }}><AlertTriangle size={13} /> Suspend</button>
                     )}
-                    <button onClick={() => { if (confirm(`Remove ${p.name} from the roster?`)) removePlayer(p.id); }} className="text-xs flex items-center gap-1" style={{ color: NEGATIVE }}><Trash2 size={13} /> Remove</button>
+                    {onBan && (
+                      p.banned
+                        ? <button onClick={() => onBan(p.id, false)} className="text-xs flex items-center gap-1" style={{ color: WIN }}><Check size={13} /> Lift ban</button>
+                        : <button onClick={() => { if (confirm(`Ban ${p.name}? They'll disappear from stat leaders until unbanned.`)) { const reason = prompt(`Reason for banning ${p.name}? (optional)`) || ''; onBan(p.id, true, reason); } }} className="text-xs flex items-center gap-1" style={{ color: NEGATIVE }}><Ban size={13} /> Ban</button>
+                    )}
+                    <button onClick={() => { if (confirm(`Release ${p.name} to free agency? Their stats stay intact, and they can be re-signed later.`)) removePlayer(p.id); }} className="text-xs flex items-center gap-1" style={{ color: NEGATIVE }}><Trash2 size={13} /> Release</button>
                   </div>
                   </fieldset>
                   {tradingId === p.id && teamOptions && (
@@ -4712,7 +4746,96 @@ function TradeCenter({ season, teamsById, onExecuteTrade }) {
   );
 }
 
-function RosterManagementView({ season, teamsById, updatePlayerField, removePlayer, addPlayer, addPlayersBulk, tradePlayer, tradePlayers, setPlayerSuspended, onOpenPlayer }) {
+function FreeAgentsPanel({ season, teamsById, signFreeAgent, deleteFreeAgent, setPlayerBanned }) {
+  const [signingId, setSigningId] = useState(null);
+  const freeAgents = season.freeAgents || [];
+  if (freeAgents.length === 0) return null;
+  return (
+    <Panel className="overflow-hidden" style={{ borderColor: GOLD }}>
+      <SectionTitle accent={GOLD}>Free agents ({freeAgents.length})</SectionTitle>
+      <p className="px-4 pb-3 text-xs" style={{ color: CHALK_DIM }}>Released players land here instead of being deleted, so their stats stay on Leaders and their player page. Sign one to a roster to bring them back.</p>
+      <div className="px-2 pb-3">
+        {freeAgents.map((p, i) => (
+          <div key={p.id} className="flex items-center gap-2 px-2 py-2" style={{ borderTop: i > 0 ? `1px solid ${LINE}` : 'none' }}>
+            <span className="flex-1 text-sm font-semibold truncate" style={{ color: p.banned ? NEGATIVE : CHALK }}>{p.name}</span>
+            {p.banned && <span className="text-[9px] uppercase font-bold px-1.5 py-0.5 rounded flex-shrink-0" style={{ background: `${NEGATIVE}22`, color: NEGATIVE }}>Banned</span>}
+            {setPlayerBanned && (
+              p.banned
+                ? <button onClick={() => setPlayerBanned(p.id, false)} className="text-xs flex items-center gap-1 flex-shrink-0" style={{ color: WIN }}><Check size={13} /> Lift ban</button>
+                : <button onClick={() => { if (confirm(`Ban ${p.name}? They'll disappear from stat leaders until unbanned.`)) { const reason = prompt(`Reason for banning ${p.name}? (optional)`) || ''; setPlayerBanned(p.id, true, reason); } }} className="text-xs flex items-center gap-1 flex-shrink-0" style={{ color: NEGATIVE }}><Ban size={13} /> Ban</button>
+            )}
+            {signingId === p.id ? (
+              <select autoFocus defaultValue="" onChange={e => { if (e.target.value) { signFreeAgent(e.target.value, p.id); setSigningId(null); } }} onBlur={() => setSigningId(null)} className="text-xs px-2 py-1.5 rounded" style={{ background: PANEL2, color: CHALK, border: `1px solid ${LINE}` }}>
+                <option value="" disabled>Sign to…</option>
+                {season.members.map(m => <option key={m.teamId} value={m.teamId}>{(teamsById[m.teamId] && teamsById[m.teamId].name) || m.scheduleName}</option>)}
+              </select>
+            ) : (
+              <button onClick={() => setSigningId(p.id)} className="text-[11px] font-bold px-2 py-1.5 rounded flex-shrink-0" style={{ background: `${GOLD}22`, color: GOLD }}>Sign…</button>
+            )}
+            <button onClick={() => { if (confirm(`Permanently delete ${p.name} from the free agent pool? This does not affect their existing stats.`)) deleteFreeAgent(p.id); }} className="text-xs flex-shrink-0" style={{ color: CHALK_DIM }} title="Delete permanently"><Trash2 size={13} /></button>
+          </div>
+        ))}
+      </div>
+    </Panel>
+  );
+}
+function NewSigningPanel({ season, teamsById, addPlayer, signFreeAgent }) {
+  const [open, setOpen] = useState(false);
+  const [teamId, setTeamId] = useState('');
+  const [mode, setMode] = useState('new');
+  const [name, setName] = useState('');
+  const [starLevel, setStarLevel] = useState(null);
+  const [faId, setFaId] = useState('');
+  const freeAgents = season.freeAgents || [];
+  const reset = () => { setOpen(false); setTeamId(''); setMode('new'); setName(''); setStarLevel(null); setFaId(''); };
+  const submit = () => {
+    if (!teamId) return;
+    if (mode === 'new') {
+      if (!name.trim()) return;
+      addPlayer(teamId, name.trim(), starLevel);
+    } else {
+      if (!faId) return;
+      signFreeAgent(teamId, faId);
+    }
+    reset();
+  };
+  if (!open) {
+    return (
+      <button onClick={() => setOpen(true)} className="w-full flex items-center justify-center gap-2 py-3 rounded-xl font-bold text-sm" style={{ background: PRIMARY, color: INK }}><Plus size={16} /> New Signing</button>
+    );
+  }
+  return (
+    <Panel className="overflow-hidden" style={{ borderColor: PRIMARY }}>
+      <SectionTitle accent={PRIMARY} right={<button onClick={reset} className="text-[11px] font-semibold" style={{ color: CHALK_DIM }}>Cancel</button>}>New signing</SectionTitle>
+      <div className="px-4 pb-4 space-y-3">
+        <select value={teamId} onChange={e => setTeamId(e.target.value)} className="w-full bg-[#242424] border rounded px-3 py-2 text-sm" style={{ borderColor: LINE, color: CHALK }}>
+          <option value="" disabled>Sign to which team?</option>
+          {season.members.map(m => <option key={m.teamId} value={m.teamId}>{(teamsById[m.teamId] && teamsById[m.teamId].name) || m.scheduleName}</option>)}
+        </select>
+        {freeAgents.length > 0 && (
+          <div className="flex rounded-lg overflow-hidden border w-fit" style={{ borderColor: LINE }}>
+            {[['new', 'New player'], ['fa', 'From free agency']].map(([m, label]) => (
+              <button key={m} onClick={() => setMode(m)} className="px-3 py-1.5 text-xs font-bold" style={{ background: mode === m ? PRIMARY : 'transparent', color: mode === m ? INK : CHALK_DIM }}>{label}</button>
+            ))}
+          </div>
+        )}
+        {mode === 'new' ? (
+          <div className="flex items-center gap-2">
+            <input value={name} onChange={e => setName(e.target.value)} placeholder="Player name" className="flex-1 bg-[#242424] border rounded px-3 py-2 text-sm" style={{ borderColor: LINE, color: CHALK }} />
+            <StarLevelEditor value={starLevel} onChange={setStarLevel} />
+          </div>
+        ) : (
+          <select value={faId} onChange={e => setFaId(e.target.value)} className="w-full bg-[#242424] border rounded px-3 py-2 text-sm" style={{ borderColor: LINE, color: CHALK }}>
+            <option value="" disabled>Choose a free agent…</option>
+            {freeAgents.map(p => <option key={p.id} value={p.id}>{p.name}</option>)}
+          </select>
+        )}
+        <button onClick={submit} disabled={!teamId || (mode === 'new' ? !name.trim() : !faId)} className="px-4 py-2 rounded font-bold text-sm disabled:opacity-40" style={{ background: PRIMARY, color: INK }}>Sign player</button>
+      </div>
+    </Panel>
+  );
+}
+function RosterManagementView({ season, teamsById, updatePlayerField, removePlayer, addPlayer, addPlayersBulk, tradePlayer, tradePlayers, setPlayerSuspended, setPlayerBanned, onOpenPlayer, signFreeAgent, deleteFreeAgent }) {
   const [openTeamId, setOpenTeamId] = useState(null);
   return (
     <div className="p-4 space-y-3">
@@ -4720,6 +4843,8 @@ function RosterManagementView({ season, teamsById, updatePlayerField, removePlay
         <SectionTitle accent={PRIMARY}>Roster management</SectionTitle>
         <p className="px-4 pb-4 text-xs" style={{ color: CHALK_DIM }}>Create, trade, remove, and suspend players for any team in the season.</p>
       </Panel>
+      <NewSigningPanel season={season} teamsById={teamsById} addPlayer={addPlayer} signFreeAgent={signFreeAgent} />
+      <FreeAgentsPanel season={season} teamsById={teamsById} signFreeAgent={signFreeAgent} deleteFreeAgent={deleteFreeAgent} setPlayerBanned={setPlayerBanned} />
       <TradeCenter season={season} teamsById={teamsById} onExecuteTrade={tradePlayers} />
       {season.members.length === 0 && <Panel><p className="px-4 py-8 text-sm text-center" style={{ color: CHALK_DIM }}>No teams in this season yet — add some in the Teams tab.</p></Panel>}
       {season.members.map(m => {
@@ -4747,6 +4872,7 @@ function RosterManagementView({ season, teamsById, updatePlayerField, removePlay
                   teamOptions={season.members.filter(mm => mm.teamId !== m.teamId).map(mm => ({ id: mm.teamId, name: (teamsById[mm.teamId] && teamsById[mm.teamId].name) || mm.scheduleName || 'Unknown team' }))}
                   onTrade={(toTeamId, playerId) => tradePlayer(m.teamId, toTeamId, playerId)}
                   onSuspend={(pid, susp, reason, dur) => setPlayerSuspended(m.teamId, pid, susp, reason, dur)}
+                  onBan={(pid, banned, reason) => setPlayerBanned(pid, banned, reason)}
                   teamGamesPlayed={(season.games || []).filter(g => g.played && !g.isBye && (g.homeTeamId === m.teamId || g.awayTeamId === m.teamId)).length}
                   onOpenPlayer={onOpenPlayer}
                 />
@@ -4766,11 +4892,13 @@ const REBRAND_PRESETS = [
 function RebrandPanel({ team, color, onRebrand, onClearRebrand }) {
   const [open, setOpen] = useState(false);
   const [name, setName] = useState('');
+  const [abbr, setAbbr] = useState('');
   const [rbColor, setRbColor] = useState(color);
   const [logoUrl, setLogoUrl] = useState(null);
   const [logoBusy, setLogoBusy] = useState(false);
   const startEditing = () => {
     setName((team.rebrand && team.rebrand.name) || '');
+    setAbbr((team.rebrand && team.rebrand.abbr) || team.abbr || '');
     setRbColor((team.rebrand && team.rebrand.color) || color);
     setLogoUrl((team.rebrand && team.rebrand.logoUrl) || null);
     setOpen(true);
@@ -4803,6 +4931,7 @@ function RebrandPanel({ team, color, onRebrand, onClearRebrand }) {
           </div>
           <div className="flex items-center gap-2">
             <input value={name} onChange={e => setName(e.target.value)} placeholder="New team name" className="flex-1 bg-[#242424] border rounded px-3 py-2 text-sm" style={{ borderColor: LINE, color: CHALK }} />
+            <input value={abbr} onChange={e => setAbbr(e.target.value.toUpperCase().slice(0, 4))} placeholder="ABBR" maxLength={4} className="w-16 bg-[#242424] border rounded px-2 py-2 text-xs font-mono text-center uppercase" style={{ borderColor: LINE, color: CHALK }} title="Abbreviation" />
             <input type="color" value={rbColor} onChange={e => setRbColor(e.target.value)} className="w-9 h-9 rounded cursor-pointer bg-transparent flex-shrink-0" style={{ border: `1px solid ${LINE}` }} />
           </div>
           <div className="flex items-center gap-2">
@@ -4814,7 +4943,7 @@ function RebrandPanel({ team, color, onRebrand, onClearRebrand }) {
             {logoUrl && <button onClick={() => setLogoUrl(null)} className="text-[11px]" style={{ color: CHALK_DIM }}>Remove</button>}
           </div>
           <div className="flex items-center gap-2">
-            <button onClick={() => { if (name.trim()) { onRebrand(team.id, { name: name.trim(), color: rbColor, logoUrl }); setOpen(false); } }} disabled={!name.trim()} className="px-3 py-2 rounded font-bold text-sm disabled:opacity-40" style={{ background: color, color: INK }}>Save rebrand</button>
+            <button onClick={() => { if (name.trim()) { onRebrand(team.id, { name: name.trim(), color: rbColor, logoUrl, abbr: abbr.trim() || null }); setOpen(false); } }} disabled={!name.trim()} className="px-3 py-2 rounded font-bold text-sm disabled:opacity-40" style={{ background: color, color: INK }}>Save rebrand</button>
             {team.rebrand && <button onClick={() => { if (confirm(`Revert to "${team.originalName}"?`)) { onClearRebrand(team.id); setOpen(false); } }} className="px-3 py-2 rounded text-sm" style={{ color: NEGATIVE }}>Revert to original</button>}
           </div>
         </div>
@@ -4823,7 +4952,7 @@ function RebrandPanel({ team, color, onRebrand, onClearRebrand }) {
   );
 }
 
-function TeamPage({ season, settings, team, standingsRow, teamsById, h2hMatrix, championshipCount, onBack, onOpenGlobalHistory, onOpenCompare, updatePlayerField, removePlayer, addPlayer, addPlayersBulk, tradePlayer, updateMemberField, setPlayerSuspended, onOpenPlayer, onRebrand, onClearRebrand }) {
+function TeamPage({ season, settings, team, standingsRow, teamsById, h2hMatrix, championshipCount, onBack, onOpenGlobalHistory, onOpenCompare, updatePlayerField, removePlayer, addPlayer, addPlayersBulk, tradePlayer, updateMemberField, setPlayerSuspended, setPlayerBanned, onOpenPlayer, onRebrand, onClearRebrand }) {
   const { hasPermission } = useAuth();
   const isLoggedIn = hasPermission('manageRosters');
   if (!team) return <div className="p-4"><button onClick={onBack} className="flex items-center gap-1 text-sm mb-3" style={{ color: CHALK_DIM }}><ArrowLeft size={14} /> Back</button><Panel><p className="px-4 py-8 text-sm text-center" style={{ color: CHALK_DIM }}>That team could not be found.</p></Panel></div>;
@@ -4978,7 +5107,7 @@ function TeamPage({ season, settings, team, standingsRow, teamsById, h2hMatrix, 
         </>
       )}
 
-      <RosterPanel member={member} color={color} updatePlayerField={(pid, f, v) => updatePlayerField(team.id, pid, f, v)} removePlayer={(pid) => removePlayer(team.id, pid)} addPlayer={(n, s) => addPlayer(team.id, n, s)} addPlayersBulk={(rows) => addPlayersBulk(team.id, rows)} teamOptions={season.members.filter(m => m.teamId !== team.id).map(m => ({ id: m.teamId, name: (teamsById[m.teamId] && teamsById[m.teamId].name) || m.scheduleName || 'Unknown team' }))} onTrade={(toTeamId, playerId) => tradePlayer(team.id, toTeamId, playerId)} onSuspend={(pid, susp, reason, dur) => setPlayerSuspended(team.id, pid, susp, reason, dur)} onOpenPlayer={onOpenPlayer} teamGamesPlayed={games.filter(g => g.played && !g.isBye).length} />
+      <RosterPanel member={member} color={color} updatePlayerField={(pid, f, v) => updatePlayerField(team.id, pid, f, v)} removePlayer={(pid) => removePlayer(team.id, pid)} addPlayer={(n, s) => addPlayer(team.id, n, s)} addPlayersBulk={(rows) => addPlayersBulk(team.id, rows)} teamOptions={season.members.filter(m => m.teamId !== team.id).map(m => ({ id: m.teamId, name: (teamsById[m.teamId] && teamsById[m.teamId].name) || m.scheduleName || 'Unknown team' }))} onTrade={(toTeamId, playerId) => tradePlayer(team.id, toTeamId, playerId)} onSuspend={(pid, susp, reason, dur) => setPlayerSuspended(team.id, pid, susp, reason, dur)} onBan={(pid, banned, reason) => setPlayerBanned(pid, banned, reason)} onOpenPlayer={onOpenPlayer} teamGamesPlayed={games.filter(g => g.played && !g.isBye).length} />
 
       <Panel className="overflow-hidden" style={{ borderColor: color }}>
         <SectionTitle accent={color}>Schedule &amp; results</SectionTitle>
@@ -5048,12 +5177,18 @@ function TeamPage({ season, settings, team, standingsRow, teamsById, h2hMatrix, 
 /* ==================================================================== */
 /* Team comparison page                                                  */
 /* ==================================================================== */
+// The "winning" side of a stat used to be rendered in the raw, fully-
+// saturated team color as bold text — readable, but a bright/neon team
+// color at full opacity reads as a harsh flash against the dark panel.
+// Keeping the text in the normal chalk color and using the team color only
+// as a soft ~10%-opacity background wash keeps the emphasis without the
+// clash, since alpha blends into whatever's behind it instead of fighting it.
 function CompareStatRow({ label, aVal, bVal, aBetter, bBetter, aColor, bColor }) {
   return (
     <div className="flex items-center gap-2 px-4 py-2 text-sm" style={{ borderBottom: `1px solid ${LINE}` }}>
-      <span className="w-16 flex-shrink-0 text-right font-mono font-bold" style={{ color: aBetter ? aColor : CHALK_DIM }}>{aVal}</span>
+      <span className="w-16 flex-shrink-0 text-right font-mono font-semibold rounded px-1.5 py-0.5" style={{ color: aBetter ? CHALK : CHALK_DIM, background: aBetter ? `${aColor}1A` : 'transparent' }}>{aVal}</span>
       <span className="flex-1 text-center text-[10px] uppercase tracking-wide" style={{ color: CHALK_DIM }}>{label}</span>
-      <span className="w-16 flex-shrink-0 font-mono font-bold" style={{ color: bBetter ? bColor : CHALK_DIM }}>{bVal}</span>
+      <span className="w-16 flex-shrink-0 font-mono font-semibold rounded px-1.5 py-0.5 text-right" style={{ color: bBetter ? CHALK : CHALK_DIM, background: bBetter ? `${bColor}1A` : 'transparent' }}>{bVal}</span>
     </div>
   );
 }
@@ -5084,10 +5219,10 @@ function ComparePage({ season, standingsAll, teamsById, h2hMatrix, initialTeamId
       {teamA && teamB && (
         <>
           <div className="rounded-xl overflow-hidden flex" style={{ border: `1px solid ${LINE}` }}>
-            <button onClick={() => onOpenTeam(teamA.id)} className="flex-1 p-3 flex items-center gap-2" style={{ background: `${colorA}22` }}>
+            <button onClick={() => onOpenTeam(teamA.id)} className="flex-1 p-3 flex items-center gap-2" style={{ background: `${colorA}12` }}>
               <TeamMark team={teamA} size={22} /> <span className="font-bold truncate" style={{ color: CHALK }}>{teamA.displayName}</span>
             </button>
-            <button onClick={() => onOpenTeam(teamB.id)} className="flex-1 p-3 flex items-center justify-end gap-2" style={{ background: `${colorB}22` }}>
+            <button onClick={() => onOpenTeam(teamB.id)} className="flex-1 p-3 flex items-center justify-end gap-2" style={{ background: `${colorB}12` }}>
               <span className="font-bold truncate" style={{ color: CHALK }}>{teamB.displayName}</span> <TeamMark team={teamB} size={22} />
             </button>
           </div>
@@ -5189,9 +5324,25 @@ function PlayerPitchingTable({ rows }) {
   );
 }
 
-function PlayerPage({ league, teamsById, playerName, onBack, onOpenTeam, onOpenPlayerCompare }) {
+function PlayerPage({ league, teamsById, playerName, onBack, onOpenTeam, onOpenPlayerCompare, activeSeasonId, onRemoveActivity }) {
+  const { hasPermission } = useAuth();
+  const canManage = hasPermission('manageRosters');
   const { seasonsInfo, gameLog } = useMemo(() => getPlayerCareerData(league, playerName), [league, playerName]);
   const avatar = useRobloxAvatar(playerName);
+  // Activity log entries don't carry a playerId (they're free-text), so a
+  // name match is the only way to find "this player's" transactions —
+  // consistent with how the rest of the page threads career history
+  // together by name. Delete is only offered for entries still in the
+  // active season, since onRemoveActivity only knows how to edit that one.
+  const playerTransactions = useMemo(() => {
+    const norm = (s) => (s || '').trim().toLowerCase();
+    const target = norm(playerName);
+    const out = [];
+    (league.seasons || []).forEach(season => {
+      (season.activityLog || []).forEach(a => { if (norm(a.text).includes(target)) out.push({ ...a, seasonId: season.id, seasonName: season.name }); });
+    });
+    return out.sort((a, b) => (b.at || 0) - (a.at || 0));
+  }, [league, playerName]);
 
   if (seasonsInfo.length === 0) {
     return (
@@ -5206,15 +5357,40 @@ function PlayerPage({ league, teamsById, playerName, onBack, onOpenTeam, onOpenP
 
   // Season-by-season, split into regular season vs. playoffs — postseason
   // performance is kept separate rather than blended into the same line,
-  // same convention real box scores use.
+  // same convention real box scores use. Within a season, also split by
+  // team when the player played for more than one (traded mid-season) —
+  // each game's row now carries the team they actually played that game
+  // for, so this reads straight off gameLog rather than needing separate
+  // roster bookkeeping.
   const seasonSplits = seasonsInfo.map(info => {
     const rows = gameLog.filter(r => r.seasonId === info.season.id);
-    return { seasonName: info.season.name, reg: sumPlayerTotals(rows.filter(r => !r.isPlayoff)), po: sumPlayerTotals(rows.filter(r => r.isPlayoff)) };
+    const teamIds = [...new Set(rows.map(r => r.teamId))];
+    const perTeam = teamIds.length > 1 ? teamIds.map(teamId => {
+      const teamRows = rows.filter(r => r.teamId === teamId);
+      return { teamId, reg: sumPlayerTotals(teamRows.filter(r => !r.isPlayoff)), po: sumPlayerTotals(teamRows.filter(r => r.isPlayoff)) };
+    }) : null;
+    return { seasonName: info.season.name, reg: sumPlayerTotals(rows.filter(r => !r.isPlayoff)), po: sumPlayerTotals(rows.filter(r => r.isPlayoff)), perTeam };
   });
-  const regBattingRows = seasonSplits.filter(s => s.reg.ab > 0).map(s => ({ label: s.seasonName, totals: s.reg }));
-  const regPitchingRows = seasonSplits.filter(s => s.reg.outs > 0).map(s => ({ label: s.seasonName, totals: s.reg }));
-  const poBattingRows = seasonSplits.filter(s => s.po.ab > 0).map(s => ({ label: s.seasonName, totals: s.po }));
-  const poPitchingRows = seasonSplits.filter(s => s.po.outs > 0).map(s => ({ label: s.seasonName, totals: s.po }));
+  const expandSeasonRows = (phase, hasStat) => {
+    const rows = [];
+    seasonSplits.forEach(s => {
+      if (s.perTeam) {
+        const qualifying = s.perTeam.filter(pt => hasStat(pt[phase]));
+        qualifying.forEach(pt => {
+          const t = teamsById[pt.teamId];
+          rows.push({ label: `${s.seasonName} — ${t ? teamAbbr(t) : 'FA'}`, totals: pt[phase] });
+        });
+        if (qualifying.length > 1 && hasStat(s[phase])) rows.push({ label: `${s.seasonName} — Combined`, totals: s[phase], isTotal: true });
+      } else if (hasStat(s[phase])) {
+        rows.push({ label: s.seasonName, totals: s[phase] });
+      }
+    });
+    return rows;
+  };
+  const regBattingRows = expandSeasonRows('reg', t => t.ab > 0);
+  const regPitchingRows = expandSeasonRows('reg', t => t.outs > 0);
+  const poBattingRows = expandSeasonRows('po', t => t.ab > 0);
+  const poPitchingRows = expandSeasonRows('po', t => t.outs > 0);
   const regTotals = sumPlayerTotals(gameLog.filter(r => !r.isPlayoff));
   const poTotals = sumPlayerTotals(gameLog.filter(r => r.isPlayoff));
   if (regBattingRows.length > 1) regBattingRows.push({ label: 'Total', totals: regTotals, isTotal: true });
@@ -5281,7 +5457,7 @@ function PlayerPage({ league, teamsById, playerName, onBack, onOpenTeam, onOpenP
           <div className="relative flex-1 min-w-0">
             <h2 className="font-head text-2xl sm:text-3xl font-bold uppercase tracking-tight truncate" style={{ color: '#fff', textShadow: '0 2px 8px rgba(0,0,0,0.4)' }}>{playerName}</h2>
             <div className="flex items-center gap-2 mt-1 flex-wrap">
-              {latestTeam && <button onClick={() => onOpenTeam(latest.teamId)} className="flex items-center gap-1.5 text-sm font-semibold" style={{ color: '#fff' }}><TeamMark team={latestTeam} size={16} /> {latestTeam.name}</button>}
+              {latestTeam ? <button onClick={() => onOpenTeam(latest.teamId)} className="flex items-center gap-1.5 text-sm font-semibold" style={{ color: '#fff' }}><TeamMark team={latestTeam} size={16} /> {latestTeam.name}</button> : <span className="text-sm font-semibold" style={{ color: 'rgba(255,255,255,0.85)' }}>Free Agent</span>}
               {latest.player.number && <span className="text-xs font-mono" style={{ color: 'rgba(255,255,255,0.75)' }}>#{latest.player.number}</span>}
               {latest.player.position && <span className="text-xs" style={{ color: 'rgba(255,255,255,0.75)' }}>{latest.player.position}</span>}
             </div>
@@ -5297,16 +5473,27 @@ function PlayerPage({ league, teamsById, playerName, onBack, onOpenTeam, onOpenP
             <div className="px-2 pb-2">
               {seasonsInfo.map((info, i) => {
                 const t = teamsById[info.teamId];
+                const isFA = info.teamId == null;
                 return (
-                  <button key={i} onClick={() => onOpenTeam(info.teamId)} className="w-full flex items-center gap-2 px-2 py-2 text-left" style={{ borderTop: i > 0 ? `1px solid ${LINE}` : 'none' }}>
+                  <button key={i} onClick={() => t && onOpenTeam(info.teamId)} disabled={isFA} className="w-full flex items-center gap-2 px-2 py-2 text-left disabled:cursor-default" style={{ borderTop: i > 0 ? `1px solid ${LINE}` : 'none' }}>
                     {t && <TeamMark team={t} size={18} />}
-                    <span className="flex-1 text-sm font-semibold truncate" style={{ color: CHALK }}>{t ? t.name : 'Unknown team'}</span>
+                    <span className="flex-1 text-sm font-semibold truncate" style={{ color: CHALK }}>{t ? t.name : (isFA ? 'Free Agent' : 'Unknown team')}</span>
                     <span className="text-xs flex-shrink-0" style={{ color: CHALK_DIM }}>{info.season.name}</span>
                   </button>
                 );
               })}
             </div>
           </Panel>
+          {playerTransactions.length > 0 && (
+            <Panel className="overflow-hidden">
+              <SectionTitle>Transactions</SectionTitle>
+              <div className="px-2 pb-2">
+                {playerTransactions.map(a => (
+                  <ActivityRow key={a.id} a={a} teamsById={teamsById} onRemove={(canManage && a.seasonId === activeSeasonId) ? onRemoveActivity : null} />
+                ))}
+              </div>
+            </Panel>
+          )}
           <Panel><p className="px-4 py-8 text-sm text-center" style={{ color: CHALK_DIM }}>No stats imported for this player yet.</p></Panel>
         </>
       ) : (
@@ -5408,16 +5595,28 @@ function PlayerPage({ league, teamsById, playerName, onBack, onOpenTeam, onOpenP
             <div className="px-2 pb-2">
               {seasonsInfo.map((info, i) => {
                 const t = teamsById[info.teamId];
+                const isFA = info.teamId == null;
                 return (
-                  <button key={i} onClick={() => onOpenTeam(info.teamId)} className="w-full flex items-center gap-2 px-2 py-2 text-left" style={{ borderTop: i > 0 ? `1px solid ${LINE}` : 'none' }}>
+                  <button key={i} onClick={() => t && onOpenTeam(info.teamId)} disabled={isFA} className="w-full flex items-center gap-2 px-2 py-2 text-left disabled:cursor-default" style={{ borderTop: i > 0 ? `1px solid ${LINE}` : 'none' }}>
                     {t && <TeamMark team={t} size={18} />}
-                    <span className="flex-1 text-sm font-semibold truncate" style={{ color: CHALK }}>{t ? t.name : 'Unknown team'}</span>
+                    <span className="flex-1 text-sm font-semibold truncate" style={{ color: CHALK }}>{t ? t.name : (isFA ? 'Free Agent' : 'Unknown team')}</span>
                     <span className="text-xs flex-shrink-0" style={{ color: CHALK_DIM }}>{info.season.name}</span>
                   </button>
                 );
               })}
             </div>
           </Panel>
+
+          {playerTransactions.length > 0 && (
+            <Panel className="overflow-hidden">
+              <SectionTitle>Transactions</SectionTitle>
+              <div className="px-2 pb-2">
+                {playerTransactions.map(a => (
+                  <ActivityRow key={a.id} a={a} teamsById={teamsById} onRemove={(canManage && a.seasonId === activeSeasonId) ? onRemoveActivity : null} />
+                ))}
+              </div>
+            </Panel>
+          )}
 
           {awards.length > 0 && (
             <Panel className="overflow-hidden" style={{ borderColor: GOLD }}>
@@ -5475,9 +5674,28 @@ function PlayerPage({ league, teamsById, playerName, onBack, onOpenTeam, onOpenP
   );
 }
 
-function PlayerComparePage({ league, teamsById, initialNameA, initialNameB, onBack, onOpenPlayer }) {
+function PlayerComparePage({ league, teamsById, initialNameA, initialNameB, onBack, onOpenPlayer, activeSeasonId }) {
   const allNames = useMemo(() => getAllPlayerNames(league), [league]);
+  // Grouping players by their current team (this season) turns the picker
+  // from one giant alphabetical list into "pick a team, then a player" —
+  // free agents get their own bucket since they're not on any roster.
+  const activeSeason = useMemo(() => (league.seasons || []).find(s => s.id === activeSeasonId), [league, activeSeasonId]);
+  const rosterGroups = useMemo(() => {
+    if (!activeSeason) return [];
+    const groups = (activeSeason.members || []).map(m => ({
+      key: m.teamId,
+      teamName: (teamsById[m.teamId] && teamsById[m.teamId].name) || m.scheduleName || 'Unknown team',
+      names: (m.roster || []).map(p => p.name).filter(Boolean).sort((a, b) => a.localeCompare(b)),
+    })).filter(g => g.names.length > 0);
+    const faNames = (activeSeason.freeAgents || []).map(p => p.name).filter(Boolean).sort((a, b) => a.localeCompare(b));
+    if (faNames.length > 0) groups.push({ key: '__fa', teamName: 'Free Agents', names: faNames });
+    return groups;
+  }, [activeSeason, teamsById]);
+  const findGroupKeyForName = (name) => (rosterGroups.find(g => g.names.includes(name)) || {}).key ?? '__all';
+
+  const [teamAKey, setTeamAKey] = useState(() => findGroupKeyForName(initialNameA || allNames[0] || ''));
   const [nameA, setNameA] = useState(initialNameA || allNames[0] || '');
+  const [teamBKey, setTeamBKey] = useState(() => findGroupKeyForName(initialNameB || allNames.find(n => n !== initialNameA) || allNames[1] || ''));
   const [nameB, setNameB] = useState(initialNameB || allNames.find(n => n !== initialNameA) || allNames[1] || '');
 
   if (allNames.length === 0) {
@@ -5488,6 +5706,8 @@ function PlayerComparePage({ league, teamsById, initialNameA, initialNameB, onBa
       </div>
     );
   }
+
+  const namesForKey = (key) => key === '__all' ? allNames : ((rosterGroups.find(g => g.key === key) || {}).names || allNames);
 
   const dataA = getPlayerCareerData(league, nameA);
   const dataB = getPlayerCareerData(league, nameB);
@@ -5501,26 +5721,36 @@ function PlayerComparePage({ league, teamsById, initialNameA, initialNameB, onBa
   const colorA = teamA ? teamColor(teamA) : PRIMARY, colorB = teamB ? teamColor(teamB) : NEGATIVE;
   const bothPitch = totalsA.outs > 0 && totalsB.outs > 0;
 
+  const PickerSide = ({ teamKey, setTeamKey, name, setName }) => (
+    <div className="flex-1 min-w-0 space-y-1.5">
+      {rosterGroups.length > 0 && (
+        <select value={teamKey} onChange={e => { const k = e.target.value; setTeamKey(k); const names = namesForKey(k); if (names.length && !names.includes(name)) setName(names[0]); }} className="w-full bg-[#242424] border rounded px-2 py-1.5 text-xs" style={{ borderColor: LINE, color: CHALK_DIM }}>
+          <option value="__all" style={{ background: PANEL2, color: CHALK }}>All players</option>
+          {rosterGroups.map(g => <option key={g.key} value={g.key} style={{ background: PANEL2, color: CHALK }}>{g.teamName}</option>)}
+        </select>
+      )}
+      <select value={name} onChange={e => setName(e.target.value)} className="w-full bg-[#242424] border rounded px-2 py-2 text-sm" style={{ borderColor: LINE, color: CHALK }}>
+        {namesForKey(teamKey).map(n => <option key={n} value={n} style={{ background: PANEL2, color: CHALK }}>{n}</option>)}
+      </select>
+    </div>
+  );
+
   return (
     <div className="p-4 space-y-4">
       <button onClick={onBack} className="flex items-center gap-1 text-sm" style={{ color: CHALK_DIM }}><ArrowLeft size={14} /> Back</button>
       <Panel>
         <SectionTitle>Player comparison</SectionTitle>
-        <div className="px-4 pb-4 flex items-center gap-2">
-          <select value={nameA} onChange={e => setNameA(e.target.value)} className="flex-1 bg-[#242424] border rounded px-2 py-2 text-sm" style={{ borderColor: LINE, color: CHALK }}>
-            {allNames.map(n => <option key={n} value={n} style={{ background: PANEL2, color: CHALK }}>{n}</option>)}
-          </select>
-          <span className="text-xs font-bold" style={{ color: CHALK_DIM }}>VS</span>
-          <select value={nameB} onChange={e => setNameB(e.target.value)} className="flex-1 bg-[#242424] border rounded px-2 py-2 text-sm" style={{ borderColor: LINE, color: CHALK }}>
-            {allNames.map(n => <option key={n} value={n} style={{ background: PANEL2, color: CHALK }}>{n}</option>)}
-          </select>
+        <div className="px-4 pb-4 flex items-start gap-2">
+          <PickerSide teamKey={teamAKey} setTeamKey={setTeamAKey} name={nameA} setName={setNameA} />
+          <span className="text-xs font-bold pt-2" style={{ color: CHALK_DIM }}>VS</span>
+          <PickerSide teamKey={teamBKey} setTeamKey={setTeamBKey} name={nameB} setName={setNameB} />
         </div>
       </Panel>
       <div className="rounded-xl overflow-hidden flex" style={{ border: `1px solid ${LINE}` }}>
-        <button onClick={() => onOpenPlayer(nameA)} className="flex-1 p-3 flex items-center gap-2" style={{ background: `${colorA}22` }}>
+        <button onClick={() => onOpenPlayer(nameA)} className="flex-1 p-3 flex items-center gap-2" style={{ background: `${colorA}12` }}>
           {teamA && <TeamMark team={teamA} size={20} />} <span className="font-bold truncate" style={{ color: CHALK }}>{nameA}</span>
         </button>
-        <button onClick={() => onOpenPlayer(nameB)} className="flex-1 p-3 flex items-center justify-end gap-2" style={{ background: `${colorB}22` }}>
+        <button onClick={() => onOpenPlayer(nameB)} className="flex-1 p-3 flex items-center justify-end gap-2" style={{ background: `${colorB}12` }}>
           <span className="font-bold truncate" style={{ color: CHALK }}>{nameB}</span> {teamB && <TeamMark team={teamB} size={20} />}
         </button>
       </div>
@@ -5545,7 +5775,7 @@ function PlayerComparePage({ league, teamsById, initialNameA, initialNameB, onBa
 /* ==================================================================== */
 /* Stat leaders                                                          */
 /* ==================================================================== */
-function LeaderBoardCard({ title, accent = PRIMARY, players, valueFn, formatFn, teamsById, onOpenPlayer, sortDesc = true, limit = 5 }) {
+function LeaderBoardCard({ title, accent = PRIMARY, players, valueFn, formatFn, teamsById, onOpenPlayer, sortDesc = true, limit = 5, leagueLogoUrl }) {
   const ranked = [...players].sort((a, b) => sortDesc ? valueFn(b) - valueFn(a) : valueFn(a) - valueFn(b)).slice(0, limit);
   return (
     <Panel>
@@ -5557,8 +5787,9 @@ function LeaderBoardCard({ title, accent = PRIMARY, players, valueFn, formatFn, 
           return (
             <button key={p.playerId} onClick={() => onOpenPlayer(p.name)} className="w-full flex items-center gap-2 px-2 py-1.5 text-left" style={{ borderTop: i > 0 ? `1px solid ${LINE}` : 'none' }}>
               <span className="w-4 text-xs font-mono flex-shrink-0" style={{ color: CHALK_DIM }}>{i + 1}</span>
-              {t && <TeamMark team={t} size={14} />}
+              {t ? <TeamMark team={t} size={14} /> : leagueLogoUrl ? <img src={leagueLogoUrl} alt="" style={{ width: 14, height: 14, objectFit: 'contain', borderRadius: 4, flexShrink: 0 }} /> : <span className="inline-block rounded-full flex-shrink-0" style={{ width: 8, height: 8, background: CHALK_DIM }} />}
               <span className="flex-1 text-sm font-semibold truncate" style={{ color: CHALK }}>{p.name}</span>
+              <span className="text-[10px] font-mono font-bold flex-shrink-0" style={{ color: CHALK_DIM }}>{t ? teamAbbr(t) : 'FA'}</span>
               <span className="text-sm font-mono font-bold flex-shrink-0" style={{ color: accent }}>{formatFn(valueFn(p))}</span>
             </button>
           );
@@ -5568,7 +5799,7 @@ function LeaderBoardCard({ title, accent = PRIMARY, players, valueFn, formatFn, 
   );
 }
 
-function StatLeadersView({ season, teamsById, onOpenPlayer }) {
+function StatLeadersView({ season, teamsById, onOpenPlayer, leagueLogoUrl }) {
   const [mode, setMode] = useState('regular');
   const hasPlayoffGames = useMemo(() => (season.games || []).some(g => g.isPlayoff && !g.isBye), [season]);
   const players = useMemo(() => computeSeasonPlayerLeaders(season, teamsById, mode), [season, teamsById, mode]);
@@ -5600,27 +5831,27 @@ function StatLeadersView({ season, teamsById, onOpenPlayer }) {
         <Panel><p className="px-4 py-8 text-sm text-center" style={{ color: CHALK_DIM }}>{mode === 'playoffs' ? 'No playoff stats imported yet this season.' : "No stats imported yet this season — import a game's box score from the Schedule tab."}</p></Panel>
       ) : (
         <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3">
-          <LeaderBoardCard title="Batting Average" players={batters} valueFn={p => p.batting.avg} formatFn={fmtRate} teamsById={teamsById} onOpenPlayer={onOpenPlayer} />
-          <LeaderBoardCard title="OPS" accent={GOLD} players={batters} valueFn={p => p.batting.ops} formatFn={fmtRate} teamsById={teamsById} onOpenPlayer={onOpenPlayer} />
-          <LeaderBoardCard title="On-Base %" players={batters} valueFn={p => p.batting.obp} formatFn={fmtRate} teamsById={teamsById} onOpenPlayer={onOpenPlayer} />
-          <LeaderBoardCard title="Slugging %" players={batters} valueFn={p => p.batting.slg} formatFn={fmtRate} teamsById={teamsById} onOpenPlayer={onOpenPlayer} />
-          <LeaderBoardCard title="Isolated Power" players={batters} valueFn={p => p.batting.iso} formatFn={fmtRate} teamsById={teamsById} onOpenPlayer={onOpenPlayer} />
-          <LeaderBoardCard title="Home Runs" players={players} valueFn={p => p.totals.hr} formatFn={fmtInt} teamsById={teamsById} onOpenPlayer={onOpenPlayer} />
-          <LeaderBoardCard title="RBI" players={players} valueFn={p => p.totals.rbi} formatFn={fmtInt} teamsById={teamsById} onOpenPlayer={onOpenPlayer} />
-          <LeaderBoardCard title="Hits" players={players} valueFn={p => p.totals.h} formatFn={fmtInt} teamsById={teamsById} onOpenPlayer={onOpenPlayer} />
-          <LeaderBoardCard title="Runs" players={players} valueFn={p => p.totals.r} formatFn={fmtInt} teamsById={teamsById} onOpenPlayer={onOpenPlayer} />
-          <LeaderBoardCard title="Doubles" players={players} valueFn={p => p.totals.doubles} formatFn={fmtInt} teamsById={teamsById} onOpenPlayer={onOpenPlayer} />
-          <LeaderBoardCard title="Triples" players={players} valueFn={p => p.totals.triples} formatFn={fmtInt} teamsById={teamsById} onOpenPlayer={onOpenPlayer} />
-          <LeaderBoardCard title="Walks (Batting)" players={players} valueFn={p => p.totals.bb} formatFn={fmtInt} teamsById={teamsById} onOpenPlayer={onOpenPlayer} />
-          <LeaderBoardCard title="Strikeouts (Batting)" accent={NEGATIVE} players={players} valueFn={p => p.totals.so} formatFn={fmtInt} teamsById={teamsById} onOpenPlayer={onOpenPlayer} sortDesc={false} />
-          <LeaderBoardCard title="ERA" accent={NEGATIVE} players={pitchers} valueFn={p => p.pitching.era} formatFn={fmt2} teamsById={teamsById} onOpenPlayer={onOpenPlayer} sortDesc={false} />
-          <LeaderBoardCard title="WHIP" accent={NEGATIVE} players={pitchers} valueFn={p => p.pitching.whip} formatFn={fmt2} teamsById={teamsById} onOpenPlayer={onOpenPlayer} sortDesc={false} />
-          <LeaderBoardCard title="Innings Pitched" players={pitchers} valueFn={p => p.pitching.ip} formatFn={fmtIp} teamsById={teamsById} onOpenPlayer={onOpenPlayer} />
-          <LeaderBoardCard title="Strikeouts (Pitching)" players={pitchers} valueFn={p => p.totals.k} formatFn={fmtInt} teamsById={teamsById} onOpenPlayer={onOpenPlayer} />
-          <LeaderBoardCard title="K/9" players={pitchers} valueFn={p => p.pitching.k9} formatFn={fmt2} teamsById={teamsById} onOpenPlayer={onOpenPlayer} />
-          <LeaderBoardCard title="BB/9" accent={NEGATIVE} players={pitchers} valueFn={p => p.pitching.bb9} formatFn={fmt2} teamsById={teamsById} onOpenPlayer={onOpenPlayer} sortDesc={false} />
-          <LeaderBoardCard title="K/BB" players={pitchers} valueFn={p => (p.pitching.kbb === Infinity ? 999 : p.pitching.kbb)} formatFn={(v) => v === 999 ? '∞' : fmt2(v)} teamsById={teamsById} onOpenPlayer={onOpenPlayer} />
-          <LeaderBoardCard title="WAR" accent={GOLD} players={players} valueFn={p => p.war} formatFn={fmt1} teamsById={teamsById} onOpenPlayer={onOpenPlayer} />
+          <LeaderBoardCard title="Batting Average" players={batters} valueFn={p => p.batting.avg} formatFn={fmtRate} teamsById={teamsById} onOpenPlayer={onOpenPlayer} leagueLogoUrl={leagueLogoUrl} />
+          <LeaderBoardCard title="OPS" accent={GOLD} players={batters} valueFn={p => p.batting.ops} formatFn={fmtRate} teamsById={teamsById} onOpenPlayer={onOpenPlayer} leagueLogoUrl={leagueLogoUrl} />
+          <LeaderBoardCard title="On-Base %" players={batters} valueFn={p => p.batting.obp} formatFn={fmtRate} teamsById={teamsById} onOpenPlayer={onOpenPlayer} leagueLogoUrl={leagueLogoUrl} />
+          <LeaderBoardCard title="Slugging %" players={batters} valueFn={p => p.batting.slg} formatFn={fmtRate} teamsById={teamsById} onOpenPlayer={onOpenPlayer} leagueLogoUrl={leagueLogoUrl} />
+          <LeaderBoardCard title="Isolated Power" players={batters} valueFn={p => p.batting.iso} formatFn={fmtRate} teamsById={teamsById} onOpenPlayer={onOpenPlayer} leagueLogoUrl={leagueLogoUrl} />
+          <LeaderBoardCard title="Home Runs" players={players} valueFn={p => p.totals.hr} formatFn={fmtInt} teamsById={teamsById} onOpenPlayer={onOpenPlayer} leagueLogoUrl={leagueLogoUrl} />
+          <LeaderBoardCard title="RBI" players={players} valueFn={p => p.totals.rbi} formatFn={fmtInt} teamsById={teamsById} onOpenPlayer={onOpenPlayer} leagueLogoUrl={leagueLogoUrl} />
+          <LeaderBoardCard title="Hits" players={players} valueFn={p => p.totals.h} formatFn={fmtInt} teamsById={teamsById} onOpenPlayer={onOpenPlayer} leagueLogoUrl={leagueLogoUrl} />
+          <LeaderBoardCard title="Runs" players={players} valueFn={p => p.totals.r} formatFn={fmtInt} teamsById={teamsById} onOpenPlayer={onOpenPlayer} leagueLogoUrl={leagueLogoUrl} />
+          <LeaderBoardCard title="Doubles" players={players} valueFn={p => p.totals.doubles} formatFn={fmtInt} teamsById={teamsById} onOpenPlayer={onOpenPlayer} leagueLogoUrl={leagueLogoUrl} />
+          <LeaderBoardCard title="Triples" players={players} valueFn={p => p.totals.triples} formatFn={fmtInt} teamsById={teamsById} onOpenPlayer={onOpenPlayer} leagueLogoUrl={leagueLogoUrl} />
+          <LeaderBoardCard title="Walks (Batting)" players={players} valueFn={p => p.totals.bb} formatFn={fmtInt} teamsById={teamsById} onOpenPlayer={onOpenPlayer} leagueLogoUrl={leagueLogoUrl} />
+          <LeaderBoardCard title="Strikeouts (Batting)" accent={NEGATIVE} players={players} valueFn={p => p.totals.so} formatFn={fmtInt} teamsById={teamsById} onOpenPlayer={onOpenPlayer} leagueLogoUrl={leagueLogoUrl} sortDesc={false} />
+          <LeaderBoardCard title="ERA" accent={NEGATIVE} players={pitchers} valueFn={p => p.pitching.era} formatFn={fmt2} teamsById={teamsById} onOpenPlayer={onOpenPlayer} leagueLogoUrl={leagueLogoUrl} sortDesc={false} />
+          <LeaderBoardCard title="WHIP" accent={NEGATIVE} players={pitchers} valueFn={p => p.pitching.whip} formatFn={fmt2} teamsById={teamsById} onOpenPlayer={onOpenPlayer} leagueLogoUrl={leagueLogoUrl} sortDesc={false} />
+          <LeaderBoardCard title="Innings Pitched" players={pitchers} valueFn={p => p.pitching.ip} formatFn={fmtIp} teamsById={teamsById} onOpenPlayer={onOpenPlayer} leagueLogoUrl={leagueLogoUrl} />
+          <LeaderBoardCard title="Strikeouts (Pitching)" players={pitchers} valueFn={p => p.totals.k} formatFn={fmtInt} teamsById={teamsById} onOpenPlayer={onOpenPlayer} leagueLogoUrl={leagueLogoUrl} />
+          <LeaderBoardCard title="K/9" players={pitchers} valueFn={p => p.pitching.k9} formatFn={fmt2} teamsById={teamsById} onOpenPlayer={onOpenPlayer} leagueLogoUrl={leagueLogoUrl} />
+          <LeaderBoardCard title="BB/9" accent={NEGATIVE} players={pitchers} valueFn={p => p.pitching.bb9} formatFn={fmt2} teamsById={teamsById} onOpenPlayer={onOpenPlayer} leagueLogoUrl={leagueLogoUrl} sortDesc={false} />
+          <LeaderBoardCard title="K/BB" players={pitchers} valueFn={p => (p.pitching.kbb === Infinity ? 999 : p.pitching.kbb)} formatFn={(v) => v === 999 ? '∞' : fmt2(v)} teamsById={teamsById} onOpenPlayer={onOpenPlayer} leagueLogoUrl={leagueLogoUrl} />
+          <LeaderBoardCard title="WAR" accent={GOLD} players={players} valueFn={p => p.war} formatFn={fmt1} teamsById={teamsById} onOpenPlayer={onOpenPlayer} leagueLogoUrl={leagueLogoUrl} />
         </div>
       )}
     </div>
@@ -6295,7 +6526,6 @@ function ExtrasView({ extras, teamsById, leagueRecords, activityLog, season, sta
   }
   const biggestRiser = movers.length ? movers[0] : null;
   const biggestFaller = movers.length ? movers[movers.length - 1] : null;
-  const turningPoint = season ? computeTurningPoint(season, teamsById) : null;
   const hasNotable = extras.highest || extras.lowest || extras.longest || extras.shortest || extras.biggestBlowout || extras.highestSingleTeamScore;
   return (
     <div className="p-4 space-y-4">
@@ -6321,19 +6551,6 @@ function ExtrasView({ extras, teamsById, leagueRecords, activityLog, season, sta
           <p className="px-4 pb-4 text-[11px]" style={{ color: CHALK_DIM }}>Standings position from the first round of the season to now.</p>
         </Panel>
       ) : null}
-      {turningPoint && (
-        <Panel className="overflow-hidden" style={{ borderColor: GOLD }}>
-          <SectionTitle accent={GOLD}>Turning point of the season</SectionTitle>
-          <div className="px-4 pb-4">
-            <div className="text-sm flex items-center gap-1.5" style={{ color: CHALK }}>
-              {teamsById[turningPoint.game.awayTeamId] && <TeamMark team={teamsById[turningPoint.game.awayTeamId]} size={13} />}
-              {(teamsById[turningPoint.game.awayTeamId] || {}).name || turningPoint.game.awayScheduleName} <span className="font-mono">{turningPoint.game.awayScore}</span> @ {(teamsById[turningPoint.game.homeTeamId] || {}).name || turningPoint.game.homeScheduleName} <span className="font-mono">{turningPoint.game.homeScore}</span>
-              {teamsById[turningPoint.game.homeTeamId] && <TeamMark team={teamsById[turningPoint.game.homeTeamId]} size={13} />}
-            </div>
-            <p className="text-xs mt-1" style={{ color: CHALK_DIM }}>{turningPoint.game.date ? `${turningPoint.game.date} · ` : ''}{turningPoint.winnerName} cut {turningPoint.beforeGb.toFixed(1)} games back to {turningPoint.afterGb.toFixed(1)} — the single biggest standings swing of the season.</p>
-          </div>
-        </Panel>
-      )}
       {hasNotable && (
         <Panel className="overflow-hidden" style={{ borderColor: GOLD }}>
           <SectionTitle accent={GOLD}>Notable games</SectionTitle>
@@ -6431,28 +6648,9 @@ function ExtrasView({ extras, teamsById, leagueRecords, activityLog, season, sta
         <Panel className="overflow-hidden" style={{ borderColor: GOLD }}>
           <SectionTitle accent={GOLD}>Recent activity</SectionTitle>
           <div className="px-2 pb-2 max-h-64 overflow-y-auto">
-            {activityLog.slice().reverse().slice(0, 20).map(a => {
-              const team = a.teamId ? teamsById[a.teamId] : null;
-              const toTeam = a.toTeamId ? teamsById[a.toTeamId] : null;
-              const icon = a.type === 'suspend' ? <AlertTriangle size={13} style={{ color: NEGATIVE, flexShrink: 0 }} />
-                : a.type === 'unsuspend' ? <Check size={13} style={{ color: WIN, flexShrink: 0 }} />
-                : a.type === 'add' ? <Plus size={13} style={{ color: WIN, flexShrink: 0 }} />
-                : a.type === 'remove' ? <Trash2 size={13} style={{ color: NEGATIVE, flexShrink: 0 }} />
-                : a.type === 'trade' ? <RefreshCw size={13} style={{ color: PRIMARY, flexShrink: 0 }} />
-                : a.type === 'rebrand' ? <Sparkles size={13} style={{ color: GOLD, flexShrink: 0 }} />
-                : null;
-              return (
-                <div key={a.id} className="flex items-center gap-2 px-2 py-2 text-sm" style={{ borderTop: `1px solid ${LINE}`, color: CHALK }}>
-                  {icon}
-                  {team && <TeamMark team={team} size={16} />}
-                  {toTeam && <><span style={{ color: CHALK_DIM }}>→</span><TeamMark team={toTeam} size={16} /></>}
-                  <span className="flex-1 min-w-0">{a.text}</span>
-                  {isLoggedIn && (
-                    <button onClick={() => { if (confirm('Remove this activity entry?')) onRemoveActivity(a.id); }} className="p-1 rounded flex-shrink-0" style={{ color: CHALK_DIM }}><Trash2 size={13} /></button>
-                  )}
-                </div>
-              );
-            })}
+            {activityLog.slice().reverse().slice(0, 20).map(a => (
+              <ActivityRow key={a.id} a={a} teamsById={teamsById} onRemove={isLoggedIn ? onRemoveActivity : null} />
+            ))}
           </div>
         </Panel>
       )}
@@ -6461,11 +6659,110 @@ function ExtrasView({ extras, teamsById, leagueRecords, activityLog, season, sta
 }
 
 /* ==================================================================== */
+/* Transactions view                                                     */
+/* ==================================================================== */
+const TRANSACTION_TYPES = [
+  { value: 'all', label: 'All' },
+  { value: 'add', label: 'Signings' },
+  { value: 'trade', label: 'Trades' },
+  { value: 'remove', label: 'Releases' },
+  { value: 'suspend', label: 'Suspensions' },
+  { value: 'ban', label: 'Bans' },
+  { value: 'rebrand', label: 'Rebrands' },
+];
+function TransactionsView({ season, teamsById, onOpenPlayer, onRemoveActivity }) {
+  const { hasPermission } = useAuth();
+  const isLoggedIn = hasPermission('manageRosters');
+  const [filter, setFilter] = useState('all');
+  const activityLog = season.activityLog || [];
+
+  const suspendedPlayers = [];
+  const bannedPlayers = [];
+  (season.members || []).forEach(m => {
+    (m.roster || []).forEach(p => {
+      if (p.suspended) suspendedPlayers.push({ ...p, teamId: m.teamId });
+      if (p.banned) bannedPlayers.push({ ...p, teamId: m.teamId });
+    });
+  });
+  (season.freeAgents || []).forEach(p => {
+    if (p.suspended) suspendedPlayers.push({ ...p, teamId: null });
+    if (p.banned) bannedPlayers.push({ ...p, teamId: null });
+  });
+
+  const filtered = filter === 'all' ? activityLog
+    : filter === 'suspend' ? activityLog.filter(a => a.type === 'suspend' || a.type === 'unsuspend')
+    : filter === 'ban' ? activityLog.filter(a => a.type === 'ban' || a.type === 'unban')
+    : activityLog.filter(a => a.type === filter);
+  const sorted = filtered.slice().reverse();
+
+  const PlayerRow = ({ p, reason }) => {
+    const t = teamsById[p.teamId];
+    return (
+      <button onClick={() => onOpenPlayer(p.name)} className="w-full flex items-center gap-2 px-2 py-2 text-left" style={{ borderTop: `1px solid ${LINE}` }}>
+        {t ? <TeamMark team={t} size={16} /> : <span className="text-[9px] uppercase font-bold flex-shrink-0" style={{ color: CHALK_DIM }}>FA</span>}
+        <span className="flex-1 text-sm font-semibold truncate" style={{ color: CHALK }}>{p.name}</span>
+        {reason && <span className="text-xs italic truncate max-w-[140px]" style={{ color: CHALK_DIM }}>{reason}</span>}
+      </button>
+    );
+  };
+
+  return (
+    <div className="p-4 space-y-4">
+      <Panel className="overflow-hidden" style={{ borderColor: PRIMARY }}>
+        <SectionTitle accent={PRIMARY}>Transactions</SectionTitle>
+        <p className="px-4 pb-4 text-xs" style={{ color: CHALK_DIM }}>Every signing, trade, release, suspension, and ban recorded this season.</p>
+      </Panel>
+
+      {(suspendedPlayers.length > 0 || bannedPlayers.length > 0) && (
+        <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+          {suspendedPlayers.length > 0 && (
+            <Panel>
+              <SectionTitle accent={GOLD}>Active suspensions ({suspendedPlayers.length})</SectionTitle>
+              <div className="px-2 pb-2">{suspendedPlayers.map(p => <PlayerRow key={p.id} p={p} reason={p.suspensionReason} />)}</div>
+            </Panel>
+          )}
+          {bannedPlayers.length > 0 && (
+            <Panel style={{ borderColor: NEGATIVE }}>
+              <SectionTitle accent={NEGATIVE}>Banned players ({bannedPlayers.length})</SectionTitle>
+              <div className="px-2 pb-2">{bannedPlayers.map(p => <PlayerRow key={p.id} p={p} reason={p.banReason} />)}</div>
+            </Panel>
+          )}
+        </div>
+      )}
+
+      <Panel className="overflow-hidden">
+        <SectionTitle right={
+          <div className="flex flex-wrap gap-1 justify-end">
+            {TRANSACTION_TYPES.map(t => (
+              <button key={t.value} onClick={() => setFilter(t.value)} className="text-[10px] font-bold px-2 py-1 rounded" style={{ background: filter === t.value ? PRIMARY : PANEL2, color: filter === t.value ? INK : CHALK_DIM }}>{t.label}</button>
+            ))}
+          </div>
+        }>Full log</SectionTitle>
+        {sorted.length === 0 ? (
+          <p className="px-4 py-8 text-sm text-center" style={{ color: CHALK_DIM }}>No transactions match this filter.</p>
+        ) : (
+          <div className="px-2 pb-2">
+            {sorted.map(a => <ActivityRow key={a.id} a={a} teamsById={teamsById} onRemove={isLoggedIn ? onRemoveActivity : null} />)}
+          </div>
+        )}
+      </Panel>
+    </div>
+  );
+}
+
+/* ==================================================================== */
 /* Graphs view                                                           */
 /* ==================================================================== */
+const GRAPH_CATEGORIES = [
+  { key: 'trends', label: 'Trends' },
+  { key: 'teams', label: 'Team comparisons' },
+  { key: 'players', label: 'Players' },
+  { key: 'h2h', label: 'Head-to-head' },
+];
 function GraphsView({ league, roundHistory, standings, scoringTrend, season, h2hMatrix, onOpenTeam, sport }) {
   const [metric, setMetric] = useState('rank');
   const [selectedIdx, setSelectedIdx] = useState(null);
+  const [cat, setCat] = useState('trends');
   if (roundHistory.length === 0) return <div className="p-4"><Panel><p className="px-4 py-8 text-sm text-center" style={{ color: CHALK_DIM }}>Enter some scores in the Schedule tab to see trend graphs.</p></Panel></div>;
 
   const chartData = roundHistory.map(snap => {
@@ -6519,8 +6816,31 @@ function GraphsView({ league, roundHistory, standings, scoringTrend, season, h2h
     away: (t.awayW + t.awayL) > 0 ? (t.awayW / (t.awayW + t.awayL)) * 100 : 0,
   }));
 
+  // Pythagorean win% (runs-for^2 / (runs-for^2 + runs-against^2), the
+  // standard Bill James exponent) vs. actual win% — teams well above the
+  // line are outperforming their run differential (close-game luck), teams
+  // below it are underperforming it.
+  const pythagData = standings.filter(t => t.rf + t.ra > 0).map(t => {
+    const rf2 = t.rf * t.rf, ra2 = t.ra * t.ra;
+    return { x: rf2 / (rf2 + ra2), y: t.pct, name: t.displayName, id: t.id, color: teamColor(t) };
+  });
+
+  // Player leaders (this season, regular season) for the Players category —
+  // reuses the same aggregation Stat Leaders runs, just charted instead of
+  // listed.
+  const teamsByIdLocal = Object.fromEntries(league.map(t => [t.id, t]));
+  const playerLeaders = computeSeasonPlayerLeaders(season, teamsByIdLocal, 'regular');
+  const topHrData = [...playerLeaders].sort((a, b) => b.totals.hr - a.totals.hr).slice(0, 8).map(p => ({ name: p.name, value: p.totals.hr, color: (teamsByIdLocal[p.teamId] && teamColor(teamsByIdLocal[p.teamId])) || PRIMARY }));
+  const topWarData = [...playerLeaders].sort((a, b) => b.war - a.war).slice(0, 8).map(p => ({ name: p.name, value: Number(p.war.toFixed(1)), color: (teamsByIdLocal[p.teamId] && teamColor(teamsByIdLocal[p.teamId])) || GOLD }));
+
   return (
     <div className="p-4 space-y-4">
+      <div className="flex flex-wrap gap-1 rounded-lg overflow-hidden border w-fit" style={{ borderColor: LINE }}>
+        {GRAPH_CATEGORIES.map(c => (
+          <button key={c.key} onClick={() => setCat(c.key)} className="px-3 py-1.5 text-xs font-bold" style={{ background: cat === c.key ? PRIMARY : 'transparent', color: cat === c.key ? INK : CHALK_DIM }}>{c.label}</button>
+        ))}
+      </div>
+      {cat === 'trends' && (
       <Panel>
         <SectionTitle right={
           <select value={metric} onChange={e => { setMetric(e.target.value); setSelectedIdx(null); }} className="bg-[#242424] border rounded px-2 py-1 text-xs" style={{ borderColor: LINE, color: CHALK }}>
@@ -6559,7 +6879,46 @@ function GraphsView({ league, roundHistory, standings, scoringTrend, season, h2h
           )}
         </div>
       </Panel>
+      )}
 
+      {cat === 'trends' && (
+      <Panel>
+        <SectionTitle>Power ranking trend</SectionTitle>
+        <div className="px-2 pb-2">
+          <ResponsiveContainer width="100%" height={280}>
+            <LineChart data={powerTrendData} margin={{ left: -10, right: 12, top: 8 }}>
+              <CartesianGrid stroke={LINE} strokeDasharray="3 3" />
+              <XAxis dataKey="label" tick={{ fill: CHALK_DIM, fontSize: 10 }} interval="preserveStartEnd" />
+              <YAxis tick={{ fill: CHALK_DIM, fontSize: 10 }} />
+              <Tooltip contentStyle={{ background: PANEL2, border: `1px solid ${LINE}`, color: CHALK }} />
+              <Legend wrapperStyle={{ fontSize: 11, color: CHALK_DIM }} />
+              {league.map(t => <Line key={t.id} type="monotone" dataKey={t.id} name={t.name} stroke={teamColor(t)} strokeWidth={2} dot={false} activeDot={{ r: 5 }} />)}
+            </LineChart>
+          </ResponsiveContainer>
+          <p className="text-[11px] px-2 pb-2" style={{ color: CHALK_DIM }}>The same composite score from the Power Rankings panel in Stats (win% + run differential + strength of schedule), tracked round by round instead of just right now.</p>
+        </div>
+      </Panel>
+      )}
+
+      {cat === 'trends' && scoringTrend.length > 0 && (
+        <Panel>
+          <SectionTitle>League scoring trend</SectionTitle>
+          <div className="px-2 pb-4">
+            <ResponsiveContainer width="100%" height={240}>
+              <LineChart data={scoringTrend} margin={{ left: -10, right: 12, top: 8 }}>
+                <CartesianGrid stroke={LINE} strokeDasharray="3 3" />
+                <XAxis dataKey="label" tick={{ fill: CHALK_DIM, fontSize: 10 }} interval="preserveStartEnd" />
+                <YAxis tick={{ fill: CHALK_DIM, fontSize: 10 }} />
+                <Tooltip contentStyle={{ background: PANEL2, border: `1px solid ${LINE}`, color: CHALK }} />
+                <Line type="monotone" dataKey="avgRuns" name="Avg. combined runs/game" stroke={GOLD} strokeWidth={2} dot={{ r: 3 }} />
+              </LineChart>
+            </ResponsiveContainer>
+          </div>
+        </Panel>
+      )}
+
+      {cat === 'teams' && (
+      <>
       <Panel>
         <SectionTitle>Offense vs. defense</SectionTitle>
         <div className="px-2 pb-2">
@@ -6582,19 +6941,22 @@ function GraphsView({ league, roundHistory, standings, scoringTrend, season, h2h
       </Panel>
 
       <Panel>
-        <SectionTitle>Power ranking trend</SectionTitle>
+        <SectionTitle>Pythagorean win % vs. actual</SectionTitle>
         <div className="px-2 pb-2">
-          <ResponsiveContainer width="100%" height={280}>
-            <LineChart data={powerTrendData} margin={{ left: -10, right: 12, top: 8 }}>
+          <ResponsiveContainer width="100%" height={260}>
+            <ScatterChart margin={{ top: 8, right: 16, bottom: 8, left: -10 }}>
               <CartesianGrid stroke={LINE} strokeDasharray="3 3" />
-              <XAxis dataKey="label" tick={{ fill: CHALK_DIM, fontSize: 10 }} interval="preserveStartEnd" />
-              <YAxis tick={{ fill: CHALK_DIM, fontSize: 10 }} />
-              <Tooltip contentStyle={{ background: PANEL2, border: `1px solid ${LINE}`, color: CHALK }} />
-              <Legend wrapperStyle={{ fontSize: 11, color: CHALK_DIM }} />
-              {league.map(t => <Line key={t.id} type="monotone" dataKey={t.id} name={t.name} stroke={teamColor(t)} strokeWidth={2} dot={false} activeDot={{ r: 5 }} />)}
-            </LineChart>
+              <XAxis type="number" dataKey="x" domain={[0, 1]} tick={{ fill: CHALK_DIM, fontSize: 10 }} label={{ value: 'Pythagorean (expected) win % →', position: 'insideBottom', offset: -4, fill: CHALK_DIM, fontSize: 10 }} />
+              <YAxis type="number" dataKey="y" domain={[0, 1]} tick={{ fill: CHALK_DIM, fontSize: 10 }} label={{ value: 'Actual win % →', angle: -90, position: 'insideLeft', fill: CHALK_DIM, fontSize: 10 }} />
+              <ZAxis range={[80, 80]} />
+              <ReferenceLine segment={[{ x: 0, y: 0 }, { x: 1, y: 1 }]} stroke={LINE} />
+              <Tooltip cursor={{ strokeDasharray: '3 3' }} contentStyle={{ background: PANEL2, border: `1px solid ${LINE}`, color: CHALK }} formatter={(v, n) => [v.toFixed(3), n === 'x' ? 'Expected' : 'Actual']} labelFormatter={() => ''} />
+              <Scatter data={pythagData} onClick={(d) => onOpenTeam(d.id)}>
+                {pythagData.map(d => <Cell key={d.id} fill={d.color} cursor="pointer" />)}
+              </Scatter>
+            </ScatterChart>
           </ResponsiveContainer>
-          <p className="text-[11px] px-2 pb-2" style={{ color: CHALK_DIM }}>The same composite score from the Power Rankings panel in Stats (win% + run differential + strength of schedule), tracked round by round instead of just right now.</p>
+          <p className="text-[11px] px-2 pb-2" style={{ color: CHALK_DIM }}>Above the diagonal = winning more than run differential predicts (often not sustainable). Below it = a better team than the record shows. Tap a dot to open that team.</p>
         </div>
       </Panel>
 
@@ -6668,25 +7030,52 @@ function GraphsView({ league, roundHistory, standings, scoringTrend, season, h2h
           <p className="text-[11px] px-2" style={{ color: CHALK_DIM }}>How many games were decided by each run margin this season.</p>
         </div>
       </Panel>
-
-      {scoringTrend.length > 0 && (
-        <Panel>
-          <SectionTitle>League scoring trend</SectionTitle>
-          <div className="px-2 pb-4">
-            <ResponsiveContainer width="100%" height={240}>
-              <LineChart data={scoringTrend} margin={{ left: -10, right: 12, top: 8 }}>
-                <CartesianGrid stroke={LINE} strokeDasharray="3 3" />
-                <XAxis dataKey="label" tick={{ fill: CHALK_DIM, fontSize: 10 }} interval="preserveStartEnd" />
-                <YAxis tick={{ fill: CHALK_DIM, fontSize: 10 }} />
-                <Tooltip contentStyle={{ background: PANEL2, border: `1px solid ${LINE}`, color: CHALK }} />
-                <Line type="monotone" dataKey="avgRuns" name="Avg. combined runs/game" stroke={GOLD} strokeWidth={2} dot={{ r: 3 }} />
-              </LineChart>
-            </ResponsiveContainer>
-          </div>
-        </Panel>
+      </>
       )}
 
-      {standings.length > 1 && (
+      {cat === 'players' && (
+        playerLeaders.length === 0 ? (
+          <Panel><p className="px-4 py-8 text-sm text-center" style={{ color: CHALK_DIM }}>No stats imported yet this season.</p></Panel>
+        ) : (
+        <>
+          <Panel>
+            <SectionTitle accent={GOLD}>Home run leaders</SectionTitle>
+            <div className="px-2 pb-4">
+              <ResponsiveContainer width="100%" height={Math.max(160, topHrData.length * 32)}>
+                <BarChart data={topHrData} layout="vertical" margin={{ left: 8, right: 16 }}>
+                  <CartesianGrid stroke={LINE} horizontal={false} />
+                  <XAxis type="number" allowDecimals={false} tick={{ fill: CHALK_DIM, fontSize: 11 }} />
+                  <YAxis type="category" dataKey="name" width={110} tick={{ fill: CHALK, fontSize: 11 }} />
+                  <Tooltip contentStyle={{ background: PANEL2, border: `1px solid ${LINE}`, color: CHALK }} />
+                  <Bar dataKey="value" name="HR" radius={[0, 3, 3, 0]}>
+                    {topHrData.map((d, i) => <Cell key={i} fill={d.color} />)}
+                  </Bar>
+                </BarChart>
+              </ResponsiveContainer>
+            </div>
+          </Panel>
+          <Panel>
+            <SectionTitle accent={GOLD}>WAR leaders</SectionTitle>
+            <div className="px-2 pb-4">
+              <ResponsiveContainer width="100%" height={Math.max(160, topWarData.length * 32)}>
+                <BarChart data={topWarData} layout="vertical" margin={{ left: 8, right: 16 }}>
+                  <CartesianGrid stroke={LINE} horizontal={false} />
+                  <XAxis type="number" tick={{ fill: CHALK_DIM, fontSize: 11 }} />
+                  <YAxis type="category" dataKey="name" width={110} tick={{ fill: CHALK, fontSize: 11 }} />
+                  <Tooltip contentStyle={{ background: PANEL2, border: `1px solid ${LINE}`, color: CHALK }} />
+                  <Bar dataKey="value" name="WAR" radius={[0, 3, 3, 0]}>
+                    {topWarData.map((d, i) => <Cell key={i} fill={d.color} />)}
+                  </Bar>
+                </BarChart>
+              </ResponsiveContainer>
+              <p className="text-[11px] px-2" style={{ color: CHALK_DIM }}>Same simplified WAR formula used on Stat Leaders — bars colored by each player's current team.</p>
+            </div>
+          </Panel>
+        </>
+        )
+      )}
+
+      {cat === 'h2h' && standings.length > 1 && (
         <Panel>
           <SectionTitle>Head-to-head win matrix</SectionTitle>
           <div className="overflow-x-auto px-2 pb-4">
@@ -7108,13 +7497,51 @@ function App() {
     ...parsedRows.filter(r => r.matched).map(r => ({ ...newPlayer(r.name, r.starLevel), number: r.number, position: r.position })),
   ]);
   const updatePlayerField = (teamId, playerId, field, value) => updateMemberRoster(teamId, roster => roster.map(p => p.id === playerId ? { ...p, [field]: value } : p));
+  // Removing a player never deletes them — they move to the season's free
+  // agent pool instead, so their already-imported game stats (which are
+  // keyed by playerId, untouched here) stay visible on Leaders/their player
+  // page instead of silently vanishing because no roster references their id
+  // or name anymore.
   const removePlayer = (teamId, playerId) => {
-    const player = ((activeSeason && activeSeason.members.find(m => m.teamId === teamId)) || {}).roster?.find(p => p.id === playerId);
-    updateMemberRosterWithActivity(
-      teamId,
-      roster => roster.filter(p => p.id !== playerId),
-      player ? { type: 'remove', teamId, text: `${player.name} removed from ${(teamsById[teamId] && teamsById[teamId].name) || 'a team'}` } : null
-    );
+    if (!league || !activeSeason) return;
+    const member = activeSeason.members.find(m => m.teamId === teamId);
+    const player = (member && (member.roster || [])).find(p => p.id === playerId);
+    if (!player) return;
+    const teamName = (teamsById[teamId] && teamsById[teamId].name) || 'a team';
+    const seasons = league.seasons.map(s => {
+      if (s.id !== activeSeason.id) return s;
+      const members = s.members.map(m => m.teamId === teamId ? { ...m, roster: (m.roster || []).filter(p => p.id !== playerId) } : m);
+      const freeAgents = [...(s.freeAgents || []), { ...player, formerTeamId: teamId }];
+      const activityLog = [...(s.activityLog || []), { id: uid('act'), type: 'remove', teamId, text: `${player.name} released by ${teamName} — now a free agent`, at: Date.now() }];
+      return { ...s, members, freeAgents, activityLog };
+    });
+    persistLeague({ ...league, seasons });
+  };
+  // Signs a player out of the free agent pool onto a roster — the inverse of
+  // removePlayer. Keeps the same player id so their free-agent-stint stats
+  // (if any were imported while unattached) stay attributed to them.
+  const signFreeAgent = (teamId, playerId) => {
+    if (!league || !activeSeason) return;
+    const fa = (activeSeason.freeAgents || []).find(p => p.id === playerId);
+    if (!fa) return;
+    const teamName = (teamsById[teamId] && teamsById[teamId].name) || 'a team';
+    const { formerTeamId, ...player } = fa;
+    const seasons = league.seasons.map(s => {
+      if (s.id !== activeSeason.id) return s;
+      const freeAgents = (s.freeAgents || []).filter(p => p.id !== playerId);
+      const members = s.members.map(m => m.teamId === teamId ? { ...m, roster: [...(m.roster || []), player] } : m);
+      const activityLog = [...(s.activityLog || []), { id: uid('act'), type: 'add', teamId, text: `${player.name} signed by ${teamName}`, at: Date.now() }];
+      return { ...s, members, freeAgents, activityLog };
+    });
+    persistLeague({ ...league, seasons });
+  };
+  // Permanently deletes a free agent from the pool (e.g. a mis-entered
+  // name) — unlike removePlayer this has no roster to preserve stats
+  // against continuity for, so it's a hard delete.
+  const deleteFreeAgent = (playerId) => {
+    if (!league || !activeSeason) return;
+    const seasons = league.seasons.map(s => s.id === activeSeason.id ? { ...s, freeAgents: (s.freeAgents || []).filter(p => p.id !== playerId) } : s);
+    persistLeague({ ...league, seasons });
   };
   const setPlayerSuspended = (teamId, playerId, suspended, reason, durationGames) => {
     const player = ((activeSeason && activeSeason.members.find(m => m.teamId === teamId)) || {}).roster?.find(p => p.id === playerId);
@@ -7136,6 +7563,31 @@ function App() {
           : `${player.name} (${(teamsById[teamId] && teamsById[teamId].name) || 'a team'}) suspension lifted`,
       } : null
     );
+  };
+  // Bans are more severe than a suspension: the player disappears from stat
+  // leaders entirely (see computeSeasonPlayerLeaders's banned filter) rather
+  // than just being unable to play. Works whether the player is currently
+  // rostered or sitting in the free agent pool, since a released player can
+  // still be banned after the fact.
+  const setPlayerBanned = (playerId, banned, reason) => {
+    if (!league || !activeSeason) return;
+    const member = activeSeason.members.find(m => (m.roster || []).some(p => p.id === playerId));
+    const fa = !member && (activeSeason.freeAgents || []).find(p => p.id === playerId);
+    const player = (member && member.roster.find(p => p.id === playerId)) || fa;
+    if (!player) return;
+    const teamName = member ? ((teamsById[member.teamId] && teamsById[member.teamId].name) || 'a team') : 'free agency';
+    const seasons = league.seasons.map(s => {
+      if (s.id !== activeSeason.id) return s;
+      const members = s.members.map(m => ({ ...m, roster: (m.roster || []).map(p => p.id === playerId ? { ...p, banned, banReason: banned ? (reason || '') : '' } : p) }));
+      const freeAgents = (s.freeAgents || []).map(p => p.id === playerId ? { ...p, banned, banReason: banned ? (reason || '') : '' } : p);
+      const activityLog = [...(s.activityLog || []), {
+        id: uid('act'), type: banned ? 'ban' : 'unban', teamId: member ? member.teamId : null,
+        text: banned ? `${player.name} (${teamName}) banned${reason ? ` — ${reason}` : ''}` : `${player.name} ban lifted`,
+        at: Date.now(),
+      }];
+      return { ...s, members, freeAgents, activityLog };
+    });
+    persistLeague({ ...league, seasons });
   };
   const tradePlayer = (fromTeamId, toTeamId, playerId) => {
     if (!league || !activeSeason || fromTeamId === toTeamId) return;
@@ -7629,21 +8081,23 @@ function App() {
     } else if (!activeSeasonPublic && !isLoggedIn) {
       body = <div className="p-4"><Panel><p className="px-4 py-8 text-sm text-center" style={{ color: CHALK_DIM }}>This season isn't public yet. Check back later, or log in if you're an admin.</p></Panel></div>;
     } else if (tab === 'home') {
-      body = <HomeView season={activeSeason} teamsById={displayTeamsById} settings={activeSeason.settings} onOpenTeam={onOpenTeam} h2hMatrix={h2hMatrix} sport={sport} onStartPlayoffs={startPlayoffs} onClearPlayoffs={clearPlayoffs} onStartPlayIn={startPlayIn} onClearPlayIn={clearPlayIn} onOpenCompare={onOpenCompare} news={league.news || []} onViewNews={() => setTab('news')} onOpenPlayer={onOpenPlayer} onViewLeaders={() => setTab('leaders')} />;
+      body = <HomeView season={activeSeason} teamsById={displayTeamsById} settings={activeSeason.settings} onOpenTeam={onOpenTeam} h2hMatrix={h2hMatrix} sport={sport} onStartPlayoffs={startPlayoffs} onClearPlayoffs={clearPlayoffs} onStartPlayIn={startPlayIn} onClearPlayIn={clearPlayIn} onOpenCompare={onOpenCompare} news={league.news || []} onViewNews={() => setTab('news')} onOpenPlayer={onOpenPlayer} onViewLeaders={() => setTab('leaders')} onViewTransactions={() => setTab('transactions')} />;
     } else if (tab === 'standings') {
       body = <StandingsView standings={standings} updateMemberField={updateMemberField} season={activeSeason} settings={activeSeason.settings} movementById={movementById} onOpenTeam={onOpenTeam} />;
     } else if (tab === 'teams' && isLoggedIn) {
       body = <TeamsView season={activeSeason} teamsById={teamsById} teamsIndex={teamsIndex} addExistingTeam={addExistingTeamToSeason} createAndAddTeam={createAndAddTeamToSeason} updateMemberField={updateMemberField} updateGlobalTeamField={updateGlobalTeamField} removeMember={removeMember} onOpenTeam={onOpenTeam} importRosterSheet={importRosterSheet} addDivision={addDivision} updateDivision={updateDivision} removeDivision={removeDivision} assignMemberDivision={assignMemberDivision} />;
     } else if (tab === 'roster' && isLoggedIn) {
-      body = <RosterManagementView season={activeSeason} teamsById={displayTeamsById} updatePlayerField={updatePlayerField} removePlayer={removePlayer} addPlayer={addPlayer} addPlayersBulk={addPlayersBulk} tradePlayer={tradePlayer} tradePlayers={tradePlayers} setPlayerSuspended={setPlayerSuspended} onOpenPlayer={onOpenPlayer} />;
+      body = <RosterManagementView season={activeSeason} teamsById={displayTeamsById} updatePlayerField={updatePlayerField} removePlayer={removePlayer} addPlayer={addPlayer} addPlayersBulk={addPlayersBulk} tradePlayer={tradePlayer} tradePlayers={tradePlayers} setPlayerSuspended={setPlayerSuspended} setPlayerBanned={setPlayerBanned} onOpenPlayer={onOpenPlayer} signFreeAgent={signFreeAgent} deleteFreeAgent={deleteFreeAgent} />;
     } else if (tab === 'schedule') {
       body = <ScheduleView season={activeSeason} settings={activeSeason.settings} saveScore={saveScore} deleteGame={deleteGame} declareForfeit={declareForfeit} setWinnerOverride={setWinnerOverride} teamsById={displayTeamsById} sport={sport} updateGameNotes={updateGameNotes} updateGameStreamUrl={updateGameStreamUrl} saveGamePlayerStats={saveGamePlayerStats} setGameOngoing={setGameOngoing} swapHomeAway={swapHomeAway} />;
     } else if (tab === 'stats') {
       body = <StatsView standings={standings} onOpenTeam={onOpenTeam} season={activeSeason} />;
     } else if (tab === 'leaders') {
-      body = <StatLeadersView season={activeSeason} teamsById={displayTeamsById} onOpenPlayer={onOpenPlayer} />;
+      body = <StatLeadersView season={activeSeason} teamsById={displayTeamsById} onOpenPlayer={onOpenPlayer} leagueLogoUrl={league && league.logoUrl} />;
     } else if (tab === 'awards') {
       body = <AwardsView league={league} season={activeSeason} standings={standings} teamsById={displayTeamsById} addAwardDef={addAwardDef} updateAwardDef={updateAwardDef} removeAwardDef={removeAwardDef} addAwardWinner={addAwardWinner} removeAwardWinnerAt={removeAwardWinnerAt} />;
+    } else if (tab === 'transactions') {
+      body = <TransactionsView season={activeSeason} teamsById={displayTeamsById} onOpenPlayer={onOpenPlayer} onRemoveActivity={removeActivityItem} />;
     } else if (tab === 'odds') {
       body = <OddsView season={activeSeason} teamsById={displayTeamsById} standings={standings} settings={activeSeason.settings} onOpenTeam={onOpenTeam} h2hMatrix={h2hMatrix} onStartPlayoffs={startPlayoffs} onClearPlayoffs={clearPlayoffs} onStartPlayIn={startPlayIn} onClearPlayIn={clearPlayIn} onOpenCompare={onOpenCompare} />;
     } else if (tab === 'extras') {
@@ -7657,13 +8111,13 @@ function App() {
     } else if (tab === 'settings') {
       body = <SettingsView settings={activeSeason.settings} saveSettings={saveSettings} theme={theme} saveTheme={saveTheme} sport={sport} season={activeSeason} teamsById={teamsById} importGames={importGames} addManualGame={addManualGame} generateSchedule={generateSchedule} />;
     } else if (tab === 'team') {
-      body = <TeamPage season={activeSeason} settings={activeSeason.settings} team={selectedTeamMerged} standingsRow={selectedStandingsRow} teamsById={displayTeamsById} h2hMatrix={h2hMatrix} championshipCount={selectedTeamId ? (teamChampionshipCounts[selectedTeamId] || 0) : 0} onBack={backFromTeam} onOpenGlobalHistory={(id) => openTeamHistory(id, 'league')} onOpenCompare={onOpenCompare} updatePlayerField={updatePlayerField} removePlayer={removePlayer} addPlayer={addPlayer} addPlayersBulk={addPlayersBulk} tradePlayer={tradePlayer} updateMemberField={updateMemberField} setPlayerSuspended={setPlayerSuspended} onOpenPlayer={onOpenPlayer} onRebrand={rebrandTeam} onClearRebrand={clearRebrand} />;
+      body = <TeamPage season={activeSeason} settings={activeSeason.settings} team={selectedTeamMerged} standingsRow={selectedStandingsRow} teamsById={displayTeamsById} h2hMatrix={h2hMatrix} championshipCount={selectedTeamId ? (teamChampionshipCounts[selectedTeamId] || 0) : 0} onBack={backFromTeam} onOpenGlobalHistory={(id) => openTeamHistory(id, 'league')} onOpenCompare={onOpenCompare} updatePlayerField={updatePlayerField} removePlayer={removePlayer} addPlayer={addPlayer} addPlayersBulk={addPlayersBulk} tradePlayer={tradePlayer} updateMemberField={updateMemberField} setPlayerSuspended={setPlayerSuspended} setPlayerBanned={setPlayerBanned} onOpenPlayer={onOpenPlayer} onRebrand={rebrandTeam} onClearRebrand={clearRebrand} />;
     } else if (tab === 'compare') {
       body = <ComparePage season={activeSeason} standingsAll={standingsResult.all} teamsById={displayTeamsById} h2hMatrix={h2hMatrix} initialTeamId={compareInitialId} initialTeamBId={compareSecondId} onBack={backFromCompare} onOpenTeam={onOpenTeam} />;
     } else if (tab === 'player') {
-      body = <PlayerPage league={league} teamsById={displayTeamsById} playerName={selectedPlayerName} onBack={backFromPlayer} onOpenTeam={onOpenTeam} onOpenPlayerCompare={onOpenPlayerCompare} />;
+      body = <PlayerPage league={league} teamsById={displayTeamsById} playerName={selectedPlayerName} onBack={backFromPlayer} onOpenTeam={onOpenTeam} onOpenPlayerCompare={onOpenPlayerCompare} activeSeasonId={activeSeason && activeSeason.id} onRemoveActivity={removeActivityItem} />;
     } else if (tab === 'playerCompare') {
-      body = <PlayerComparePage league={league} teamsById={displayTeamsById} initialNameA={comparePlayerAName} initialNameB={comparePlayerBName} onBack={backFromPlayerCompare} onOpenPlayer={onOpenPlayer} />;
+      body = <PlayerComparePage league={league} teamsById={displayTeamsById} initialNameA={comparePlayerAName} initialNameB={comparePlayerBName} onBack={backFromPlayerCompare} onOpenPlayer={onOpenPlayer} activeSeasonId={activeSeason && activeSeason.id} />;
     }
   }
 
@@ -7715,6 +8169,7 @@ function App() {
             <TabBtn active={tab === 'stats'} onClick={() => setTab('stats')} label="Stats" />
             <TabBtn active={tab === 'leaders'} onClick={() => setTab('leaders')} label="Leaders" />
             <TabBtn active={tab === 'awards'} onClick={() => setTab('awards')} label="Awards" />
+            <TabBtn active={tab === 'transactions'} onClick={() => setTab('transactions')} label="Transactions" />
             <TabBtn active={tab === 'odds'} onClick={() => setTab('odds')} label="Odds" />
             <TabBtn active={tab === 'extras'} onClick={() => setTab('extras')} label="Extras" />
             <TabBtn active={tab === 'graphs'} onClick={() => setTab('graphs')} label="Graphs" />
