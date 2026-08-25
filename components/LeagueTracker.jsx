@@ -325,22 +325,42 @@ function parseOcrTsvToLines(tsv) {
 }
 
 // Turns each OCR'd line's tokens into a guessed player-name + stat-values row.
-// The stat block is always the last 13 tokens (fixed column count) — whatever
-// comes before that, however many tokens it OCR'd as, is the player name.
+// The trailing run of number-looking tokens is the stat block; whatever
+// comes before it, however many tokens OCR split it into, is the player
+// name. The full stat block is 13 columns (batting then pitching), but a
+// row only requiring 14 clean tokens end-to-end used to get dropped
+// entirely on any single missed/merged token — and a batting-only or
+// pitching-only player (routine on a real roster) never has all 13 filled
+// in to begin with. This maps whatever numeric run actually got recognized
+// onto the closest matching column set instead of demanding all-or-nothing.
+const OCR_ALL_KEYS = STAT_COLUMNS.map(c => c.key);
+const OCR_BATTING_KEYS = OCR_ALL_KEYS.slice(0, 6); // ab, r, h, rbi, bb, so
+const OCR_PITCHING_KEYS = OCR_ALL_KEYS.slice(6); // ip, ha, er, bbAllowed, k, hrAllowed, e
 function ocrLinesToStatRows(lines) {
   return lines
     .map(tokens => {
-      if (tokens.length < STAT_COLUMNS.length + 1) return null;
-      const statTokens = tokens.slice(tokens.length - STAT_COLUMNS.length);
-      const nameTokens = tokens.slice(0, tokens.length - STAT_COLUMNS.length);
-      const values = {};
+      let numCount = 0;
+      for (let i = tokens.length - 1; i >= 0; i--) {
+        const cleaned = (tokens[i] || '').replace(/[^0-9.]/g, '');
+        if (cleaned === '' || Number.isNaN(parseFloat(cleaned))) break;
+        numCount++;
+      }
+      if (numCount === 0) return null;
+      const nameTokens = tokens.slice(0, tokens.length - numCount);
+      if (nameTokens.length === 0) return null;
+      const statTokens = tokens.slice(tokens.length - numCount);
+      let cols, colTokens;
+      if (numCount === OCR_BATTING_KEYS.length) { cols = OCR_BATTING_KEYS; colTokens = statTokens; }
+      else if (numCount === OCR_PITCHING_KEYS.length) { cols = OCR_PITCHING_KEYS; colTokens = statTokens; }
+      else if (numCount >= OCR_ALL_KEYS.length) { cols = OCR_ALL_KEYS; colTokens = statTokens.slice(statTokens.length - OCR_ALL_KEYS.length); }
+      else { cols = OCR_ALL_KEYS.slice(OCR_ALL_KEYS.length - numCount); colTokens = statTokens; }
+      const values = Object.fromEntries(OCR_ALL_KEYS.map(k => [k, 0]));
       let numericHits = 0;
-      STAT_COLUMNS.forEach((col, i) => {
-        const n = parseFloat((statTokens[i] || '').replace(/[^0-9.]/g, ''));
-        if (!Number.isNaN(n)) numericHits++;
-        values[col.key] = Number.isNaN(n) ? 0 : n;
+      cols.forEach((key, i) => {
+        const n = parseFloat((colTokens[i] || '').replace(/[^0-9.]/g, ''));
+        if (!Number.isNaN(n)) { numericHits++; values[key] = n; }
       });
-      return { name: nameTokens.join(' '), values, confident: numericHits >= STAT_COLUMNS.length - 2 };
+      return { name: nameTokens.join(' '), values, confident: numericHits >= Math.max(1, cols.length - 2) };
     })
     .filter(row => row && row.name && /[a-z]/i.test(row.name));
 }
@@ -4098,6 +4118,40 @@ function ImageCropper({ src, onDone, onCancel }) {
   );
 }
 
+// Tesseract is tuned for high-contrast printed text, not a game's stylized
+// UI (small text over a colored/textured panel) — fed the raw crop as-is,
+// real screenshots read as garbage far more often than not. Upscaling small
+// crops and stretching the grayscale contrast to the image's own black/white
+// extremes is a standard, cheap way to close most of that gap before OCR
+// ever sees it.
+function preprocessForOcr(canvas) {
+  const scale = canvas.width < 900 ? 3 : canvas.width < 1400 ? 2 : 1;
+  const out = document.createElement('canvas');
+  out.width = Math.max(1, Math.round(canvas.width * scale));
+  out.height = Math.max(1, Math.round(canvas.height * scale));
+  const ctx = out.getContext('2d');
+  ctx.imageSmoothingEnabled = true;
+  ctx.imageSmoothingQuality = 'high';
+  ctx.drawImage(canvas, 0, 0, out.width, out.height);
+  const imgData = ctx.getImageData(0, 0, out.width, out.height);
+  const d = imgData.data;
+  const gray = new Uint8ClampedArray(d.length / 4);
+  let min = 255, max = 0;
+  for (let i = 0, p = 0; i < d.length; i += 4, p++) {
+    const g = 0.299 * d[i] + 0.587 * d[i + 1] + 0.114 * d[i + 2];
+    gray[p] = g;
+    if (g < min) min = g;
+    if (g > max) max = g;
+  }
+  const range = Math.max(1, max - min);
+  for (let i = 0, p = 0; i < d.length; i += 4, p++) {
+    const v = Math.round(((gray[p] - min) / range) * 255);
+    d[i] = v; d[i + 1] = v; d[i + 2] = v;
+  }
+  ctx.putImageData(imgData, 0, 0);
+  return out;
+}
+
 // Upload → crop → OCR → review-and-fix-up-before-saving flow for importing
 // one team's box score from a screenshot of the in-game stat screen. Also
 // doubles as the editor for stats already saved on this game/side (opens
@@ -4138,13 +4192,18 @@ function StatImportModal({ game, side, team, roster, existingRows, onSave, onClo
         corePath: '/tesseract/core',
         langPath: '/tesseract/lang',
       });
-      const { data } = await worker.recognize(canvas.toDataURL('image/png'));
+      const preCanvas = preprocessForOcr(canvas);
+      const { data } = await worker.recognize(preCanvas.toDataURL('image/png'));
       await worker.terminate();
       const parsed = ocrLinesToStatRows(parseOcrTsvToLines(data.tsv));
       if (parsed.length === 0) setError("Couldn't find any rows in that image — try a tighter crop, or add rows manually below.");
       setRows(parsed.map(p => ({ name: p.name, playerId: matchRosterPlayer(p.name, roster), values: p.values, hr: 0, doubles: 0, triples: 0 })));
       setStep('review');
     } catch (e) {
+      // Logged rather than swallowed silently — the on-screen message has to
+      // stay generic (a random visitor can't act on a stack trace), but
+      // without this, diagnosing a real failure meant guessing blind.
+      console.error('Screenshot stat import OCR failed:', e);
       setError('Could not read the screenshot automatically. Add rows and enter stats by hand below.');
       setRows(rows.length ? rows : [{ name: '', playerId: '', values: emptyValues(), hr: 0, doubles: 0, triples: 0 }]);
       setStep('review');
@@ -5783,7 +5842,7 @@ function PlayerEditPanel({ league, seasonsInfo, teamsById, playerBadges, playerA
   );
 }
 
-function PlayerPage({ league, teamsById, playerName, onBack, onOpenTeam, onOpenPlayerCompare, activeSeasonId, onRemoveActivity, onBackfillRobloxId, onSyncRobloxRename, onPlayerRenamed, onSetPlayerBadges, onAddPlayerAccolade, onRemovePlayerAccolade, onAddPlayerTeamCredit, onRemovePlayerTeamCredit, onUpsertManualStatLine, onDeleteManualStatLine }) {
+function PlayerPage({ league, teamsById, playerName, onBack, onOpenTeam, onOpenPlayerCompare, activeSeasonId, onRemoveActivity, onClearAllActivity, onBackfillRobloxId, onSyncRobloxRename, onPlayerRenamed, onSetPlayerBadges, onAddPlayerAccolade, onRemovePlayerAccolade, onAddPlayerTeamCredit, onRemovePlayerTeamCredit, onUpsertManualStatLine, onDeleteManualStatLine }) {
   const { hasPermission, role } = useAuth();
   const canManage = hasPermission('manageRosters');
   const isSiteOwner = role === 'site_owner';
@@ -6071,10 +6130,10 @@ function PlayerPage({ league, teamsById, playerName, onBack, onOpenTeam, onOpenP
           </Panel>
           {playerTransactions.length > 0 && (
             <Panel className="overflow-hidden">
-              <SectionTitle>Transactions</SectionTitle>
+              <SectionTitle right={canManage && <button onClick={() => { if (confirm(`Remove all ${playerTransactions.length} transaction${playerTransactions.length === 1 ? '' : 's'} for ${displayName}? This can't be undone.`)) onClearAllActivity(playerTransactions.map(a => ({ id: a.id, seasonId: a.seasonId }))); }} className="text-[11px] font-semibold" style={{ color: NEGATIVE }}>Clear all</button>}>Transactions</SectionTitle>
               <div className="px-2 pb-2">
                 {playerTransactions.map(a => (
-                  <ActivityRow key={a.id} a={a} teamsById={teamsById} onRemove={(canManage && a.seasonId === activeSeasonId) ? onRemoveActivity : null} />
+                  <ActivityRow key={a.id} a={a} teamsById={teamsById} onRemove={canManage ? (id) => onRemoveActivity(id, a.seasonId) : null} />
                 ))}
               </div>
             </Panel>
@@ -6204,10 +6263,10 @@ function PlayerPage({ league, teamsById, playerName, onBack, onOpenTeam, onOpenP
 
           {playerTransactions.length > 0 && (
             <Panel className="overflow-hidden">
-              <SectionTitle>Transactions</SectionTitle>
+              <SectionTitle right={canManage && <button onClick={() => { if (confirm(`Remove all ${playerTransactions.length} transaction${playerTransactions.length === 1 ? '' : 's'} for ${displayName}? This can't be undone.`)) onClearAllActivity(playerTransactions.map(a => ({ id: a.id, seasonId: a.seasonId }))); }} className="text-[11px] font-semibold" style={{ color: NEGATIVE }}>Clear all</button>}>Transactions</SectionTitle>
               <div className="px-2 pb-2">
                 {playerTransactions.map(a => (
-                  <ActivityRow key={a.id} a={a} teamsById={teamsById} onRemove={(canManage && a.seasonId === activeSeasonId) ? onRemoveActivity : null} />
+                  <ActivityRow key={a.id} a={a} teamsById={teamsById} onRemove={canManage ? (id) => onRemoveActivity(id, a.seasonId) : null} />
                 ))}
               </div>
             </Panel>
@@ -7693,18 +7752,23 @@ function H2HSection({ standings, h2hMatrix, season, onOpenTeam, spotA, spotB, se
       <Panel className="overflow-hidden">
         <div className="px-4 pt-4 pb-2 flex items-center gap-2 flex-wrap">
           <span className="text-xs font-bold uppercase tracking-wide" style={{ color: CHALK_DIM }}>Spotlight</span>
+          {/* Each side's options exclude whichever team the other side has
+              picked — the same team can't land on both sides, which used to
+              corrupt the hero cards below (they'd share a React key, and
+              React would leave a stale duplicate on the next selection
+              change instead of cleanly swapping it). */}
           <select value={aId} onChange={e => setSpotA(e.target.value)} className="bg-[#242424] border rounded px-2 py-1 text-xs" style={{ borderColor: LINE, color: CHALK }}>
-            {standings.map(t => <option key={t.id} value={t.id} style={{ background: PANEL2, color: CHALK }}>{t.displayName}</option>)}
+            {standings.filter(t => t.id !== bId).map(t => <option key={t.id} value={t.id} style={{ background: PANEL2, color: CHALK }}>{t.displayName}</option>)}
           </select>
           <span className="text-xs" style={{ color: CHALK_DIM }}>vs</span>
           <select value={bId} onChange={e => setSpotB(e.target.value)} className="bg-[#242424] border rounded px-2 py-1 text-xs" style={{ borderColor: LINE, color: CHALK }}>
-            {standings.map(t => <option key={t.id} value={t.id} style={{ background: PANEL2, color: CHALK }}>{t.displayName}</option>)}
+            {standings.filter(t => t.id !== aId).map(t => <option key={t.id} value={t.id} style={{ background: PANEL2, color: CHALK }}>{t.displayName}</option>)}
           </select>
         </div>
         <div className="relative overflow-hidden" style={{ background: `linear-gradient(105deg, ${colorA}, ${colorA}dd 42%, rgba(0,0,0,0.85) 50%, ${colorB}dd 58%, ${colorB})` }}>
           <div className="grid grid-cols-2 gap-4 px-5 py-6">
             {[[teamA, rec.w, 'left'], [teamB, rec.l, 'right']].map(([t, wins, align]) => (
-              <button key={t.id} onClick={() => onOpenTeam(t.id)} className="flex flex-col gap-2" style={{ alignItems: align === 'left' ? 'flex-start' : 'flex-end', textAlign: align }}>
+              <button key={align} onClick={() => onOpenTeam(t.id)} className="flex flex-col gap-2" style={{ alignItems: align === 'left' ? 'flex-start' : 'flex-end', textAlign: align }}>
                 <TeamMark team={t} size={44} />
                 <span className="font-head text-lg sm:text-2xl font-bold uppercase tracking-tight truncate max-w-full" style={{ color: '#fff', textShadow: '0 2px 8px rgba(0,0,0,0.5)' }}>{t.displayName}</span>
                 <span className="font-mono text-4xl sm:text-5xl font-black" style={{ color: '#fff', textShadow: '0 2px 10px rgba(0,0,0,0.5)' }}>{wins}</span>
@@ -8587,9 +8651,25 @@ function App() {
     });
     persistLeague({ ...league, seasons });
   };
-  const removeActivityItem = (activityId) => {
-    if (!league || !activeSeason) return;
-    const seasons = league.seasons.map(s => s.id === activeSeason.id ? { ...s, activityLog: (s.activityLog || []).filter(a => a.id !== activityId) } : s);
+  const removeActivityItem = (activityId, seasonId) => {
+    if (!league) return;
+    const targetId = seasonId || (activeSeason && activeSeason.id);
+    if (!targetId) return;
+    const seasons = league.seasons.map(s => s.id === targetId ? { ...s, activityLog: (s.activityLog || []).filter(a => a.id !== activityId) } : s);
+    persistLeague({ ...league, seasons });
+  };
+  // Bulk version for "clear all" actions (e.g. a player's whole transactions
+  // box) — one persist covering every season involved, rather than firing a
+  // separate save per entry.
+  const removeActivityItems = (items) => {
+    if (!league || !items || items.length === 0) return;
+    const idsBySeason = {};
+    items.forEach(({ id, seasonId }) => { (idsBySeason[seasonId] = idsBySeason[seasonId] || new Set()).add(id); });
+    const seasons = league.seasons.map(s => {
+      const ids = idsBySeason[s.id];
+      if (!ids) return s;
+      return { ...s, activityLog: (s.activityLog || []).filter(a => !ids.has(a.id)) };
+    });
     persistLeague({ ...league, seasons });
   };
   /* ---- Roblox identity (avatar id + username-change sync) ---- */
@@ -9086,7 +9166,7 @@ function App() {
     } else if (tab === 'compare') {
       body = <ComparePage season={activeSeason} standingsAll={standingsResult.all} teamsById={displayTeamsById} h2hMatrix={h2hMatrix} initialTeamId={compareInitialId} initialTeamBId={compareSecondId} onBack={backFromCompare} onOpenTeam={onOpenTeam} />;
     } else if (tab === 'player') {
-      body = <PlayerPage league={league} teamsById={displayTeamsById} playerName={selectedPlayerName} onBack={backFromPlayer} onOpenTeam={onOpenTeam} onOpenPlayerCompare={onOpenPlayerCompare} activeSeasonId={activeSeason && activeSeason.id} onRemoveActivity={removeActivityItem} onBackfillRobloxId={backfillRobloxId} onSyncRobloxRename={syncRobloxRename} onPlayerRenamed={setSelectedPlayerName} onSetPlayerBadges={setPlayerBadges} onAddPlayerAccolade={addPlayerAccolade} onRemovePlayerAccolade={removePlayerAccolade} onAddPlayerTeamCredit={addPlayerTeamCredit} onRemovePlayerTeamCredit={removePlayerTeamCredit} onUpsertManualStatLine={upsertManualStatLine} onDeleteManualStatLine={deleteManualStatLine} />;
+      body = <PlayerPage league={league} teamsById={displayTeamsById} playerName={selectedPlayerName} onBack={backFromPlayer} onOpenTeam={onOpenTeam} onOpenPlayerCompare={onOpenPlayerCompare} activeSeasonId={activeSeason && activeSeason.id} onRemoveActivity={removeActivityItem} onClearAllActivity={removeActivityItems} onBackfillRobloxId={backfillRobloxId} onSyncRobloxRename={syncRobloxRename} onPlayerRenamed={setSelectedPlayerName} onSetPlayerBadges={setPlayerBadges} onAddPlayerAccolade={addPlayerAccolade} onRemovePlayerAccolade={removePlayerAccolade} onAddPlayerTeamCredit={addPlayerTeamCredit} onRemovePlayerTeamCredit={removePlayerTeamCredit} onUpsertManualStatLine={upsertManualStatLine} onDeleteManualStatLine={deleteManualStatLine} />;
     } else if (tab === 'playerCompare') {
       body = <PlayerComparePage league={league} teamsById={displayTeamsById} initialNameA={comparePlayerAName} initialNameB={comparePlayerBName} onBack={backFromPlayerCompare} onOpenPlayer={onOpenPlayer} activeSeasonId={activeSeason && activeSeason.id} />;
     }
