@@ -2528,7 +2528,7 @@ function SeasonsView({ league, viewingSeasonId, onBack, onSwitch, onSetDefault, 
               <input type="checkbox" checked={copyRoster} onChange={e => setCopyRoster(e.target.checked)} style={{ accentColor: PRIMARY }} /> Bring over teams from the current season (stats reset to 0)
             </label>
             <label className="flex items-center gap-2 text-xs" style={{ color: CHALK_DIM }}>
-              <input type="checkbox" checked={tournamentMode} onChange={e => setTournamentMode(e.target.checked)} style={{ accentColor: PRIMARY }} /> WBC-style tournament (divisions as pool-play groups feeding a knockout stage — set up divisions after creating, in the Teams tab)
+              <input type="checkbox" checked={tournamentMode} onChange={e => setTournamentMode(e.target.checked)} style={{ accentColor: PRIMARY }} /> WBC-style tournament (divisions as pool-play groups feeding a knockout stage — set up divisions after creating, in the Teams tab. Also marks this as a tournament season, so its stats show on player pages without folding into career totals — toggle later in Settings if needed)
             </label>
             <button onClick={() => { if (newName.trim()) { onCreate(newName.trim(), copyRoster, tournamentMode); setNewName(''); setTournamentMode(false); } }} className="px-3 py-2 rounded font-bold text-sm flex items-center gap-1" style={{ background: PRIMARY, color: INK }}>
               <Plus size={16} /> Create season
@@ -3233,7 +3233,47 @@ function KpbImportPanel({ league, onRunImport }) {
   );
 }
 
-function SettingsView({ settings, saveSettings, theme, saveTheme, sport, season, teamsById, importGames, addManualGame, generateSchedule, league, onRunKpbImport }) {
+// Badge definitions are global to the whole site (like the team registry),
+// not per-league, so Site Owner is the only role that can create or delete
+// one — same restriction as creating a new team. Any admin can still assign
+// an already-created badge to a player from the player page itself.
+function BadgeManagerPanel({ league, onAddBadgeDef, onRemoveBadgeDef }) {
+  const { role } = useAuth();
+  const canManage = role === 'site_owner';
+  const [name, setName] = useState('');
+  const [icon, setIcon] = useState('');
+  const [color, setColor] = useState(GOLD);
+  const defs = (league && league.badgeDefs) || [];
+  if (!canManage && defs.length === 0) return null;
+  return (
+    <Panel className="overflow-hidden" style={{ borderColor: GOLD }}>
+      <SectionTitle accent={GOLD}>Player badges</SectionTitle>
+      <div className="px-4 pb-4 space-y-3 text-sm">
+        <p className="text-xs" style={{ color: CHALK_DIM }}>Custom badges Site Owner can create here, then hand out to any player from their player page — for callouts that don't fit the awards system (e.g. "Franchise Player", "Community MVP").</p>
+        {defs.length > 0 && (
+          <div className="flex flex-wrap gap-2">
+            {defs.map(b => (
+              <div key={b.id} className="flex items-center gap-1.5 pl-2 pr-1 py-1 rounded-full text-xs font-semibold" style={{ background: `${b.color}22`, color: b.color, border: `1px solid ${b.color}55` }}>
+                <span>{b.icon}</span><span>{b.name}</span>
+                {canManage && <button onClick={() => { if (confirm(`Delete badge "${b.name}"? Removes it from every player who has it.`)) onRemoveBadgeDef(b.id); }} className="p-0.5 rounded-full" style={{ color: b.color }}><X size={11} /></button>}
+              </div>
+            ))}
+          </div>
+        )}
+        {canManage && (
+          <div className="flex items-center gap-2">
+            <input value={icon} onChange={e => setIcon(e.target.value.slice(0, 4))} placeholder="🏆" className="w-14 bg-[#242424] border rounded px-2 py-2 text-sm text-center" style={{ borderColor: LINE, color: CHALK }} />
+            <input value={name} onChange={e => setName(e.target.value)} placeholder="Badge name" className="flex-1 bg-[#242424] border rounded px-3 py-2 text-sm" style={{ borderColor: LINE, color: CHALK }} />
+            <input type="color" value={color} onChange={e => setColor(e.target.value)} className="w-9 h-9 rounded cursor-pointer bg-transparent flex-shrink-0" style={{ border: `1px solid ${LINE}` }} />
+            <button onClick={() => { if (name.trim()) { onAddBadgeDef(name, icon, color); setName(''); setIcon(''); } }} disabled={!name.trim()} className="px-3 py-2 rounded font-bold text-sm disabled:opacity-40 flex-shrink-0" style={{ background: GOLD, color: INK }}><Plus size={16} /></button>
+          </div>
+        )}
+      </div>
+    </Panel>
+  );
+}
+
+function SettingsView({ settings, saveSettings, theme, saveTheme, sport, season, teamsById, importGames, addManualGame, generateSchedule, league, onRunKpbImport, onAddBadgeDef, onRemoveBadgeDef }) {
   const { hasPermission } = useAuth();
   const canManageSettings = hasPermission('manageSettings');
   const canManageSchedule = hasPermission('manageSchedule');
@@ -3246,6 +3286,10 @@ function SettingsView({ settings, saveSettings, theme, saveTheme, sport, season,
           <label className="flex items-center justify-between gap-2" style={{ color: CHALK }}>
             <span>Playoff spots<div className="text-[11px]" style={{ color: CHALK_DIM }}>How many teams make the postseason</div></span>
             <NumInput value={settings.playoffSpots} min={1} max={64} onChange={v => saveSettings({ ...settings, playoffSpots: v })} w="w-16" />
+          </label>
+          <label className="flex items-center justify-between gap-2" style={{ color: CHALK }}>
+            <span>Tournament season<div className="text-[11px]" style={{ color: CHALK_DIM }}>Stats still show up on player pages under this season, but aren't folded into anyone's combined career totals — for one-off events like a WBC-style tournament</div></span>
+            <input type="checkbox" checked={!!settings.isTournament} onChange={e => saveSettings({ ...settings, isTournament: e.target.checked })} style={{ accentColor: PRIMARY, width: 18, height: 18 }} />
           </label>
           <div className="flex items-center justify-between gap-2 flex-wrap" style={{ color: CHALK }}>
             <span>Playoff seeding<div className="text-[11px]" style={{ color: CHALK_DIM }}>Divisional gives each division's leader a guaranteed seed, then fills remaining spots with wild cards by record. WBC-style treats divisions as pool-play groups and advances the top finishers from every group before any wild cards (needs divisions set up in the Teams tab)</div></span>
@@ -3344,6 +3388,7 @@ function SettingsView({ settings, saveSettings, theme, saveTheme, sport, season,
         <ScheduleManagementPanel season={season} settings={settings} importGames={importGames} addManualGame={addManualGame} generateSchedule={generateSchedule} teamsById={teamsById} />
       )}
       {canManageSettings && <KpbImportPanel league={league} onRunImport={onRunKpbImport} />}
+      <BadgeManagerPanel league={league} onAddBadgeDef={onAddBadgeDef} onRemoveBadgeDef={onRemoveBadgeDef} />
       {canManageSettings && (
         <Panel>
           <SectionTitle>Odds display</SectionTitle>
@@ -3733,26 +3778,53 @@ function normalizeStatRow(row, extra) {
 
 // A "career" spans season-roster entries that each get their own internal
 // id (see addPlayer) — there's no persistent player identity in the data
-// model, so the only stable thread to pull a player's whole history
-// together is their name (their Roblox username, which the stat-import
-// flow also matches against). Returns every season/team this name appears
-// on, plus every per-game stat line saved against any of those entries.
+// model, so career history is pulled together by a closure match instead:
+// starting from the clicked name, pull in every roster/free-agent entry
+// anywhere in the league that shares a Roblox account id with an already-
+// matched entry, or whose current name or usernameHistory (past on-site
+// names, tracked when a Roblox rename is detected) overlaps an already-
+// matched entry's names. That lets a roster import that uses an old
+// username — or a season recorded before a rename was resolved — still
+// land on the same career instead of forking into a second identity.
+// Returns every season/team this identity appears on, plus every per-game
+// stat line saved against any of those entries.
 function getPlayerCareerData(league, playerName) {
   const norm = (s) => (s || '').trim().toLowerCase();
-  const target = norm(playerName);
-  const seasonsInfo = [];
+  const allEntries = [];
   (league.seasons || []).forEach(season => {
     (season.members || []).forEach(member => {
-      (member.roster || []).forEach(p => {
-        if (norm(p.name) === target) seasonsInfo.push({ season, teamId: member.teamId, playerId: p.id, player: p });
-      });
+      (member.roster || []).forEach(p => allEntries.push({ season, teamId: member.teamId, playerId: p.id, player: p }));
     });
-    (season.freeAgents || []).forEach(p => {
-      if (norm(p.name) === target) seasonsInfo.push({ season, teamId: null, playerId: p.id, player: p });
-    });
+    (season.freeAgents || []).forEach(p => allEntries.push({ season, teamId: null, playerId: p.id, player: p }));
   });
+  const namesOf = (p) => [norm(p.name), ...((p.usernameHistory || []).map(norm))];
+  const knownNames = new Set([norm(playerName)]);
+  const knownIds = new Set();
+  const matched = new Set();
+  let changed = true;
+  while (changed) {
+    changed = false;
+    allEntries.forEach((entry, i) => {
+      if (matched.has(i)) return;
+      const rid = entry.player.robloxUserId ? String(entry.player.robloxUserId) : null;
+      const names = namesOf(entry.player);
+      if ((rid && knownIds.has(rid)) || names.some(n => knownNames.has(n))) {
+        matched.add(i);
+        changed = true;
+        if (rid) knownIds.add(rid);
+        names.forEach(n => knownNames.add(n));
+      }
+    });
+  }
+  const seasonsInfo = allEntries.filter((_, i) => matched.has(i));
   const gameLog = [];
   seasonsInfo.forEach(info => {
+    // A season flagged as a one-off tournament (e.g. a WBC-style event)
+    // still shows its own stats on the player page — that happens
+    // naturally, every row below is tagged with its season same as always
+    // — but isTournament rows are excluded wherever totals get combined
+    // across seasons into "career" numbers (see regTotals/poTotals below).
+    const isTournamentSeason = !!(info.season.settings && info.season.settings.isTournament);
     (info.season.games || []).forEach(g => {
       if (g.isBye || g.isSpringTraining) return;
       ['home', 'away'].forEach(side => {
@@ -3769,6 +3841,7 @@ function getPlayerCareerData(league, playerName) {
           teamId: side === 'home' ? g.homeTeamId : g.awayTeamId,
           oppTeamId: side === 'home' ? g.awayTeamId : g.homeTeamId, side,
           gameId: g.id, date: g.date, isPlayoff: !!g.isPlayoff, isPlayIn: !!g.isPlayIn,
+          isTournament: isTournamentSeason,
         }));
       });
     });
@@ -3781,11 +3854,12 @@ function getPlayerCareerData(league, playerName) {
         seasonId: info.season.id, seasonName: info.season.name, teamId: info.teamId,
         oppTeamId: null, side: null, gameId: row.id, date: row.sourceLabel || 'Imported',
         isPlayoff: false, isPlayIn: false, isImport: true, sourceLabel: row.sourceLabel,
+        isTournament: isTournamentSeason,
       }));
     });
   });
   gameLog.sort((a, b) => (a.date || '').localeCompare(b.date || ''));
-  return { seasonsInfo, gameLog };
+  return { seasonsInfo, gameLog, knownNames: [...knownNames] };
 }
 
 function sumPlayerTotals(gameLog) {
@@ -5523,30 +5597,201 @@ function PlayerPitchingTable({ rows }) {
   );
 }
 
-function PlayerPage({ league, teamsById, playerName, onBack, onOpenTeam, onOpenPlayerCompare, activeSeasonId, onRemoveActivity, onBackfillRobloxId, onSyncRobloxRename, onPlayerRenamed }) {
-  const { hasPermission } = useAuth();
+const MANUAL_STAT_FIELDS = [
+  { key: 'g', label: 'G' }, { key: 'ab', label: 'AB' }, { key: 'r', label: 'R' }, { key: 'h', label: 'H' },
+  { key: 'hr', label: 'HR' }, { key: 'doubles', label: '2B' }, { key: 'triples', label: '3B' },
+  { key: 'rbi', label: 'RBI' }, { key: 'bb', label: 'BB' }, { key: 'so', label: 'SO' },
+  { key: 'ha', label: 'HA' }, { key: 'er', label: 'ER' }, { key: 'bbAllowed', label: 'BB (P)' },
+  { key: 'k', label: "K's" }, { key: 'hrAllowed', label: 'HR (P)' }, { key: 'e', label: 'E' },
+];
+// A compact add/edit form for one season stat line — used both for editing an
+// existing line (imported or manual) and for adding a brand-new manual one.
+// IP is entered directly in the app's box-score notation (".1"/".2" = thirds
+// of an inning) since that's what every other IP field in the app expects.
+function PlayerStatLineForm({ initial, onSave, onCancel }) {
+  const [vals, setVals] = useState(() => Object.fromEntries(MANUAL_STAT_FIELDS.map(f => [f.key, (initial && initial[f.key]) || 0])));
+  const [ip, setIp] = useState((initial && initial.ip) || '0.0');
+  const set = (k, v) => setVals(prev => ({ ...prev, [k]: v }));
+  return (
+    <div className="space-y-2 p-2 rounded" style={{ background: PANEL2, border: `1px solid ${LINE}` }}>
+      <div className="grid grid-cols-4 gap-1.5">
+        {MANUAL_STAT_FIELDS.map(f => (
+          <label key={f.key} className="flex flex-col items-center gap-0.5">
+            <span className="text-[9px] uppercase" style={{ color: CHALK_DIM }}>{f.label}</span>
+            <input type="number" value={vals[f.key]} onChange={e => set(f.key, Number(e.target.value) || 0)} className="w-full bg-[#242424] border rounded px-1 py-1 text-xs text-center" style={{ borderColor: LINE, color: CHALK }} />
+          </label>
+        ))}
+        <label className="flex flex-col items-center gap-0.5">
+          <span className="text-[9px] uppercase" style={{ color: CHALK_DIM }}>IP</span>
+          <input value={ip} onChange={e => setIp(e.target.value)} placeholder="5.1" className="w-full bg-[#242424] border rounded px-1 py-1 text-xs text-center" style={{ borderColor: LINE, color: CHALK }} />
+        </label>
+      </div>
+      <div className="flex gap-2">
+        <button onClick={() => onSave({ ...vals, ip })} className="px-2.5 py-1.5 rounded font-bold text-xs" style={{ background: PRIMARY, color: INK }}>Save</button>
+        <button onClick={onCancel} className="px-2.5 py-1.5 rounded text-xs" style={{ color: CHALK_DIM }}>Cancel</button>
+      </div>
+    </div>
+  );
+}
+
+// Site Owner's catch-all edit surface for a player: hand out custom badges,
+// add manual accolades/team credits (for anything the tracked roster/award
+// data doesn't cover), and add or correct a season's stat line directly.
+// Collapsed by default so it doesn't dominate the page for the common case
+// of just viewing stats.
+function PlayerEditPanel({ league, seasonsInfo, teamsById, playerBadges, playerAccolades, playerTeamCredits, primaryIdentityKey, onSetPlayerBadges, onAddPlayerAccolade, onRemovePlayerAccolade, onAddPlayerTeamCredit, onRemovePlayerTeamCredit, onUpsertManualStatLine, onDeleteManualStatLine }) {
+  const [open, setOpen] = useState(false);
+  const [accName, setAccName] = useState('');
+  const [accSeason, setAccSeason] = useState('');
+  const [tcTeamId, setTcTeamId] = useState('');
+  const [tcSeasonLabel, setTcSeasonLabel] = useState('');
+  const [editingLine, setEditingLine] = useState(null); // { seasonId, line } | { newSeasonId }
+  const badgeDefs = (league && league.badgeDefs) || [];
+  const badgeIdSet = new Set(playerBadges.map(b => b.id));
+  const toggleBadge = (id) => {
+    const next = badgeIdSet.has(id) ? [...badgeIdSet].filter(x => x !== id) : [...badgeIdSet, id];
+    onSetPlayerBadges(primaryIdentityKey, next);
+  };
+  const allStatLines = seasonsInfo.flatMap(info => (info.season.importedStatLines || []).filter(l => l.playerId === info.playerId).map(l => ({ ...l, seasonId: info.season.id, seasonName: info.season.name })));
+
+  if (!open) {
+    return <button onClick={() => setOpen(true)} className="w-full text-xs font-bold uppercase tracking-wide px-3 py-2 rounded-lg" style={{ background: PANEL2, color: PRIMARY, border: `1px solid ${LINE}` }}>Site Owner: edit player</button>;
+  }
+  return (
+    <Panel className="overflow-hidden" style={{ borderColor: PRIMARY }}>
+      <SectionTitle accent={PRIMARY} right={<button onClick={() => setOpen(false)} className="text-[11px] font-semibold" style={{ color: CHALK_DIM }}>Close</button>}>Site Owner: edit player</SectionTitle>
+      <div className="px-4 pb-4 space-y-4 text-sm">
+        <div>
+          <div className="text-xs font-semibold mb-1.5" style={{ color: CHALK }}>Badges</div>
+          {badgeDefs.length === 0 ? (
+            <p className="text-xs" style={{ color: CHALK_DIM }}>No badges created yet — add some in Settings.</p>
+          ) : (
+            <div className="flex flex-wrap gap-1.5">
+              {badgeDefs.map(b => {
+                const has = badgeIdSet.has(b.id);
+                return (
+                  <button key={b.id} onClick={() => toggleBadge(b.id)} className="flex items-center gap-1 px-2 py-1 rounded-full text-xs font-semibold" style={{ background: has ? `${b.color}33` : 'transparent', color: has ? b.color : CHALK_DIM, border: `1px solid ${has ? b.color : LINE}` }}>
+                    {b.icon} {b.name}
+                  </button>
+                );
+              })}
+            </div>
+          )}
+        </div>
+
+        <div>
+          <div className="text-xs font-semibold mb-1.5" style={{ color: CHALK }}>Accolades</div>
+          {playerAccolades.length > 0 && (
+            <div className="space-y-1 mb-2">
+              {playerAccolades.map(a => (
+                <div key={a.id} className="flex items-center justify-between text-xs" style={{ color: CHALK }}>
+                  <span>{a.name}{a.seasonName ? ` (${a.seasonName})` : ''}</span>
+                  <button onClick={() => onRemovePlayerAccolade(a._key, a.id)} style={{ color: NEGATIVE }}><X size={12} /></button>
+                </div>
+              ))}
+            </div>
+          )}
+          <div className="flex gap-1.5">
+            <input value={accName} onChange={e => setAccName(e.target.value)} placeholder="Accolade name" className="flex-1 bg-[#242424] border rounded px-2 py-1.5 text-xs" style={{ borderColor: LINE, color: CHALK }} />
+            <input value={accSeason} onChange={e => setAccSeason(e.target.value)} placeholder="Season (optional)" className="w-28 bg-[#242424] border rounded px-2 py-1.5 text-xs" style={{ borderColor: LINE, color: CHALK }} />
+            <button onClick={() => { if (accName.trim()) { onAddPlayerAccolade(primaryIdentityKey, accName, accSeason); setAccName(''); setAccSeason(''); } }} disabled={!accName.trim()} className="px-2.5 py-1.5 rounded font-bold text-xs disabled:opacity-40" style={{ background: PRIMARY, color: INK }}><Plus size={14} /></button>
+          </div>
+        </div>
+
+        <div>
+          <div className="text-xs font-semibold mb-1.5" style={{ color: CHALK }}>Extra team credits<div className="text-[10px] font-normal" style={{ color: CHALK_DIM }}>For teams not reflected in tracked roster history</div></div>
+          {playerTeamCredits.length > 0 && (
+            <div className="space-y-1 mb-2">
+              {playerTeamCredits.map(c => {
+                const t = teamsById[c.teamId];
+                return (
+                  <div key={c.id} className="flex items-center justify-between text-xs" style={{ color: CHALK }}>
+                    <span>{t ? t.name : 'Unknown team'}{c.seasonLabel ? ` — ${c.seasonLabel}` : ''}</span>
+                    <button onClick={() => onRemovePlayerTeamCredit(c._key, c.id)} style={{ color: NEGATIVE }}><X size={12} /></button>
+                  </div>
+                );
+              })}
+            </div>
+          )}
+          <div className="flex gap-1.5">
+            <select value={tcTeamId} onChange={e => setTcTeamId(e.target.value)} className="flex-1 bg-[#242424] border rounded px-2 py-1.5 text-xs" style={{ borderColor: LINE, color: CHALK }}>
+              <option value="" style={{ background: PANEL2, color: CHALK }}>Team…</option>
+              {Object.values(teamsById).map(t => <option key={t.id} value={t.id} style={{ background: PANEL2, color: CHALK }}>{t.name}</option>)}
+            </select>
+            <input value={tcSeasonLabel} onChange={e => setTcSeasonLabel(e.target.value)} placeholder="Season label" className="w-28 bg-[#242424] border rounded px-2 py-1.5 text-xs" style={{ borderColor: LINE, color: CHALK }} />
+            <button onClick={() => { if (tcTeamId) { onAddPlayerTeamCredit(primaryIdentityKey, tcTeamId, tcSeasonLabel, ''); setTcTeamId(''); setTcSeasonLabel(''); } }} disabled={!tcTeamId} className="px-2.5 py-1.5 rounded font-bold text-xs disabled:opacity-40" style={{ background: PRIMARY, color: INK }}><Plus size={14} /></button>
+          </div>
+        </div>
+
+        <div>
+          <div className="text-xs font-semibold mb-1.5" style={{ color: CHALK }}>Season stat lines</div>
+          <div className="space-y-2">
+            {allStatLines.map(l => (
+              editingLine && editingLine.line && editingLine.line.id === l.id ? (
+                <PlayerStatLineForm key={l.id} initial={l} onCancel={() => setEditingLine(null)} onSave={(fields) => { onUpsertManualStatLine(l.seasonId, l.playerId, fields); setEditingLine(null); }} />
+              ) : (
+                <div key={l.id} className="flex items-center justify-between text-xs px-2 py-1.5 rounded" style={{ background: PANEL2, color: CHALK }}>
+                  <span>{l.seasonName} <span style={{ color: CHALK_DIM }}>({l.sourceLabel || l.source})</span></span>
+                  <span className="flex items-center gap-2">
+                    <button onClick={() => setEditingLine({ seasonId: l.seasonId, line: l })} style={{ color: PRIMARY }}><Pencil size={12} /></button>
+                    <button onClick={() => onDeleteManualStatLine(l.seasonId, l.id)} style={{ color: NEGATIVE }}><X size={12} /></button>
+                  </span>
+                </div>
+              )
+            ))}
+            {seasonsInfo.length > 0 && (
+              editingLine && editingLine.newSeasonId ? (
+                <PlayerStatLineForm
+                  initial={null} onCancel={() => setEditingLine(null)}
+                  onSave={(fields) => { const info = seasonsInfo.find(i => i.season.id === editingLine.newSeasonId); if (info) onUpsertManualStatLine(info.season.id, info.playerId, fields); setEditingLine(null); }}
+                />
+              ) : (
+                <select
+                  value="" className="w-full bg-[#242424] border rounded px-2 py-1.5 text-xs" style={{ borderColor: LINE, color: CHALK }}
+                  onChange={e => { if (e.target.value) setEditingLine({ newSeasonId: e.target.value }); }}
+                >
+                  <option value="" style={{ background: PANEL2, color: CHALK }}>Add stat line for season…</option>
+                  {seasonsInfo.map(info => <option key={info.season.id} value={info.season.id} style={{ background: PANEL2, color: CHALK }}>{info.season.name}</option>)}
+                </select>
+              )
+            )}
+          </div>
+        </div>
+      </div>
+    </Panel>
+  );
+}
+
+function PlayerPage({ league, teamsById, playerName, onBack, onOpenTeam, onOpenPlayerCompare, activeSeasonId, onRemoveActivity, onBackfillRobloxId, onSyncRobloxRename, onPlayerRenamed, onSetPlayerBadges, onAddPlayerAccolade, onRemovePlayerAccolade, onAddPlayerTeamCredit, onRemovePlayerTeamCredit, onUpsertManualStatLine, onDeleteManualStatLine }) {
+  const { hasPermission, role } = useAuth();
   const canManage = hasPermission('manageRosters');
-  const { seasonsInfo, gameLog } = useMemo(() => getPlayerCareerData(league, playerName), [league, playerName]);
+  const isSiteOwner = role === 'site_owner';
+  const { seasonsInfo, gameLog, knownNames } = useMemo(() => getPlayerCareerData(league, playerName), [league, playerName]);
   // The most recent roster/free-agent entry for this name carries the
   // Roblox account id, if one's been resolved yet — looking avatars up by id
   // instead of username means a rename doesn't break the avatar, and lets
   // the effect below notice the rename by comparing the id's current live
   // username against what's stored.
   const latestRobloxUserId = seasonsInfo.length > 0 ? seasonsInfo[seasonsInfo.length - 1].player.robloxUserId : null;
-  const avatar = useRobloxAvatar(playerName, latestRobloxUserId);
+  // The name this identity is known by most recently — used instead of the
+  // raw playerName prop so a click that landed here via an old username
+  // (an old transaction log entry, a stale link) doesn't get compared
+  // against itself and mistaken for a fresh rename.
+  const latestName = seasonsInfo.length > 0 ? seasonsInfo[seasonsInfo.length - 1].player.name : playerName;
+  const avatar = useRobloxAvatar(latestName, latestRobloxUserId);
   useEffect(() => {
     // Only an admin's visit actually writes anything (kv_store only accepts
     // authenticated writes anyway) — a logged-out viewer just keeps seeing
     // the name as currently stored until an admin's visit syncs it.
     if (avatar.loading || !canManage) return;
     if (!latestRobloxUserId && avatar.userId) {
-      if (onBackfillRobloxId) onBackfillRobloxId(playerName, avatar.userId);
-    } else if (latestRobloxUserId && avatar.resolvedUsername && avatar.resolvedUsername !== playerName) {
+      if (onBackfillRobloxId) onBackfillRobloxId(latestName, avatar.userId);
+    } else if (latestRobloxUserId && avatar.resolvedUsername && avatar.resolvedUsername !== latestName) {
       if (onSyncRobloxRename) onSyncRobloxRename(latestRobloxUserId, avatar.resolvedUsername);
       if (onPlayerRenamed) onPlayerRenamed(avatar.resolvedUsername);
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [avatar.loading, avatar.userId, avatar.resolvedUsername, latestRobloxUserId, playerName, canManage]);
+  }, [avatar.loading, avatar.userId, avatar.resolvedUsername, latestRobloxUserId, latestName, canManage]);
   // Activity log entries don't carry a playerId (they're free-text), so a
   // name match is the only way to find "this player's" transactions —
   // consistent with how the rest of the page threads career history
@@ -5554,13 +5799,16 @@ function PlayerPage({ league, teamsById, playerName, onBack, onOpenTeam, onOpenP
   // active season, since onRemoveActivity only knows how to edit that one.
   const playerTransactions = useMemo(() => {
     const norm = (s) => (s || '').trim().toLowerCase();
-    const target = norm(playerName);
+    // Match against every name this identity has ever gone by (not just
+    // whichever name got clicked to land here) so a rename doesn't orphan
+    // older transaction log entries that still mention the old name.
+    const targets = knownNames && knownNames.length ? knownNames : [norm(playerName)];
     const out = [];
     (league.seasons || []).forEach(season => {
-      (season.activityLog || []).forEach(a => { if (norm(a.text).includes(target)) out.push({ ...a, seasonId: season.id, seasonName: season.name }); });
+      (season.activityLog || []).forEach(a => { const text = norm(a.text); if (targets.some(t => text.includes(t))) out.push({ ...a, seasonId: season.id, seasonName: season.name }); });
     });
     return out.sort((a, b) => (b.at || 0) - (a.at || 0));
-  }, [league, playerName]);
+  }, [league, playerName, knownNames]);
 
   if (seasonsInfo.length === 0) {
     return (
@@ -5582,25 +5830,30 @@ function PlayerPage({ league, teamsById, playerName, onBack, onOpenTeam, onOpenP
   // roster bookkeeping.
   const seasonSplits = seasonsInfo.map(info => {
     const rows = gameLog.filter(r => r.seasonId === info.season.id);
+    const isTournament = !!(info.season.settings && info.season.settings.isTournament);
     const teamIds = [...new Set(rows.map(r => r.teamId))];
     const perTeam = teamIds.length > 1 ? teamIds.map(teamId => {
       const teamRows = rows.filter(r => r.teamId === teamId);
       return { teamId, reg: sumPlayerTotals(teamRows.filter(r => !r.isPlayoff)), po: sumPlayerTotals(teamRows.filter(r => r.isPlayoff)) };
     }) : null;
-    return { seasonName: info.season.name, reg: sumPlayerTotals(rows.filter(r => !r.isPlayoff)), po: sumPlayerTotals(rows.filter(r => r.isPlayoff)), perTeam };
+    return { seasonName: info.season.name, isTournament, reg: sumPlayerTotals(rows.filter(r => !r.isPlayoff)), po: sumPlayerTotals(rows.filter(r => r.isPlayoff)), perTeam };
   });
+  // Tournament-season rows still show up here (tagged), but are marked so
+  // the "Total" row below can skip them — a tournament shows on the player
+  // page without folding into anyone's combined career totals.
   const expandSeasonRows = (phase, hasStat) => {
     const rows = [];
     seasonSplits.forEach(s => {
+      const tag = s.isTournament ? ' (Tournament)' : '';
       if (s.perTeam) {
         const qualifying = s.perTeam.filter(pt => hasStat(pt[phase]));
         qualifying.forEach(pt => {
           const t = teamsById[pt.teamId];
-          rows.push({ label: `${s.seasonName} — ${t ? teamAbbr(t) : 'FA'}`, totals: pt[phase] });
+          rows.push({ label: `${s.seasonName}${tag} — ${t ? teamAbbr(t) : 'FA'}`, totals: pt[phase], isTournament: s.isTournament });
         });
-        if (qualifying.length > 1 && hasStat(s[phase])) rows.push({ label: `${s.seasonName} — Combined`, totals: s[phase], isTotal: true });
+        if (qualifying.length > 1 && hasStat(s[phase])) rows.push({ label: `${s.seasonName}${tag} — Combined`, totals: s[phase], isTotal: true, isTournament: s.isTournament });
       } else if (hasStat(s[phase])) {
-        rows.push({ label: s.seasonName, totals: s[phase] });
+        rows.push({ label: `${s.seasonName}${tag}`, totals: s[phase], isTournament: s.isTournament });
       }
     });
     return rows;
@@ -5609,12 +5862,13 @@ function PlayerPage({ league, teamsById, playerName, onBack, onOpenTeam, onOpenP
   const regPitchingRows = expandSeasonRows('reg', t => t.outs > 0);
   const poBattingRows = expandSeasonRows('po', t => t.ab > 0);
   const poPitchingRows = expandSeasonRows('po', t => t.outs > 0);
-  const regTotals = sumPlayerTotals(gameLog.filter(r => !r.isPlayoff));
-  const poTotals = sumPlayerTotals(gameLog.filter(r => r.isPlayoff));
-  if (regBattingRows.length > 1) regBattingRows.push({ label: 'Total', totals: regTotals, isTotal: true });
-  if (regPitchingRows.length > 1) regPitchingRows.push({ label: 'Total', totals: regTotals, isTotal: true });
-  if (poBattingRows.length > 1) poBattingRows.push({ label: 'Total', totals: poTotals, isTotal: true });
-  if (poPitchingRows.length > 1) poPitchingRows.push({ label: 'Total', totals: poTotals, isTotal: true });
+  const regTotals = sumPlayerTotals(gameLog.filter(r => !r.isPlayoff && !r.isTournament));
+  const poTotals = sumPlayerTotals(gameLog.filter(r => r.isPlayoff && !r.isTournament));
+  const careerRowCount = (rows) => rows.filter(r => !r.isTournament).length;
+  if (careerRowCount(regBattingRows) > 1) regBattingRows.push({ label: 'Total', totals: regTotals, isTotal: true });
+  if (careerRowCount(regPitchingRows) > 1) regPitchingRows.push({ label: 'Total', totals: regTotals, isTotal: true });
+  if (careerRowCount(poBattingRows) > 1) poBattingRows.push({ label: 'Total', totals: poTotals, isTotal: true });
+  if (careerRowCount(poPitchingRows) > 1) poPitchingRows.push({ label: 'Total', totals: poTotals, isTotal: true });
   // Advanced rate stats below are regular-season only — postseason samples
   // are usually too small for OPS/ERA/WHIP etc. to mean much on their own,
   // and the per-season playoff tables above already show raw playoff lines.
@@ -5636,8 +5890,28 @@ function PlayerPage({ league, teamsById, playerName, onBack, onOpenTeam, onOpenP
   });
 
   const latest = seasonsInfo[seasonsInfo.length - 1];
+  // Show whichever name this identity is known by most recently, not
+  // necessarily whatever name was clicked to land here (an old transaction
+  // log entry or a stale link could point at a since-renamed username).
+  const displayName = latest.player.name;
+  const normName = (s) => (s || '').trim().toLowerCase();
   const latestTeam = teamsById[latest.teamId];
   const color = latestTeam ? teamColor(latestTeam) : PRIMARY;
+  // Badges/accolades/team-credits are keyed by identity (Roblox id when
+  // known, else normalized name) rather than by any one season's playerId
+  // — reads union every key this identity has ever been known by so an
+  // entry written before an id was linked still surfaces afterward.
+  const identityLookupKeys = [...new Set([...(latestRobloxUserId ? [String(latestRobloxUserId)] : []), ...(knownNames || [])])];
+  const primaryIdentityKey = latestRobloxUserId ? String(latestRobloxUserId) : normName(displayName);
+  const profiles = league.playerProfiles || {};
+  const playerBadgeIds = [...new Set(identityLookupKeys.flatMap(k => (profiles[k] && profiles[k].badges) || []))];
+  // Each entry keeps track of which identity key it's actually stored
+  // under (_key) — an identity can accumulate entries under more than one
+  // key over time (e.g. a name-key from before a Roblox id was linked), so
+  // removal has to target the key the entry really lives in.
+  const playerAccolades = identityLookupKeys.flatMap(k => ((profiles[k] && profiles[k].accolades) || []).map(a => ({ ...a, _key: k })));
+  const playerTeamCredits = identityLookupKeys.flatMap(k => ((profiles[k] && profiles[k].teamCredits) || []).map(c => ({ ...c, _key: k })));
+  const playerBadges = playerBadgeIds.map(id => (league.badgeDefs || []).find(b => b.id === id)).filter(Boolean);
   // Game-by-game highlight sections don't make sense for an imported season
   // total (it's not one game), so those are summed into the season/career
   // totals above but left out of anything framed as a single performance.
@@ -5646,27 +5920,41 @@ function PlayerPage({ league, teamsById, playerName, onBack, onOpenTeam, onOpenP
   const notable = computePlayerNotableGames(gameOnlyLog);
   const topPerformances = [...gameOnlyLog].map(row => ({ row, score: playerGameScore(row) })).sort((a, b) => b.score - a.score).slice(0, 5);
   const recentGames = [...gameOnlyLog].slice(-10).reverse();
+  const careerLog = gameLog.filter(r => !r.isTournament);
   const trendData = (() => {
     if (hasBatting) {
       let cumH = 0, cumAB = 0;
-      return gameLog.map((row, i) => { cumH += row.h; cumAB += row.ab; return { i: i + 1, value: cumAB > 0 ? cumH / cumAB : 0 }; });
+      return careerLog.map((row, i) => { cumH += row.h; cumAB += row.ab; return { i: i + 1, value: cumAB > 0 ? cumH / cumAB : 0 }; });
     }
     let cumER = 0, cumOuts = 0;
-    return gameLog.map((row, i) => { cumER += row.er; cumOuts += ipDisplayToOuts(row.ip); return { i: i + 1, value: cumOuts > 0 ? (cumER * 27) / cumOuts : 0 }; });
+    return careerLog.map((row, i) => { cumER += row.er; cumOuts += ipDisplayToOuts(row.ip); return { i: i + 1, value: cumOuts > 0 ? (cumER * 27) / cumOuts : 0 }; });
   })();
 
   const awards = [];
-  const normName = (s) => (s || '').trim().toLowerCase();
+  const nameTargets = knownNames && knownNames.length ? knownNames : [normName(playerName)];
   seasonsInfo.forEach(info => {
     const winners = info.season.awardWinners || {};
     Object.entries(winners).forEach(([awardId, raw]) => {
-      const isThisPlayer = normalizeAwardWinners(raw).some(w => w.type === 'player' && (w.playerId === info.playerId || (!w.playerId && w.name && normName(w.name) === normName(playerName))));
+      const isThisPlayer = normalizeAwardWinners(raw).some(w => w.type === 'player' && (w.playerId === info.playerId || (!w.playerId && w.name && nameTargets.includes(normName(w.name)))));
       if (isThisPlayer) {
         const def = (league.awardDefs || []).find(a => a.id === awardId);
         if (def) awards.push({ name: def.name, seasonName: info.season.name });
       }
     });
   });
+  // A player rostered on a season's championship team, even briefly before
+  // a trade, gets that credited here automatically — teamsPlayedOn already
+  // has the per-season/per-team breakdown worked out.
+  teamsPlayedOn.forEach(entry => {
+    if (entry.teamId && entry.season.championTeamId === entry.teamId) {
+      const t = teamsById[entry.teamId];
+      awards.push({ name: `${t ? t.name : 'Team'} — League Champion`, seasonName: entry.season.name, isChampionship: true });
+    }
+  });
+  // Site Owner's manually-added accolades (for anything that doesn't fit
+  // the season awards system) — stored per identity, unioned across every
+  // key this identity has been known by (see identityLookupKeys below).
+  (playerAccolades || []).forEach(a => awards.push({ name: a.name, seasonName: a.seasonName, id: a.id, isManual: true, _key: a._key }));
 
   const GameRef = ({ row }) => {
     const opp = teamsById[row.oppTeamId];
@@ -5689,16 +5977,36 @@ function PlayerPage({ league, teamsById, playerName, onBack, onOpenTeam, onOpenP
             )}
           </div>
           <div className="relative flex-1 min-w-0">
-            <h2 className="font-head text-2xl sm:text-3xl font-bold uppercase tracking-tight truncate" style={{ color: '#fff', textShadow: '0 2px 8px rgba(0,0,0,0.4)' }}>{playerName}</h2>
+            <h2 className="font-head text-2xl sm:text-3xl font-bold uppercase tracking-tight truncate" style={{ color: '#fff', textShadow: '0 2px 8px rgba(0,0,0,0.4)' }}>{displayName}</h2>
             <div className="flex items-center gap-2 mt-1 flex-wrap">
               {latestTeam ? <button onClick={() => onOpenTeam(latest.teamId)} className="flex items-center gap-1.5 text-sm font-semibold" style={{ color: '#fff' }}><TeamMark team={latestTeam} size={16} /> {latestTeam.name}</button> : <span className="text-sm font-semibold" style={{ color: 'rgba(255,255,255,0.85)' }}>Free Agent</span>}
               {latest.player.number && <span className="text-xs font-mono" style={{ color: 'rgba(255,255,255,0.75)' }}>#{latest.player.number}</span>}
               {latest.player.position && <span className="text-xs" style={{ color: 'rgba(255,255,255,0.75)' }}>{latest.player.position}</span>}
             </div>
+            {playerBadges.length > 0 && (
+              <div className="flex items-center gap-1.5 mt-2 flex-wrap">
+                {playerBadges.map(b => (
+                  <span key={b.id} title={b.name} className="flex items-center gap-1 px-2 py-0.5 rounded-full text-[11px] font-semibold" style={{ background: 'rgba(0,0,0,0.35)', color: '#fff', border: '1px solid rgba(255,255,255,0.35)' }}>
+                    <span>{b.icon}</span><span>{b.name}</span>
+                  </span>
+                ))}
+              </div>
+            )}
           </div>
-          <button onClick={() => onOpenPlayerCompare(playerName)} className="relative flex items-center gap-1 text-xs font-semibold flex-shrink-0 px-2 py-1 rounded-full" style={{ color: '#fff', background: 'rgba(0,0,0,0.3)' }}><BarChart3 size={13} /> Compare</button>
+          <button onClick={() => onOpenPlayerCompare(displayName)} className="relative flex items-center gap-1 text-xs font-semibold flex-shrink-0 px-2 py-1 rounded-full" style={{ color: '#fff', background: 'rgba(0,0,0,0.3)' }}><BarChart3 size={13} /> Compare</button>
         </div>
       </div>
+
+      {isSiteOwner && (
+        <PlayerEditPanel
+          league={league} seasonsInfo={seasonsInfo} teamsById={teamsById}
+          playerBadges={playerBadges} playerAccolades={playerAccolades} playerTeamCredits={playerTeamCredits}
+          primaryIdentityKey={primaryIdentityKey}
+          onSetPlayerBadges={onSetPlayerBadges} onAddPlayerAccolade={onAddPlayerAccolade} onRemovePlayerAccolade={onRemovePlayerAccolade}
+          onAddPlayerTeamCredit={onAddPlayerTeamCredit} onRemovePlayerTeamCredit={onRemovePlayerTeamCredit}
+          onUpsertManualStatLine={onUpsertManualStatLine} onDeleteManualStatLine={onDeleteManualStatLine}
+        />
+      )}
 
       {gameLog.length === 0 ? (
         <>
@@ -5713,6 +6021,16 @@ function PlayerPage({ league, teamsById, playerName, onBack, onOpenTeam, onOpenP
                     {t && <TeamMark team={t} size={18} />}
                     <span className="flex-1 text-sm font-semibold truncate" style={{ color: CHALK }}>{t ? t.name : (isFA ? 'Free Agent' : 'Unknown team')}</span>
                     <span className="text-xs flex-shrink-0" style={{ color: CHALK_DIM }}>{entry.season.name}</span>
+                  </button>
+                );
+              })}
+              {playerTeamCredits.map((c, i) => {
+                const t = teamsById[c.teamId];
+                return (
+                  <button key={`tc-${c.id}`} onClick={() => t && onOpenTeam(c.teamId)} className="w-full flex items-center gap-2 px-2 py-2 text-left" style={{ borderTop: (teamsPlayedOn.length + i) > 0 ? `1px solid ${LINE}` : 'none' }}>
+                    {t && <TeamMark team={t} size={18} />}
+                    <span className="flex-1 text-sm font-semibold truncate" style={{ color: CHALK }}>{t ? t.name : 'Unknown team'}</span>
+                    <span className="text-xs flex-shrink-0" style={{ color: CHALK_DIM }}>{c.seasonLabel || 'Manually added'}</span>
                   </button>
                 );
               })}
@@ -5838,6 +6156,16 @@ function PlayerPage({ league, teamsById, playerName, onBack, onOpenTeam, onOpenP
                   </button>
                 );
               })}
+              {playerTeamCredits.map((c, i) => {
+                const t = teamsById[c.teamId];
+                return (
+                  <button key={`tc-${c.id}`} onClick={() => t && onOpenTeam(c.teamId)} className="w-full flex items-center gap-2 px-2 py-2 text-left" style={{ borderTop: (teamsPlayedOn.length + i) > 0 ? `1px solid ${LINE}` : 'none' }}>
+                    {t && <TeamMark team={t} size={18} />}
+                    <span className="flex-1 text-sm font-semibold truncate" style={{ color: CHALK }}>{t ? t.name : 'Unknown team'}</span>
+                    <span className="text-xs flex-shrink-0" style={{ color: CHALK_DIM }}>{c.seasonLabel || 'Manually added'}</span>
+                  </button>
+                );
+              })}
             </div>
           </Panel>
 
@@ -5857,7 +6185,10 @@ function PlayerPage({ league, teamsById, playerName, onBack, onOpenTeam, onOpenP
               <SectionTitle accent={GOLD}>Awards</SectionTitle>
               <div className="px-4 pb-4 space-y-1">
                 {awards.map((a, i) => (
-                  <div key={i} className="flex items-center gap-2 text-sm" style={{ color: GOLD }}><Crown size={14} /> {a.name} <span style={{ color: CHALK_DIM }}>({a.seasonName})</span></div>
+                  <div key={i} className="flex items-center justify-between gap-2 text-sm" style={{ color: GOLD }}>
+                    <span className="flex items-center gap-2"><Crown size={14} /> {a.name} {a.seasonName && <span style={{ color: CHALK_DIM }}>({a.seasonName})</span>}</span>
+                    {a.isManual && isSiteOwner && <button onClick={() => onRemovePlayerAccolade(a._key, a.id)} style={{ color: CHALK_DIM }}><X size={13} /></button>}
+                  </div>
                 ))}
               </div>
             </Panel>
@@ -5945,7 +6276,9 @@ function PlayerComparePage({ league, teamsById, initialNameA, initialNameB, onBa
 
   const dataA = getPlayerCareerData(league, nameA);
   const dataB = getPlayerCareerData(league, nameB);
-  const totalsA = sumPlayerTotals(dataA.gameLog), totalsB = sumPlayerTotals(dataB.gameLog);
+  // Tournament-season stats don't count toward career totals here either,
+  // same as the player page's own combined totals.
+  const totalsA = sumPlayerTotals(dataA.gameLog.filter(r => !r.isTournament)), totalsB = sumPlayerTotals(dataB.gameLog.filter(r => !r.isTournament));
   const battingA = computeBattingAdvanced(totalsA), battingB = computeBattingAdvanced(totalsB);
   const pitchingA = computePitchingAdvanced(totalsA), pitchingB = computePitchingAdvanced(totalsB);
   const latestA = dataA.seasonsInfo[dataA.seasonsInfo.length - 1];
@@ -7605,7 +7938,7 @@ function App() {
   const createSeason = (name, copyRoster, tournamentMode) => {
     if (!league) return;
     const s = newSeason(name);
-    if (tournamentMode) s.settings = { ...s.settings, playoffFormat: 'wbc' };
+    if (tournamentMode) s.settings = { ...s.settings, playoffFormat: 'wbc', isTournament: true };
     if (copyRoster && activeSeason) s.members = activeSeason.members.map(m => ({ teamId: m.teamId, scheduleName: m.scheduleName, baselineW: 0, baselineL: 0, baselineRF: 0, baselineRA: 0, active: m.active }));
     const lg = { ...league, seasons: [...league.seasons, s], activeSeasonId: s.id };
     persistLeague(lg); setSelectedTeamId(null); setRoundIdx(0); setTab('home');
@@ -7914,7 +8247,26 @@ function App() {
       // the last row if a name appears twice in one import.
       const seen = new Map();
       block.players.forEach(pl => { if (pl.name) seen.set(pl.name.toLowerCase(), pl); });
-      const newRoster = [...seen.values()].map(pl => ({ ...newPlayer(pl.name, pl.starLevel), role: pl.role }));
+      // A returning player keeps their existing record (id, robloxUserId,
+      // usernameHistory, banned/suspended state, ...) instead of getting
+      // recreated from scratch — matched by their current name OR any past
+      // username, so a sheet that still uses someone's old on-site name
+      // (before a rename synced) reuses that same identity rather than
+      // forking a second one. If the match came through an old name, the
+      // already-resolved current name wins over the sheet's stale one.
+      const existingRoster = (membersDraft[memberIdx] && membersDraft[memberIdx].roster) || [];
+      const normPN = (s) => (s || '').trim().toLowerCase();
+      const findExisting = (name) => {
+        const n = normPN(name);
+        return existingRoster.find(p => normPN(p.name) === n || (p.usernameHistory || []).some(h => normPN(h) === n));
+      };
+      const newRoster = [...seen.values()].map(pl => {
+        const existing = findExisting(pl.name);
+        if (existing) {
+          return { ...existing, name: normPN(existing.name) === normPN(pl.name) ? pl.name : existing.name, starLevel: pl.starLevel, role: pl.role };
+        }
+        return { ...newPlayer(pl.name, pl.starLevel), role: pl.role };
+      });
       membersDraft = membersDraft.map((m, i) => i === memberIdx ? { ...m, roster: newRoster } : m);
     }
 
@@ -8132,7 +8484,15 @@ function App() {
     if (!league || !robloxUserId || !newName) return;
     let changed = false;
     const renameIfMatch = (p) => {
-      if (p.robloxUserId === robloxUserId && p.name !== newName) { changed = true; return { ...p, name: newName }; }
+      if (p.robloxUserId === robloxUserId && p.name !== newName) {
+        changed = true;
+        // Keep every past name this identity has shown up under — a roster
+        // import (or an old activity log entry) using an old username still
+        // needs to resolve back to this same player instead of forking off
+        // a second identity.
+        const history = [...new Set([...(p.usernameHistory || []), p.name])];
+        return { ...p, name: newName, usernameHistory: history };
+      }
       return p;
     };
     const seasons = league.seasons.map(s => ({
@@ -8143,6 +8503,82 @@ function App() {
     if (!changed) return;
     persistLeague({ ...league, seasons });
   };
+
+  /* ---- player badges, accolades, team credits, manual stat lines ---- */
+  // None of these are tied to a season-scoped roster/free-agent id — they
+  // belong to the player's whole career — so they're keyed the same way
+  // getPlayerCareerData resolves identity: preferably their Roblox account
+  // id (stable across renames), falling back to their normalized current
+  // name when no id is known yet. Lookups on the player page union every
+  // key this identity has ever been known by (id + every past/current
+  // name), so an entry written under an old name-key before an id existed
+  // still surfaces once the id is linked — no migration needed.
+  const setBadgeDefs = (defs) => { if (league) persistLeague({ ...league, badgeDefs: defs }); };
+  const addBadgeDef = (name, icon, color) => {
+    if (!league || !name.trim()) return;
+    const def = { id: uid('badge'), name: name.trim(), icon: (icon || '').trim() || '★', color: color || GOLD };
+    persistLeague({ ...league, badgeDefs: [...(league.badgeDefs || []), def] });
+  };
+  const removeBadgeDef = (badgeId) => {
+    if (!league) return;
+    persistLeague({ ...league, badgeDefs: (league.badgeDefs || []).filter(b => b.id !== badgeId) });
+  };
+  const setPlayerBadges = (identityKey, badgeIds) => {
+    if (!league || !identityKey) return;
+    persistLeague({ ...league, playerProfiles: { ...(league.playerProfiles || {}), [identityKey]: { ...((league.playerProfiles || {})[identityKey] || {}), badges: badgeIds } } });
+  };
+  const addPlayerAccolade = (identityKey, name, seasonName) => {
+    if (!league || !identityKey || !name.trim()) return;
+    const profiles = league.playerProfiles || {};
+    const existing = profiles[identityKey] || {};
+    const accolades = [...(existing.accolades || []), { id: uid('acc'), name: name.trim(), seasonName: (seasonName || '').trim() }];
+    persistLeague({ ...league, playerProfiles: { ...profiles, [identityKey]: { ...existing, accolades } } });
+  };
+  const removePlayerAccolade = (identityKey, accoladeId) => {
+    if (!league) return;
+    const profiles = league.playerProfiles || {};
+    const existing = profiles[identityKey];
+    if (!existing) return;
+    persistLeague({ ...league, playerProfiles: { ...profiles, [identityKey]: { ...existing, accolades: (existing.accolades || []).filter(a => a.id !== accoladeId) } } });
+  };
+  const addPlayerTeamCredit = (identityKey, teamId, seasonLabel, note) => {
+    if (!league || !identityKey || !teamId) return;
+    const profiles = league.playerProfiles || {};
+    const existing = profiles[identityKey] || {};
+    const teamCredits = [...(existing.teamCredits || []), { id: uid('tc'), teamId, seasonLabel: (seasonLabel || '').trim(), note: (note || '').trim() }];
+    persistLeague({ ...league, playerProfiles: { ...profiles, [identityKey]: { ...existing, teamCredits } } });
+  };
+  const removePlayerTeamCredit = (identityKey, creditId) => {
+    if (!league) return;
+    const profiles = league.playerProfiles || {};
+    const existing = profiles[identityKey];
+    if (!existing) return;
+    persistLeague({ ...league, playerProfiles: { ...profiles, [identityKey]: { ...existing, teamCredits: (existing.teamCredits || []).filter(c => c.id !== creditId) } } });
+  };
+  // Manual stat lines reuse the exact same season.importedStatLines shape
+  // the hcbb.info import writes (source distinguishes them: 'manual' vs
+  // 'hcbb-kpb'), so they automatically flow through Stat Leaders and career
+  // totals with no extra plumbing. Keyed on (source, playerId) — a season
+  // only ever has one manual line per player, replaced on edit rather than
+  // duplicated.
+  const upsertManualStatLine = (seasonId, playerId, fields) => {
+    if (!league || !seasonId || !playerId) return;
+    const seasons = league.seasons.map(s => {
+      if (s.id !== seasonId) return s;
+      const lines = [...(s.importedStatLines || [])];
+      const idx = lines.findIndex(l => l.source === 'manual' && l.playerId === playerId);
+      const line = { id: idx >= 0 ? lines[idx].id : uid('imp'), playerId, source: 'manual', sourceSeason: 'manual', sourceLabel: 'Manual entry', importedAt: Date.now(), ...fields };
+      if (idx >= 0) lines[idx] = line; else lines.push(line);
+      return { ...s, importedStatLines: lines };
+    });
+    persistLeague({ ...league, seasons });
+  };
+  const deleteManualStatLine = (seasonId, lineId) => {
+    if (!league) return;
+    const seasons = league.seasons.map(s => s.id === seasonId ? { ...s, importedStatLines: (s.importedStatLines || []).filter(l => l.id !== lineId) } : s);
+    persistLeague({ ...league, seasons });
+  };
+
   /* ---- league info & staff ---- */
   const updateLeagueInfo = (patch) => {
     if (!league) return;
@@ -8505,13 +8941,13 @@ function App() {
     } else if (tab === 'info') {
       body = <LeagueInfoView league={league} updateLeagueInfo={updateLeagueInfo} addStaffMember={addStaffMember} updateStaffMember={updateStaffMember} removeStaffMember={removeStaffMember} />;
     } else if (tab === 'settings') {
-      body = <SettingsView settings={activeSeason.settings} saveSettings={saveSettings} theme={theme} saveTheme={saveTheme} sport={sport} season={activeSeason} teamsById={teamsById} importGames={importGames} addManualGame={addManualGame} generateSchedule={generateSchedule} league={league} onRunKpbImport={runKpbImport} />;
+      body = <SettingsView settings={activeSeason.settings} saveSettings={saveSettings} theme={theme} saveTheme={saveTheme} sport={sport} season={activeSeason} teamsById={teamsById} importGames={importGames} addManualGame={addManualGame} generateSchedule={generateSchedule} league={league} onRunKpbImport={runKpbImport} onAddBadgeDef={addBadgeDef} onRemoveBadgeDef={removeBadgeDef} />;
     } else if (tab === 'team') {
       body = <TeamPage season={activeSeason} settings={activeSeason.settings} team={selectedTeamMerged} standingsRow={selectedStandingsRow} teamsById={displayTeamsById} h2hMatrix={h2hMatrix} championshipCount={selectedTeamId ? (teamChampionshipCounts[selectedTeamId] || 0) : 0} onBack={backFromTeam} onOpenGlobalHistory={(id) => openTeamHistory(id, 'league')} onOpenCompare={onOpenCompare} updatePlayerField={updatePlayerField} removePlayer={removePlayer} addPlayer={addPlayer} addPlayersBulk={addPlayersBulk} tradePlayer={tradePlayer} updateMemberField={updateMemberField} setPlayerSuspended={setPlayerSuspended} setPlayerBanned={setPlayerBanned} onOpenPlayer={onOpenPlayer} onRebrand={rebrandTeam} onClearRebrand={clearRebrand} />;
     } else if (tab === 'compare') {
       body = <ComparePage season={activeSeason} standingsAll={standingsResult.all} teamsById={displayTeamsById} h2hMatrix={h2hMatrix} initialTeamId={compareInitialId} initialTeamBId={compareSecondId} onBack={backFromCompare} onOpenTeam={onOpenTeam} />;
     } else if (tab === 'player') {
-      body = <PlayerPage league={league} teamsById={displayTeamsById} playerName={selectedPlayerName} onBack={backFromPlayer} onOpenTeam={onOpenTeam} onOpenPlayerCompare={onOpenPlayerCompare} activeSeasonId={activeSeason && activeSeason.id} onRemoveActivity={removeActivityItem} onBackfillRobloxId={backfillRobloxId} onSyncRobloxRename={syncRobloxRename} onPlayerRenamed={setSelectedPlayerName} />;
+      body = <PlayerPage league={league} teamsById={displayTeamsById} playerName={selectedPlayerName} onBack={backFromPlayer} onOpenTeam={onOpenTeam} onOpenPlayerCompare={onOpenPlayerCompare} activeSeasonId={activeSeason && activeSeason.id} onRemoveActivity={removeActivityItem} onBackfillRobloxId={backfillRobloxId} onSyncRobloxRename={syncRobloxRename} onPlayerRenamed={setSelectedPlayerName} onSetPlayerBadges={setPlayerBadges} onAddPlayerAccolade={addPlayerAccolade} onRemovePlayerAccolade={removePlayerAccolade} onAddPlayerTeamCredit={addPlayerTeamCredit} onRemovePlayerTeamCredit={removePlayerTeamCredit} onUpsertManualStatLine={upsertManualStatLine} onDeleteManualStatLine={deleteManualStatLine} />;
     } else if (tab === 'playerCompare') {
       body = <PlayerComparePage league={league} teamsById={displayTeamsById} initialNameA={comparePlayerAName} initialNameB={comparePlayerBName} onBack={backFromPlayerCompare} onOpenPlayer={onOpenPlayer} activeSeasonId={activeSeason && activeSeason.id} />;
     }
