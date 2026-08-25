@@ -5158,23 +5158,29 @@ function RosterManagementView({ season, teamsById, updatePlayerField, removePlay
   );
 }
 
-const REBRAND_PRESETS = [
-  { name: 'Wolves', color: '#4b5563' }, { name: 'Comets', color: '#0ea5e9' }, { name: 'Vipers', color: '#16a34a' },
-  { name: 'Titans', color: '#f59e0b' }, { name: 'Renegades', color: '#dc2626' }, { name: 'Phantoms', color: '#7c3aed' },
-];
-function RebrandPanel({ team, color, onRebrand, onClearRebrand }) {
+function RebrandPanel({ team, color, teamsById, onRebrand, onClearRebrand }) {
   const [open, setOpen] = useState(false);
   const [name, setName] = useState('');
   const [abbr, setAbbr] = useState('');
   const [rbColor, setRbColor] = useState(color);
   const [logoUrl, setLogoUrl] = useState(null);
   const [logoBusy, setLogoBusy] = useState(false);
+  // Rebrand "into" any other team already created in the site-wide team
+  // registry (same list the Teams tab manages), not a fixed set of made-up
+  // names — picking one carries over its name/color/logo/wordmark.
+  const otherTeams = Object.values(teamsById || {}).filter(t => t.id !== team.id).sort((a, b) => (a.name || '').localeCompare(b.name || ''));
   const startEditing = () => {
     setName((team.rebrand && team.rebrand.name) || '');
     setAbbr((team.rebrand && team.rebrand.abbr) || team.abbr || '');
     setRbColor((team.rebrand && team.rebrand.color) || color);
     setLogoUrl((team.rebrand && team.rebrand.logoUrl) || null);
     setOpen(true);
+  };
+  const applyExistingTeam = (t) => {
+    setName(t.name || '');
+    setAbbr(t.abbr || '');
+    setRbColor(t.color || color);
+    setLogoUrl(t.logoUrl || null);
   };
   const handleLogo = async (file) => {
     if (!file) return;
@@ -5195,13 +5201,18 @@ function RebrandPanel({ team, color, onRebrand, onClearRebrand }) {
       {open && (
         <div className="px-4 pb-4 space-y-3">
           <p className="text-xs" style={{ color: CHALK_DIM }}>Changes this team's name/color/logo for the rest of this season only — other seasons keep "{team.originalName}".</p>
-          <div className="flex flex-wrap gap-1.5">
-            {REBRAND_PRESETS.map(p => (
-              <button key={p.name} onClick={() => { setName(p.name); setRbColor(p.color); }} className="text-xs px-2 py-1 rounded font-semibold flex items-center gap-1.5" style={{ background: PANEL2, color: CHALK, border: `1px solid ${LINE}` }}>
-                <span className="inline-block rounded-full flex-shrink-0" style={{ width: 10, height: 10, background: p.color }} /> {p.name}
-              </button>
-            ))}
-          </div>
+          {otherTeams.length > 0 && (
+            <div>
+              <div className="text-[11px] font-semibold mb-1.5" style={{ color: CHALK_DIM }}>Rebrand into an existing team</div>
+              <div className="flex flex-wrap gap-1.5">
+                {otherTeams.map(t => (
+                  <button key={t.id} onClick={() => applyExistingTeam(t)} className="text-xs pl-1.5 pr-2 py-1 rounded font-semibold flex items-center gap-1.5" style={{ background: PANEL2, color: CHALK, border: `1px solid ${LINE}` }}>
+                    <TeamMark team={t} size={16} /> {t.name}
+                  </button>
+                ))}
+              </div>
+            </div>
+          )}
           <div className="flex items-center gap-2">
             <input value={name} onChange={e => setName(e.target.value)} placeholder="New team name" className="flex-1 bg-[#242424] border rounded px-3 py-2 text-sm" style={{ borderColor: LINE, color: CHALK }} />
             <input value={abbr} onChange={e => setAbbr(e.target.value.toUpperCase().slice(0, 4))} placeholder="ABBR" maxLength={4} className="w-16 bg-[#242424] border rounded px-2 py-2 text-xs font-mono text-center uppercase" style={{ borderColor: LINE, color: CHALK }} title="Abbreviation" />
@@ -5411,7 +5422,7 @@ function TeamPage({ season, settings, team, standingsRow, teamsById, h2hMatrix, 
       </div>
 
       <div className="space-y-4">
-        {isLoggedIn && <RebrandPanel team={team} color={color} onRebrand={onRebrand} onClearRebrand={onClearRebrand} />}
+        {isLoggedIn && <RebrandPanel team={team} color={color} teamsById={teamsById} onRebrand={onRebrand} onClearRebrand={onClearRebrand} />}
 
         {nextGameInfo && (
           <Panel className="overflow-hidden" style={{ borderColor: color }}>
@@ -5767,17 +5778,29 @@ function PlayerPage({ league, teamsById, playerName, onBack, onOpenTeam, onOpenP
   const canManage = hasPermission('manageRosters');
   const isSiteOwner = role === 'site_owner';
   const { seasonsInfo, gameLog, knownNames } = useMemo(() => getPlayerCareerData(league, playerName), [league, playerName]);
+  // The entry to treat as "current" — the site's designated current season
+  // (activeSeasonId) if this identity appears there, since seasonsInfo's
+  // array order reflects when each season was created, not which one is
+  // actually current. A player traded (or signed) into a new team in a
+  // later-created season, viewed before that season was made current, was
+  // otherwise still showing their older team. Falls back to whichever
+  // season this identity was most recently recorded in when they don't
+  // appear in the current season at all (e.g. they've since left the
+  // league, or that season hasn't been created/entered yet).
+  const currentSeasonEntry = seasonsInfo.length > 0
+    ? (seasonsInfo.find(info => info.season.id === activeSeasonId) || seasonsInfo[seasonsInfo.length - 1])
+    : null;
   // The most recent roster/free-agent entry for this name carries the
   // Roblox account id, if one's been resolved yet — looking avatars up by id
   // instead of username means a rename doesn't break the avatar, and lets
   // the effect below notice the rename by comparing the id's current live
   // username against what's stored.
-  const latestRobloxUserId = seasonsInfo.length > 0 ? seasonsInfo[seasonsInfo.length - 1].player.robloxUserId : null;
+  const latestRobloxUserId = currentSeasonEntry ? currentSeasonEntry.player.robloxUserId : null;
   // The name this identity is known by most recently — used instead of the
   // raw playerName prop so a click that landed here via an old username
   // (an old transaction log entry, a stale link) doesn't get compared
   // against itself and mistaken for a fresh rename.
-  const latestName = seasonsInfo.length > 0 ? seasonsInfo[seasonsInfo.length - 1].player.name : playerName;
+  const latestName = currentSeasonEntry ? currentSeasonEntry.player.name : playerName;
   const avatar = useRobloxAvatar(latestName, latestRobloxUserId);
   useEffect(() => {
     // Only an admin's visit actually writes anything (kv_store only accepts
@@ -5889,7 +5912,7 @@ function PlayerPage({ league, teamsById, playerName, onBack, onOpenTeam, onOpenP
     return teamIds.map(teamId => ({ season: info.season, teamId }));
   });
 
-  const latest = seasonsInfo[seasonsInfo.length - 1];
+  const latest = currentSeasonEntry;
   // Show whichever name this identity is known by most recently, not
   // necessarily whatever name was clicked to land here (an old transaction
   // log entry or a stale link could point at a since-renamed username).
@@ -7289,6 +7312,8 @@ function GraphsView({ league, roundHistory, standings, scoringTrend, season, h2h
   const [metric, setMetric] = useState('rank');
   const [selectedIdx, setSelectedIdx] = useState(null);
   const [cat, setCat] = useState('trends');
+  const [spotA, setSpotA] = useState(null);
+  const [spotB, setSpotB] = useState(null);
   if (roundHistory.length === 0) return <div className="p-4"><Panel><p className="px-4 py-8 text-sm text-center" style={{ color: CHALK_DIM }}>Enter some scores in the Schedule tab to see trend graphs.</p></Panel></div>;
 
   const chartData = roundHistory.map(snap => {
@@ -7619,34 +7644,138 @@ function GraphsView({ league, roundHistory, standings, scoringTrend, season, h2h
       )}
 
       {cat === 'h2h' && standings.length > 1 && (
-        <Panel>
-          <SectionTitle>Head-to-head win matrix</SectionTitle>
-          <div className="overflow-x-auto px-2 pb-4">
-            <table className="text-xs" style={{ color: CHALK }}>
-              <thead>
-                <tr>
-                  <th className="px-1.5 py-1"></th>
-                  {standings.map(t => <th key={t.id} className="px-1.5 py-1"><span style={{ display: 'inline-block', width: 8, height: 8, borderRadius: 4, background: teamColor(t) }} /></th>)}
-                </tr>
-              </thead>
-              <tbody>
-                {standings.map(row => (
-                  <tr key={row.id} style={{ borderTop: `1px solid ${LINE}` }}>
-                    <td className="px-1.5 py-1 font-semibold whitespace-nowrap"><button onClick={() => onOpenTeam(row.id)} className="flex items-center gap-1" style={{ color: CHALK }}><span style={{ display: 'inline-block', width: 8, height: 8, borderRadius: 4, background: teamColor(row) }} /> {row.displayName}</button></td>
-                    {standings.map(col => {
-                      if (col.id === row.id) return <td key={col.id} className="px-1.5 py-1 text-center" style={{ color: LINE }}>—</td>;
-                      const rec = h2hMatrix[row.id] && h2hMatrix[row.id][col.id];
-                      if (!rec || rec.w + rec.l === 0) return <td key={col.id} className="px-1.5 py-1 text-center" style={{ color: CHALK_DIM }}>·</td>;
-                      return <td key={col.id} className="px-1.5 py-1 text-center font-mono" style={{ color: rec.w > rec.l ? WIN : rec.w < rec.l ? NEGATIVE : CHALK_DIM }}>{rec.w}-{rec.l}</td>;
-                    })}
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-          </div>
-          <p className="px-4 pb-4 text-[11px]" style={{ color: CHALK_DIM }}>Reading across a row: that team's record against each column team.</p>
-        </Panel>
+        <H2HSection standings={standings} h2hMatrix={h2hMatrix} season={season} onOpenTeam={onOpenTeam} spotA={spotA} spotB={spotB} setSpotA={setSpotA} setSpotB={setSpotB} />
       )}
+    </div>
+  );
+}
+
+// Interpolates a cell's background between the loss and win accent colors
+// based on how lopsided the record is, and its opacity based on how many
+// games have actually been played (a 1-0 record shouldn't read as loud as
+// a 10-1 one).
+function h2hCellStyle(rec) {
+  if (!rec || rec.w + rec.l === 0) return { background: 'transparent', color: CHALK_DIM };
+  const total = rec.w + rec.l;
+  const winPct = rec.w / total;
+  const color = winPct > 0.5 ? WIN : winPct < 0.5 ? NEGATIVE : CHALK_DIM;
+  const magnitude = Math.abs(winPct - 0.5) * 2;
+  const sample = Math.min(1, total / 5);
+  const alpha = Math.round((10 + magnitude * 35) * sample).toString(16).padStart(2, '0');
+  return { background: `${color}${alpha}`, color };
+}
+
+function H2HSection({ standings, h2hMatrix, season, onOpenTeam, spotA, spotB, setSpotA, setSpotB }) {
+  const aId = spotA || standings[0].id;
+  const bId = spotB || (standings.find(t => t.id !== aId) || standings[0]).id;
+  const teamA = standings.find(t => t.id === aId) || standings[0];
+  const teamB = standings.find(t => t.id === bId) || standings[1];
+  const rec = (h2hMatrix[aId] && h2hMatrix[aId][bId]) || { w: 0, l: 0, rf: 0, ra: 0 };
+  const total = rec.w + rec.l;
+  const winPct = total > 0 ? rec.w / total : 0.5;
+  const colorA = teamColor(teamA), colorB = teamColor(teamB);
+  const meetings = (season.games || [])
+    .filter(g => g.played && ((g.homeTeamId === aId && g.awayTeamId === bId) || (g.homeTeamId === bId && g.awayTeamId === aId)))
+    .sort((x, y) => (y.date || '').localeCompare(x.date || ''));
+
+  return (
+    <div className="space-y-4">
+      <Panel className="overflow-hidden">
+        <div className="px-4 pt-4 pb-2 flex items-center gap-2 flex-wrap">
+          <span className="text-xs font-bold uppercase tracking-wide" style={{ color: CHALK_DIM }}>Spotlight</span>
+          <select value={aId} onChange={e => setSpotA(e.target.value)} className="bg-[#242424] border rounded px-2 py-1 text-xs" style={{ borderColor: LINE, color: CHALK }}>
+            {standings.map(t => <option key={t.id} value={t.id} style={{ background: PANEL2, color: CHALK }}>{t.displayName}</option>)}
+          </select>
+          <span className="text-xs" style={{ color: CHALK_DIM }}>vs</span>
+          <select value={bId} onChange={e => setSpotB(e.target.value)} className="bg-[#242424] border rounded px-2 py-1 text-xs" style={{ borderColor: LINE, color: CHALK }}>
+            {standings.map(t => <option key={t.id} value={t.id} style={{ background: PANEL2, color: CHALK }}>{t.displayName}</option>)}
+          </select>
+        </div>
+        <div className="relative overflow-hidden" style={{ background: `linear-gradient(105deg, ${colorA}, ${colorA}dd 42%, rgba(0,0,0,0.85) 50%, ${colorB}dd 58%, ${colorB})` }}>
+          <div className="grid grid-cols-2 gap-4 px-5 py-6">
+            {[[teamA, rec.w, 'left'], [teamB, rec.l, 'right']].map(([t, wins, align]) => (
+              <button key={t.id} onClick={() => onOpenTeam(t.id)} className="flex flex-col gap-2" style={{ alignItems: align === 'left' ? 'flex-start' : 'flex-end', textAlign: align }}>
+                <TeamMark team={t} size={44} />
+                <span className="font-head text-lg sm:text-2xl font-bold uppercase tracking-tight truncate max-w-full" style={{ color: '#fff', textShadow: '0 2px 8px rgba(0,0,0,0.5)' }}>{t.displayName}</span>
+                <span className="font-mono text-4xl sm:text-5xl font-black" style={{ color: '#fff', textShadow: '0 2px 10px rgba(0,0,0,0.5)' }}>{wins}</span>
+              </button>
+            ))}
+          </div>
+          <div className="px-5 pb-5">
+            <div className="h-2 rounded-full overflow-hidden flex" style={{ background: 'rgba(0,0,0,0.35)' }}>
+              <div style={{ width: `${Math.round(winPct * 100)}%`, background: '#fff' }} />
+            </div>
+            <div className="flex justify-between mt-1.5 text-[11px] font-semibold" style={{ color: 'rgba(255,255,255,0.85)' }}>
+              <span>{total > 0 ? `${Math.round(winPct * 100)}% all-time` : 'No meetings yet'}</span>
+              <span>{rec.rf}-{rec.ra} combined runs</span>
+            </div>
+          </div>
+        </div>
+        {meetings.length > 0 && (
+          <div className="px-2 pb-3 pt-1">
+            {meetings.map(g => {
+              const aIsHome = g.homeTeamId === aId;
+              const aScore = aIsHome ? g.homeScore : g.awayScore;
+              const bScore = aIsHome ? g.awayScore : g.homeScore;
+              const aWon = Number(aScore) > Number(bScore);
+              return (
+                <div key={g.id} className="flex items-center justify-between px-2 py-1.5 text-xs" style={{ borderTop: `1px solid ${LINE}` }}>
+                  <span style={{ color: CHALK_DIM }}>{g.date || '—'}{g.isPlayoff ? <span style={{ color: GOLD }}> · Playoffs</span> : ''}</span>
+                  <span className="font-mono font-bold" style={{ color: CHALK }}>
+                    <span style={{ color: aWon ? WIN : CHALK_DIM }}>{aScore}</span>
+                    {' – '}
+                    <span style={{ color: !aWon ? WIN : CHALK_DIM }}>{bScore}</span>
+                  </span>
+                </div>
+              );
+            })}
+          </div>
+        )}
+      </Panel>
+
+      <Panel>
+        <SectionTitle>Head-to-head win matrix</SectionTitle>
+        <div className="overflow-x-auto px-2 pb-3">
+          <table className="text-sm" style={{ color: CHALK, borderCollapse: 'separate', borderSpacing: '3px' }}>
+            <thead>
+              <tr>
+                <th className="px-1 py-1"></th>
+                {standings.map(t => (
+                  <th key={t.id} className="px-1 py-1">
+                    <button onClick={() => onOpenTeam(t.id)} title={t.displayName}><TeamMark team={t} size={26} /></button>
+                  </th>
+                ))}
+              </tr>
+            </thead>
+            <tbody>
+              {standings.map(row => (
+                <tr key={row.id}>
+                  <td className="pr-2 py-1 font-semibold whitespace-nowrap">
+                    <button onClick={() => onOpenTeam(row.id)} className="flex items-center gap-1.5" style={{ color: CHALK }}><TeamMark team={row} size={22} /> {row.displayName}</button>
+                  </td>
+                  {standings.map(col => {
+                    if (col.id === row.id) return <td key={col.id} className="px-1.5 py-2 text-center rounded" style={{ background: PANEL2, color: LINE }}>—</td>;
+                    const cellRec = h2hMatrix[row.id] && h2hMatrix[row.id][col.id];
+                    return (
+                      <td key={col.id} className="px-1.5 py-2 text-center">
+                        <button
+                          onClick={() => { setSpotA(row.id); setSpotB(col.id); }}
+                          title={`${row.displayName} vs ${col.displayName}`}
+                          className="w-full h-full px-1.5 py-1.5 rounded font-mono font-bold text-sm"
+                          style={h2hCellStyle(cellRec)}
+                        >
+                          {cellRec && cellRec.w + cellRec.l > 0 ? `${cellRec.w}-${cellRec.l}` : '·'}
+                        </button>
+                      </td>
+                    );
+                  })}
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+        <p className="px-4 pb-4 text-[11px]" style={{ color: CHALK_DIM }}>Reading across a row: that team's record against each column team. Click any cell to load it into the spotlight above.</p>
+      </Panel>
     </div>
   );
 }
