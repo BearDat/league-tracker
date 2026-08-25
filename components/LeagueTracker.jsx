@@ -51,7 +51,7 @@ const THEME_PRESETS = {
 
 const TEAM_PALETTE = ['#2DD4BF', '#F5C64B', '#FB7166', '#7C9CF2', '#B98CE0', '#6FCF97', '#F2946B', '#5FD3E8', '#E88AC0', '#C7D15C'];
 
-const DEFAULT_SETTINGS = { playoffSpots: 4, simRuns: 2000, standardInnings: 7, oddsDecimals: 1, scheduleMode: 'date', seriesLength: 1, oddsFormat: 'percent', homeFieldBoost: 4, playoffFormat: 'overall', playInTeams: 0 };
+const DEFAULT_SETTINGS = { playoffSpots: 4, simRuns: 2000, standardInnings: 7, oddsDecimals: 1, scheduleMode: 'date', seriesLength: 1, oddsFormat: 'percent', homeFieldBoost: 4, playoffFormat: 'overall', playInTeams: 0, groupAdvanceCount: 2 };
 // Sport selected at league creation. Drives terminology (innings vs quarters
 // vs periods, runs vs points vs goals) and the default regulation length —
 // the underlying game mechanics (two scores, win/loss, best-of-N playoff
@@ -828,6 +828,7 @@ function computeBestPossibleFinish(standings, teamId, remainingByTeam) {
 // ALL teams reordered so `.slice(0, playoffSpots)` downstream still gives
 // the correct seeding; falls back to plain overall order otherwise.
 function computePlayoffSeeding(standings, settings) {
+  if (settings.playoffFormat === 'wbc' && standings.some(t => t.divisionId)) return computeWbcSeeding(standings, settings);
   const useDivisional = settings.playoffFormat === 'divisional' && standings.some(t => t.divisionId);
   if (!useDivisional) return standings;
   const divisionIds = [...new Set(standings.map(t => t.divisionId).filter(Boolean))];
@@ -840,6 +841,30 @@ function computePlayoffSeeding(standings, settings) {
   winners.sort((a, b) => standings.indexOf(a) - standings.indexOf(b));
   const rest = standings.filter(t => !winnerIds.has(t.id));
   return [...winners, ...rest];
+}
+
+// WBC-style: divisions double as pool-play groups, and the top
+// groupAdvanceCount finishers from EVERY group advance to the knockout
+// stage — prioritizing breadth over depth (every group's winner outranks
+// every group's runner-up, and so on) rather than "Divisional" above,
+// which only guarantees one seed per division and fills the rest purely
+// by overall record regardless of group. Each round of picks is re-sorted
+// by the finishers' original overall standing so stronger group winners
+// still seed above weaker ones.
+function computeWbcSeeding(standings, settings) {
+  const advanceCount = Math.max(1, settings.groupAdvanceCount || 2);
+  const byDivision = {};
+  standings.forEach(t => { const key = t.divisionId || '__none'; (byDivision[key] = byDivision[key] || []).push(t); });
+  const indexOf = new Map(standings.map((t, i) => [t.id, i]));
+  const advanced = [];
+  for (let i = 0; i < advanceCount; i++) {
+    const roundPicks = Object.values(byDivision).map(group => group[i]).filter(Boolean);
+    roundPicks.sort((a, b) => indexOf.get(a.id) - indexOf.get(b.id));
+    advanced.push(...roundPicks);
+  }
+  const advancedIds = new Set(advanced.map(t => t.id));
+  const rest = standings.filter(t => !advancedIds.has(t.id));
+  return [...advanced, ...rest];
 }
 
 // Combines divisional/wildcard seeding with a play-in result: the first
@@ -1393,6 +1418,24 @@ function buildExistingSeriesByTeamPair(existingPlayoffGames) {
   return result;
 }
 
+// A team is out of the bracket once some real (played) playoff series has a
+// side that already reached the wins needed for that round's series length
+// — used to drop already-eliminated teams from the playoff series odds
+// table instead of leaving them showing a flat 0% row for every round.
+function computeEliminatedTeamIds(existingPlayoffGames, settings) {
+  const byPair = buildExistingSeriesByTeamPair(existingPlayoffGames);
+  const eliminated = new Set();
+  Object.keys(byPair).forEach(key => {
+    const round = Number(key.split('-')[0]);
+    const rec = byPair[key];
+    if (rec.teamIds.length < 2) return;
+    const needed = seriesWinsNeeded(getSeriesLength(settings, round));
+    const winnerId = rec.teamIds.find(id => (rec.wins[id] || 0) >= needed);
+    if (winnerId) rec.teamIds.forEach(id => { if (id !== winnerId) eliminated.add(id); });
+  });
+  return eliminated;
+}
+
 // Simulates the whole playoff bracket many times (resuming from real results where
 // the actual playoffs have already started) and tallies, per team, the percent
 // chance of reaching each round and of winning the championship.
@@ -1466,6 +1509,23 @@ function simulatePlayoffs(standings, playoffSpots, settings, h2hMatrix, simRuns,
     results[id].championPct = (results[id].champion / simRuns) * 100;
   });
   return { results, roundsCount };
+}
+
+// Runs both simulations once and packages the result to be cached on the
+// season (season.oddsCache) rather than re-run live every time someone
+// opens the Odds tab. Called from the score-entry mutators right after a
+// game result changes, so the odds shown are always "as of the last score
+// entered" — a deliberate snapshot, not a per-viewer live recompute.
+function computeOddsCache(season, teamsById, h2hMatrix) {
+  const settings = season.settings;
+  const standings = computeStandings(season, teamsById).active;
+  const playInGames = (season.games || []).filter(g => g.isPlayIn);
+  const playoffGames = (season.games || []).filter(g => g.isPlayoff);
+  const playInWinnerId = getPlayInWinner(playInGames);
+  const seededStandings = buildMainBracketSeeds(standings, settings, playInWinnerId);
+  const sim = runSimulation(season, teamsById, settings.simRuns, settings.playoffSpots, h2hMatrix);
+  const playoffSim = standings.length >= 2 ? simulatePlayoffs(seededStandings, settings.playoffSpots, settings, h2hMatrix, settings.simRuns, settings.homeFieldBoost || 0, playoffGames) : null;
+  return { sim, playoffSim, computedAt: Date.now() };
 }
 
 /* ---- season "futures" props (dynamic, odds-driven pick'ems) ---- */
@@ -2301,22 +2361,30 @@ function BrandEditor({ gt, updateGlobalTeamField }) {
 }
 
 function TeamRegistryView({ teamsIndex, teamsById, onBack, onCreate, onOpenHistory, updateGlobalTeamField }) {
-  const { hasPermission } = useAuth();
+  const { hasPermission, role } = useAuth();
   const isLoggedIn = hasPermission('manageRosters');
+  // Creating a brand-new global team (as opposed to editing/branding an
+  // existing one, which any roster-managing admin can already do below) is
+  // restricted to the Site Owner — the registry is shared across every
+  // league on the site, so who's allowed to add new entries to it is kept
+  // tighter than who can manage a single season's rosters.
+  const canCreate = role === 'site_owner';
   const [name, setName] = useState('');
   return (
     <div className="p-4 space-y-4">
       <button onClick={onBack} className="flex items-center gap-1 text-sm" style={{ color: CHALK_DIM }}><ArrowLeft size={14} /> Back</button>
+      {canCreate && (
       <Panel className="overflow-hidden" style={{ borderColor: PRIMARY }}>
         <SectionTitle accent={PRIMARY}>Create a team</SectionTitle>
         <div className="flex gap-2 px-4 pb-4">
-          <input value={name} onChange={e => setName(e.target.value)} disabled={!isLoggedIn} placeholder="Team name" className="flex-1 bg-[#242424] border rounded px-3 py-2 text-sm disabled:opacity-50" style={{ borderColor: LINE, color: CHALK }} />
-          <button onClick={() => { if (name.trim()) { onCreate(name.trim()); setName(''); } }} disabled={!isLoggedIn} className="px-3 py-2 rounded font-bold text-sm flex items-center gap-1 disabled:opacity-50" style={{ background: PRIMARY, color: INK }}>
+          <input value={name} onChange={e => setName(e.target.value)} placeholder="Team name" className="flex-1 bg-[#242424] border rounded px-3 py-2 text-sm" style={{ borderColor: LINE, color: CHALK }} />
+          <button onClick={() => { if (name.trim()) { onCreate(name.trim()); setName(''); } }} className="px-3 py-2 rounded font-bold text-sm flex items-center gap-1" style={{ background: PRIMARY, color: INK }}>
             <Plus size={16} /> Add
           </button>
         </div>
-        <p className="px-4 pb-4 text-xs" style={{ color: CHALK_DIM }}>Teams created here can be added to any season of any league, keep their colors and logos everywhere they're used, and keep one history across all of them.</p>
+        <p className="px-4 pb-4 text-xs" style={{ color: CHALK_DIM }}>Site Owner only. Teams created here can be added to any season of any league, keep their colors and logos everywhere they're used, and keep one history across all of them.</p>
       </Panel>
+      )}
       <Panel className="overflow-hidden" style={{ borderColor: PRIMARY }}>
         <SectionTitle accent={PRIMARY}>All teams ({teamsIndex.length})</SectionTitle>
         <div className="px-3 pb-3 grid grid-cols-1 md:grid-cols-2 gap-3">
@@ -3096,14 +3164,20 @@ function SettingsView({ settings, saveSettings, theme, saveTheme, sport, season,
             <span>Playoff spots<div className="text-[11px]" style={{ color: CHALK_DIM }}>How many teams make the postseason</div></span>
             <NumInput value={settings.playoffSpots} min={1} max={64} onChange={v => saveSettings({ ...settings, playoffSpots: v })} w="w-16" />
           </label>
-          <div className="flex items-center justify-between gap-2" style={{ color: CHALK }}>
-            <span>Playoff seeding<div className="text-[11px]" style={{ color: CHALK_DIM }}>Divisional gives each division's leader a guaranteed seed, then fills remaining spots with wild cards by record (needs divisions set up in the Teams tab)</div></span>
+          <div className="flex items-center justify-between gap-2 flex-wrap" style={{ color: CHALK }}>
+            <span>Playoff seeding<div className="text-[11px]" style={{ color: CHALK_DIM }}>Divisional gives each division's leader a guaranteed seed, then fills remaining spots with wild cards by record. WBC-style treats divisions as pool-play groups and advances the top finishers from every group before any wild cards (needs divisions set up in the Teams tab)</div></span>
             <div className="flex rounded overflow-hidden border flex-shrink-0" style={{ borderColor: LINE }}>
-              {[['overall', 'Overall'], ['divisional', 'Divisional']].map(([m, label]) => (
+              {[['overall', 'Overall'], ['divisional', 'Divisional'], ['wbc', 'WBC-style']].map(([m, label]) => (
                 <button key={m} onClick={() => saveSettings({ ...settings, playoffFormat: m })} className="px-2.5 py-1 text-xs font-semibold" style={{ background: (settings.playoffFormat || 'overall') === m ? PRIMARY : 'transparent', color: (settings.playoffFormat || 'overall') === m ? INK : CHALK_DIM }}>{label}</button>
               ))}
             </div>
           </div>
+          {settings.playoffFormat === 'wbc' && (
+            <label className="flex items-center justify-between gap-2" style={{ color: CHALK }}>
+              <span>Advance per group<div className="text-[11px]" style={{ color: CHALK_DIM }}>How many teams from each group (division) move on to the knockout stage</div></span>
+              <NumInput value={settings.groupAdvanceCount || 2} min={1} max={8} onChange={v => saveSettings({ ...settings, groupAdvanceCount: v })} w="w-16" />
+            </label>
+          )}
           <label className="flex items-center justify-between gap-2" style={{ color: CHALK }}>
             <span>Reseed each round<div className="text-[11px]" style={{ color: CHALK_DIM }}>Best remaining seed always plays the worst remaining seed (like the NFL) instead of following fixed bracket slots</div></span>
             <input type="checkbox" checked={!!settings.reseedPlayoffs} onChange={e => saveSettings({ ...settings, reseedPlayoffs: e.target.checked })} style={{ accentColor: PRIMARY, width: 18, height: 18 }} />
@@ -3743,33 +3817,40 @@ function getAllPlayerNames(league) {
 }
 
 // Per-visitor Roblox avatar lookup via the /api/roblox-avatar proxy route
-// (Roblox's own APIs don't send CORS headers for browser callers). Cached
-// in sessionStorage per username so navigating around doesn't re-fetch.
-function useRobloxAvatar(username) {
-  const [state, setState] = useState({ url: null, loading: true });
+// (Roblox's own APIs don't send CORS headers for browser callers). Looks up
+// by robloxUserId when the player record already has one — which survives a
+// Roblox username change, and lets the caller compare the freshly-resolved
+// `username` in the result against the stored player name to notice a
+// rename happened — falling back to a username lookup for players that
+// haven't had an id backfilled yet. Cached in sessionStorage per lookup key
+// so navigating around doesn't re-fetch.
+function useRobloxAvatar(username, robloxUserId) {
+  const [state, setState] = useState({ url: null, loading: true, userId: null, resolvedUsername: null });
   useEffect(() => {
-    if (!username) { setState({ url: null, loading: false }); return; }
+    if (!username && !robloxUserId) { setState({ url: null, loading: false, userId: null, resolvedUsername: null }); return; }
     let cancelled = false;
-    const cacheKey = `lt-rbx-avatar:${username.trim().toLowerCase()}`;
+    const cacheKey = robloxUserId ? `lt-rbx-id:${robloxUserId}` : `lt-rbx-avatar:${(username || '').trim().toLowerCase()}`;
     try {
       const cached = sessionStorage.getItem(cacheKey);
-      if (cached !== null) { setState({ url: cached === 'null' ? null : cached, loading: false }); return; }
-    } catch (e) { /* sessionStorage unavailable */ }
-    setState({ url: null, loading: true });
-    fetch(`/api/roblox-avatar?username=${encodeURIComponent(username)}`)
+      if (cached !== null) { setState(cached === 'null' ? { url: null, loading: false, userId: null, resolvedUsername: null } : { ...JSON.parse(cached), loading: false }); return; }
+    } catch (e) { /* sessionStorage unavailable or malformed cache entry */ }
+    setState({ url: null, loading: true, userId: null, resolvedUsername: null });
+    const qs = robloxUserId ? `userId=${encodeURIComponent(robloxUserId)}` : `username=${encodeURIComponent(username)}`;
+    fetch(`/api/roblox-avatar?${qs}`)
       .then(r => (r.ok ? r.json() : Promise.reject()))
       .then(data => {
         if (cancelled) return;
-        setState({ url: data.avatarUrl, loading: false });
-        try { sessionStorage.setItem(cacheKey, data.avatarUrl); } catch (e) { /* ignore */ }
+        const next = { url: data.avatarUrl, userId: data.userId, resolvedUsername: data.username };
+        setState({ ...next, loading: false });
+        try { sessionStorage.setItem(cacheKey, JSON.stringify(next)); } catch (e) { /* ignore */ }
       })
       .catch(() => {
         if (cancelled) return;
-        setState({ url: null, loading: false });
+        setState({ url: null, loading: false, userId: null, resolvedUsername: null });
         try { sessionStorage.setItem(cacheKey, 'null'); } catch (e) { /* ignore */ }
       });
     return () => { cancelled = true; };
-  }, [username]);
+  }, [username, robloxUserId]);
   return state;
 }
 
@@ -5324,11 +5405,30 @@ function PlayerPitchingTable({ rows }) {
   );
 }
 
-function PlayerPage({ league, teamsById, playerName, onBack, onOpenTeam, onOpenPlayerCompare, activeSeasonId, onRemoveActivity }) {
+function PlayerPage({ league, teamsById, playerName, onBack, onOpenTeam, onOpenPlayerCompare, activeSeasonId, onRemoveActivity, onBackfillRobloxId, onSyncRobloxRename, onPlayerRenamed }) {
   const { hasPermission } = useAuth();
   const canManage = hasPermission('manageRosters');
   const { seasonsInfo, gameLog } = useMemo(() => getPlayerCareerData(league, playerName), [league, playerName]);
-  const avatar = useRobloxAvatar(playerName);
+  // The most recent roster/free-agent entry for this name carries the
+  // Roblox account id, if one's been resolved yet — looking avatars up by id
+  // instead of username means a rename doesn't break the avatar, and lets
+  // the effect below notice the rename by comparing the id's current live
+  // username against what's stored.
+  const latestRobloxUserId = seasonsInfo.length > 0 ? seasonsInfo[seasonsInfo.length - 1].player.robloxUserId : null;
+  const avatar = useRobloxAvatar(playerName, latestRobloxUserId);
+  useEffect(() => {
+    // Only an admin's visit actually writes anything (kv_store only accepts
+    // authenticated writes anyway) — a logged-out viewer just keeps seeing
+    // the name as currently stored until an admin's visit syncs it.
+    if (avatar.loading || !canManage) return;
+    if (!latestRobloxUserId && avatar.userId) {
+      if (onBackfillRobloxId) onBackfillRobloxId(playerName, avatar.userId);
+    } else if (latestRobloxUserId && avatar.resolvedUsername && avatar.resolvedUsername !== playerName) {
+      if (onSyncRobloxRename) onSyncRobloxRename(latestRobloxUserId, avatar.resolvedUsername);
+      if (onPlayerRenamed) onPlayerRenamed(avatar.resolvedUsername);
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [avatar.loading, avatar.userId, avatar.resolvedUsername, latestRobloxUserId, playerName, canManage]);
   // Activity log entries don't carry a playerId (they're free-text), so a
   // name match is the only way to find "this player's" transactions —
   // consistent with how the rest of the page threads career history
@@ -5962,13 +6062,18 @@ function FuturesPanel({ season, standings, teamsById, settings, h2hMatrix }) {
   );
 }
 
-function OddsView({ season, teamsById, standings, settings, onOpenTeam, h2hMatrix, onStartPlayoffs, onClearPlayoffs, onStartPlayIn, onClearPlayIn, onOpenCompare }) {
+function OddsView({ season, teamsById, standings, settings, onOpenTeam, h2hMatrix, onStartPlayoffs, onClearPlayoffs, onStartPlayIn, onClearPlayIn, onOpenCompare, onBackfillOdds }) {
   const { hasPermission } = useAuth();
   const isLoggedIn = hasPermission('manageSeasons');
-  const [sim, setSim] = useState(null);
-  const [running, setRunning] = useState(false);
-  const [playoffSim, setPlayoffSim] = useState(null);
-  const [runningPlayoff, setRunningPlayoff] = useState(false);
+  // Odds no longer simulate live on every visit — they're computed once by
+  // the admin actions that actually change a result (saveScore,
+  // declareForfeit, setWinnerOverride) and cached on season.oddsCache, so
+  // every viewer just reads that same snapshot instead of each burning CPU
+  // on their own copy of the same simulation. The one exception is an
+  // older/legacy season that predates this cache: an admin viewing it
+  // triggers a one-time backfill so it gets a cache going forward too.
+  const sim = season.oddsCache ? season.oddsCache.sim : null;
+  const playoffSim = season.oddsCache ? season.oddsCache.playoffSim : null;
   const [preview, setPreview] = useState(null);
   const decimals = settings.oddsDecimals ?? 1;
   const [oddsFormat, setOddsFormat] = useLocalOddsFormat(settings.oddsFormat || 'percent');
@@ -5979,33 +6084,38 @@ function OddsView({ season, teamsById, standings, settings, onOpenTeam, h2hMatri
   const playInGames = (season.games || []).filter(g => g.isPlayIn);
   const playInWinnerId = getPlayInWinner(playInGames);
   const seededStandings = buildMainBracketSeeds(standings, settings, playInWinnerId);
+  const eliminatedIds = useMemo(() => computeEliminatedTeamIds(playoffGames, settings), [playoffGames, settings]);
+  const standingsById = useMemo(() => Object.fromEntries(standings.map(t => [t.id, t])), [standings]);
 
-  // Both simulations run automatically and are cached against a fingerprint
-  // of every played game's result plus the settings that feed the model —
-  // they only recompute when standings/scores (or those settings) actually
-  // change, not on every render or tab visit.
-  const simFingerprint = useMemo(() => {
-    const gamesSig = (season.games || []).map(g => `${g.id}:${g.played ? 1 : 0}:${g.awayScore}:${g.homeScore}:${g.isForfeit ? 1 : 0}:${g.winnerOverride || ''}`).join('|');
-    return [season.id, gamesSig, settings.simRuns, settings.playoffSpots, settings.homeFieldBoost, JSON.stringify(settings.seriesLengths || []), settings.seriesLength, settings.reseedPlayoffs ? 1 : 0].join('~');
-  }, [season, settings]);
   useEffect(() => {
-    setRunning(true);
-    const t = setTimeout(() => { setSim(runSimulation(season, teamsById, settings.simRuns, settings.playoffSpots, h2hMatrix)); setRunning(false); }, 30);
+    if (season.oddsCache || !isLoggedIn || !onBackfillOdds) return;
+    const t = setTimeout(() => onBackfillOdds(), 30);
     return () => clearTimeout(t);
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [simFingerprint]);
-  useEffect(() => {
-    if (standings.length < 2) { setPlayoffSim(null); return; }
-    setRunningPlayoff(true);
-    const t = setTimeout(() => {
-      setPlayoffSim(simulatePlayoffs(seededStandings, settings.playoffSpots, settings, h2hMatrix, settings.simRuns, settings.homeFieldBoost || 0, playoffGames));
-      setRunningPlayoff(false);
-    }, 30);
-    return () => clearTimeout(t);
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [simFingerprint]);
+  }, [season.id, !!season.oddsCache, isLoggedIn]);
   useEffect(() => { setPreview(null); }, [season.id]);
   const maxSeed = standings.length;
+
+  // The next unplayed game in each still-undecided playoff series — a
+  // single-game win probability alongside the series-level odds above,
+  // computed directly (no simulation trials needed for one game).
+  const nextPlayoffGameOdds = useMemo(() => {
+    const bySlot = new Map();
+    playoffGames.filter(g => !g.played && g.homeTeamId && g.awayTeamId).forEach(g => {
+      const key = `${g.playoffRound}-${g.bracketSlot}`;
+      const existing = bySlot.get(key);
+      if (!existing || (g.seriesGame || 0) < (existing.seriesGame || 0)) bySlot.set(key, g);
+    });
+    return [...bySlot.values()].map(g => {
+      const home = standingsById[g.homeTeamId], away = standingsById[g.awayTeamId];
+      if (!home || !away) return null;
+      const h2h = h2hRecord(h2hMatrix, g.homeTeamId, g.awayTeamId);
+      let pHome = winProb(home, away, h2h);
+      const boost = (settings.homeFieldBoost || 0) / 100;
+      pHome = Math.min(0.97, Math.max(0.03, pHome + boost));
+      return { game: g, home, away, homePct: pHome * 100, awayPct: (1 - pHome) * 100 };
+    }).filter(Boolean);
+  }, [playoffGames, standingsById, h2hMatrix, settings.homeFieldBoost]);
 
   return (
     <div className="p-4 space-y-4">
@@ -6022,11 +6132,9 @@ function OddsView({ season, teamsById, standings, settings, onOpenTeam, h2hMatri
       {isLoggedIn && <FuturesPanel season={season} standings={standings} teamsById={teamsById} settings={settings} h2hMatrix={h2hMatrix} />}
 
       <Panel>
-        <SectionTitle right={runningPlayoff && <span className="text-[11px] flex items-center gap-1" style={{ color: CHALK_DIM }}><RefreshCw size={13} className="animate-spin" /> Recalculating…</span>}>
-          Playoff series odds
-        </SectionTitle>
+        <SectionTitle>Playoff series odds</SectionTitle>
         {!playoffSim ? (
-          <p className="px-4 pb-4 text-sm" style={{ color: CHALK_DIM }}>Not enough teams yet to simulate a bracket.</p>
+          <p className="px-4 pb-4 text-sm" style={{ color: CHALK_DIM }}>{season.oddsCache ? 'Not enough teams yet to simulate a bracket.' : 'Odds haven’t been computed for this season yet — they’ll generate the next time a score is entered.'}</p>
         ) : (
           <div className="overflow-x-auto px-2 pb-4">
             <table className="text-sm" style={{ color: CHALK, minWidth: '100%' }}>
@@ -6036,7 +6144,7 @@ function OddsView({ season, teamsById, standings, settings, onOpenTeam, h2hMatri
                 <th className="px-2 py-1">Champion <span style={{ textTransform: 'none' }}>(Bo{getSeriesLength(settings, playoffSim.roundsCount)})</span></th>
               </tr></thead>
               <tbody>
-                {standings.slice(0, Math.min(settings.playoffSpots, standings.length)).map(t => {
+                {standings.slice(0, Math.min(settings.playoffSpots, standings.length)).filter(t => !eliminatedIds.has(t.id)).map(t => {
                   const r = playoffSim.results[t.id];
                   if (!r) return null;
                   return (
@@ -6054,8 +6162,31 @@ function OddsView({ season, teamsById, standings, settings, onOpenTeam, h2hMatri
             </table>
           </div>
         )}
-        {playoffSim && <p className="px-4 pb-4 text-[11px]" style={{ color: CHALK_DIM }}>"Rd N" is the chance of reaching that round; Champion is the chance of winning it all. Based on {settings.simRuns.toLocaleString()} simulated brackets.</p>}
+        {playoffSim && <p className="px-4 pb-4 text-[11px]" style={{ color: CHALK_DIM }}>"Rd N" is the chance of reaching that round; Champion is the chance of winning it all. Based on {settings.simRuns.toLocaleString()} simulated brackets. Teams already eliminated from the bracket are dropped from this table.</p>}
       </Panel>
+
+      {nextPlayoffGameOdds.length > 0 && (
+        <Panel>
+          <SectionTitle>Playoff game odds</SectionTitle>
+          <div className="px-2 pb-4 space-y-2">
+            {nextPlayoffGameOdds.map(({ game, home, away, homePct, awayPct }) => (
+              <div key={game.id} className="rounded-lg overflow-hidden" style={{ border: `1px solid ${LINE}` }}>
+                <div className="flex items-center gap-2 px-3 py-2" style={{ borderBottom: `1px solid ${LINE}` }}>
+                  <TeamMark team={away} size={15} />
+                  <button onClick={() => onOpenTeam(away.id)} className="flex-1 text-left text-sm font-semibold truncate" style={{ color: CHALK }}>{away.displayName}</button>
+                  <span className="text-sm font-mono font-bold" style={{ color: awayPct >= 50 ? WIN : CHALK_DIM }}>{fmtOdds(awayPct, oddsFormat, decimals)}</span>
+                </div>
+                <div className="flex items-center gap-2 px-3 py-2">
+                  <TeamMark team={home} size={15} />
+                  <button onClick={() => onOpenTeam(home.id)} className="flex-1 text-left text-sm font-semibold truncate" style={{ color: CHALK }}>{home.displayName}</button>
+                  <span className="text-sm font-mono font-bold" style={{ color: homePct >= 50 ? WIN : CHALK_DIM }}>{fmtOdds(homePct, oddsFormat, decimals)}</span>
+                </div>
+              </div>
+            ))}
+          </div>
+          <p className="px-4 pb-4 text-[11px]" style={{ color: CHALK_DIM }}>Win probability for just the next game in each series — not the same as the series odds above, which look further ahead.</p>
+        </Panel>
+      )}
 
       <Panel>
         <SectionTitle>Magic &amp; elimination numbers</SectionTitle>
@@ -6104,10 +6235,10 @@ function OddsView({ season, teamsById, standings, settings, onOpenTeam, h2hMatri
       )}
 
       <Panel>
-        <SectionTitle right={running && <span className="text-[11px] flex items-center gap-1" style={{ color: CHALK_DIM }}><RefreshCw size={13} className="animate-spin" /> Recalculating…</span>}>
+        <SectionTitle>
           Playoff odds ({settings.playoffSpots} spot{settings.playoffSpots === 1 ? '' : 's'}, {settings.simRuns.toLocaleString()} runs)
         </SectionTitle>
-        {!sim ? <p className="px-4 pb-4 text-sm" style={{ color: CHALK_DIM }}>Not enough teams yet to simulate.</p> : (
+        {!sim ? <p className="px-4 pb-4 text-sm" style={{ color: CHALK_DIM }}>{season.oddsCache ? 'Not enough teams yet to simulate.' : 'Odds haven’t been computed for this season yet — they’ll generate the next time a score is entered.'}</p> : (
           <div className="px-4 pb-4">
             <ResponsiveContainer width="100%" height={Math.max(160, standings.length * 34)}>
               <BarChart data={standings.map(t => ({ name: t.displayName, pct: sim[t.id] ? Number(sim[t.id].playoffPct.toFixed(decimals)) : 0, id: t.id }))} layout="vertical" margin={{ left: 8, right: 24 }}>
@@ -7764,6 +7895,48 @@ function App() {
     const seasons = league.seasons.map(s => s.id === activeSeason.id ? { ...s, activityLog: (s.activityLog || []).filter(a => a.id !== activityId) } : s);
     persistLeague({ ...league, seasons });
   };
+  /* ---- Roblox identity (avatar id + username-change sync) ---- */
+  // The first time a player's Roblox avatar resolves, stamp their account id
+  // onto every roster/free-agent entry across every season that currently
+  // shares their name — matched by name since that's all there is to go on
+  // before an id exists. From then on lookups go by id instead of name.
+  const backfillRobloxId = (name, robloxUserId) => {
+    if (!league || !robloxUserId) return;
+    const norm = (s) => (s || '').trim().toLowerCase();
+    const target = norm(name);
+    let changed = false;
+    const setIfMatch = (p) => {
+      if (!p.robloxUserId && norm(p.name) === target) { changed = true; return { ...p, robloxUserId }; }
+      return p;
+    };
+    const seasons = league.seasons.map(s => ({
+      ...s,
+      members: (s.members || []).map(m => ({ ...m, roster: (m.roster || []).map(setIfMatch) })),
+      freeAgents: (s.freeAgents || []).map(setIfMatch),
+    }));
+    if (!changed) return;
+    persistLeague({ ...league, seasons });
+  };
+  // Once an id is known, a live username lookup that no longer matches the
+  // stored name means the Roblox account was renamed — propagate the new
+  // name to every roster/free-agent entry sharing that id, across every
+  // season, so the whole career (not just the current season) follows the
+  // rename instead of splitting into two identities under two names.
+  const syncRobloxRename = (robloxUserId, newName) => {
+    if (!league || !robloxUserId || !newName) return;
+    let changed = false;
+    const renameIfMatch = (p) => {
+      if (p.robloxUserId === robloxUserId && p.name !== newName) { changed = true; return { ...p, name: newName }; }
+      return p;
+    };
+    const seasons = league.seasons.map(s => ({
+      ...s,
+      members: (s.members || []).map(m => ({ ...m, roster: (m.roster || []).map(renameIfMatch) })),
+      freeAgents: (s.freeAgents || []).map(renameIfMatch),
+    }));
+    if (!changed) return;
+    persistLeague({ ...league, seasons });
+  };
   /* ---- league info & staff ---- */
   const updateLeagueInfo = (patch) => {
     if (!league) return;
@@ -7875,12 +8048,29 @@ function App() {
     const seasons = league.seasons.map(s => s.id === activeSeason.id ? { ...s, games: [...s.games, g] } : s);
     persistLeague({ ...league, seasons });
   };
+  // Recomputes the odds cache from a season's just-updated games and stashes
+  // it on the season object being persisted — the one point where a score
+  // change actually feeds back into standings, so it's the natural spot to
+  // re-simulate once instead of leaving it to run live on every Odds visit.
+  const withOddsCache = (updatedSeason) => {
+    const oddsCache = computeOddsCache(updatedSeason, teamsById, buildH2H(updatedSeason.games));
+    return { ...updatedSeason, oddsCache };
+  };
+  // One-time migration path for a season that has games/scores from before
+  // this cache existed — an admin viewing Odds triggers this once so the
+  // season gets a cache going forward, instead of leaving it permanently
+  // uncached (see the effect in OddsView).
+  const backfillOddsCache = () => {
+    if (!league || !activeSeason || activeSeason.oddsCache) return;
+    const seasons = league.seasons.map(s => s.id === activeSeason.id ? withOddsCache(s) : s);
+    persistLeague({ ...league, seasons });
+  };
   const saveScore = (gameId, { awayScore, homeScore, innings }) => {
     if (!league || !activeSeason) return;
     const updatedGames = activeSeason.games.map(g => g.id === gameId ? { ...g, awayScore, homeScore, innings, played: true, isForfeit: false, forfeitBy: null, isOngoing: false } : g);
     const { games: afterPlayIn } = advancePlayIn(updatedGames);
     const { games, championTeamId } = advancePlayoffs(afterPlayIn, activeSeason.settings, seedById);
-    const seasons = league.seasons.map(s => s.id === activeSeason.id ? { ...s, games, championTeamId: championTeamId !== undefined ? championTeamId : s.championTeamId } : s);
+    const seasons = league.seasons.map(s => s.id === activeSeason.id ? withOddsCache({ ...s, games, championTeamId: championTeamId !== undefined ? championTeamId : s.championTeamId }) : s);
     persistLeague({ ...league, seasons });
   };
   const declareForfeit = (gameId, forfeitBy) => {
@@ -7890,7 +8080,7 @@ function App() {
     const updatedGames = activeSeason.games.map(g => g.id === gameId ? { ...g, awayScore, homeScore, innings: 0, played: true, isForfeit: true, forfeitBy, winnerOverride: null, isOngoing: false } : g);
     const { games: afterPlayIn } = advancePlayIn(updatedGames);
     const { games, championTeamId } = advancePlayoffs(afterPlayIn, activeSeason.settings, seedById);
-    const seasons = league.seasons.map(s => s.id === activeSeason.id ? { ...s, games, championTeamId: championTeamId !== undefined ? championTeamId : s.championTeamId } : s);
+    const seasons = league.seasons.map(s => s.id === activeSeason.id ? withOddsCache({ ...s, games, championTeamId: championTeamId !== undefined ? championTeamId : s.championTeamId }) : s);
     persistLeague({ ...league, seasons });
   };
   // Marks a not-yet-final game as currently in progress — purely informational
@@ -7918,7 +8108,7 @@ function App() {
     const updatedGames = activeSeason.games.map(g => g.id === gameId ? { ...g, winnerOverride } : g);
     const { games: afterPlayIn } = advancePlayIn(updatedGames);
     const { games, championTeamId } = advancePlayoffs(afterPlayIn, activeSeason.settings, seedById);
-    const seasons = league.seasons.map(s => s.id === activeSeason.id ? { ...s, games, championTeamId: championTeamId !== undefined ? championTeamId : s.championTeamId } : s);
+    const seasons = league.seasons.map(s => s.id === activeSeason.id ? withOddsCache({ ...s, games, championTeamId: championTeamId !== undefined ? championTeamId : s.championTeamId }) : s);
     persistLeague({ ...league, seasons });
   };
   // Swaps which team is "home" vs "away" on a game — purely a relabeling, so
@@ -8099,7 +8289,7 @@ function App() {
     } else if (tab === 'transactions') {
       body = <TransactionsView season={activeSeason} teamsById={displayTeamsById} onOpenPlayer={onOpenPlayer} onRemoveActivity={removeActivityItem} />;
     } else if (tab === 'odds') {
-      body = <OddsView season={activeSeason} teamsById={displayTeamsById} standings={standings} settings={activeSeason.settings} onOpenTeam={onOpenTeam} h2hMatrix={h2hMatrix} onStartPlayoffs={startPlayoffs} onClearPlayoffs={clearPlayoffs} onStartPlayIn={startPlayIn} onClearPlayIn={clearPlayIn} onOpenCompare={onOpenCompare} />;
+      body = <OddsView season={activeSeason} teamsById={displayTeamsById} standings={standings} settings={activeSeason.settings} onOpenTeam={onOpenTeam} h2hMatrix={h2hMatrix} onStartPlayoffs={startPlayoffs} onClearPlayoffs={clearPlayoffs} onStartPlayIn={startPlayIn} onClearPlayIn={clearPlayIn} onOpenCompare={onOpenCompare} onBackfillOdds={backfillOddsCache} />;
     } else if (tab === 'extras') {
       body = <ExtrasView extras={extras} teamsById={displayTeamsById} leagueRecords={leagueRecords} activityLog={activeSeason.activityLog || []} season={activeSeason} standings={standings} onRemoveActivity={removeActivityItem} />;
     } else if (tab === 'graphs') {
@@ -8115,7 +8305,7 @@ function App() {
     } else if (tab === 'compare') {
       body = <ComparePage season={activeSeason} standingsAll={standingsResult.all} teamsById={displayTeamsById} h2hMatrix={h2hMatrix} initialTeamId={compareInitialId} initialTeamBId={compareSecondId} onBack={backFromCompare} onOpenTeam={onOpenTeam} />;
     } else if (tab === 'player') {
-      body = <PlayerPage league={league} teamsById={displayTeamsById} playerName={selectedPlayerName} onBack={backFromPlayer} onOpenTeam={onOpenTeam} onOpenPlayerCompare={onOpenPlayerCompare} activeSeasonId={activeSeason && activeSeason.id} onRemoveActivity={removeActivityItem} />;
+      body = <PlayerPage league={league} teamsById={displayTeamsById} playerName={selectedPlayerName} onBack={backFromPlayer} onOpenTeam={onOpenTeam} onOpenPlayerCompare={onOpenPlayerCompare} activeSeasonId={activeSeason && activeSeason.id} onRemoveActivity={removeActivityItem} onBackfillRobloxId={backfillRobloxId} onSyncRobloxRename={syncRobloxRename} onPlayerRenamed={setSelectedPlayerName} />;
     } else if (tab === 'playerCompare') {
       body = <PlayerComparePage league={league} teamsById={displayTeamsById} initialNameA={comparePlayerAName} initialNameB={comparePlayerBName} onBack={backFromPlayerCompare} onOpenPlayer={onOpenPlayer} activeSeasonId={activeSeason && activeSeason.id} />;
     }
