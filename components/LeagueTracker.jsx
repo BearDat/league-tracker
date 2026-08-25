@@ -2368,14 +2368,13 @@ function TeamHistoryPage({ team, history, onBack, loading }) {
 /* ==================================================================== */
 /* Seasons management                                                    */
 /* ==================================================================== */
-function SeasonsView({ league, viewingSeasonId, onBack, onSwitch, onSetDefault, onCreate, onRename, onDelete, onSetChampion, onSetPublic, teamsById, onSetTagline, onSetLogo }) {
+function SeasonsView({ league, viewingSeasonId, onBack, onSwitch, onSetDefault, onCreate, onRename, onDelete, onSetChampion, onSetPublic, teamsById, onSetLogo }) {
   const { isLoggedIn } = useAuth();
   const [newName, setNewName] = useState('');
   const [copyRoster, setCopyRoster] = useState(true);
   const [renamingId, setRenamingId] = useState(null);
   const [renameVal, setRenameVal] = useState('');
   const [champPickerId, setChampPickerId] = useState(null);
-  const [tagline, setTagline] = useState(league.tagline || '');
   const [logoBusy, setLogoBusy] = useState(false);
   const handleLogoFile = async (file) => {
     if (!file) return;
@@ -2406,25 +2405,20 @@ function SeasonsView({ league, viewingSeasonId, onBack, onSwitch, onSetDefault, 
           )}
         </div>
       </Panel>
-      <Panel className="overflow-hidden" style={{ borderColor: PRIMARY }}>
-        <SectionTitle accent={PRIMARY}>League tagline</SectionTitle>
-        <div className="px-4 pb-4 flex gap-2">
-          <input value={tagline} onChange={e => setTagline(e.target.value)} disabled={!isLoggedIn} placeholder="Shown under the league name" className="flex-1 bg-[#242424] border rounded px-3 py-2 text-sm disabled:opacity-50" style={{ borderColor: LINE, color: CHALK }} />
-          <button onClick={() => onSetTagline(tagline.trim())} disabled={!isLoggedIn} className="px-3 py-2 rounded font-bold text-sm disabled:opacity-50" style={{ background: PRIMARY, color: INK }}>Save</button>
-        </div>
-      </Panel>
-      <Panel className="overflow-hidden" style={{ borderColor: PRIMARY }}>
-        <SectionTitle accent={PRIMARY}>Start a new season</SectionTitle>
-        <div className="px-4 pb-4 space-y-2">
-          <input value={newName} onChange={e => setNewName(e.target.value)} disabled={!isLoggedIn} placeholder="e.g. 2026 Fall Season" className="w-full bg-[#242424] border rounded px-3 py-2 text-sm disabled:opacity-50" style={{ borderColor: LINE, color: CHALK }} />
-          <label className="flex items-center gap-2 text-xs" style={{ color: CHALK_DIM }}>
-            <input type="checkbox" checked={copyRoster} onChange={e => setCopyRoster(e.target.checked)} disabled={!isLoggedIn} style={{ accentColor: PRIMARY }} /> Bring over teams from the current season (stats reset to 0)
-          </label>
-          <button onClick={() => { if (newName.trim()) { onCreate(newName.trim(), copyRoster); setNewName(''); } }} disabled={!isLoggedIn} className="px-3 py-2 rounded font-bold text-sm flex items-center gap-1 disabled:opacity-50" style={{ background: PRIMARY, color: INK }}>
-            <Plus size={16} /> Create season
-          </button>
-        </div>
-      </Panel>
+      {isLoggedIn && (
+        <Panel className="overflow-hidden" style={{ borderColor: PRIMARY }}>
+          <SectionTitle accent={PRIMARY}>Start a new season</SectionTitle>
+          <div className="px-4 pb-4 space-y-2">
+            <input value={newName} onChange={e => setNewName(e.target.value)} placeholder="e.g. 2026 Fall Season" className="w-full bg-[#242424] border rounded px-3 py-2 text-sm" style={{ borderColor: LINE, color: CHALK }} />
+            <label className="flex items-center gap-2 text-xs" style={{ color: CHALK_DIM }}>
+              <input type="checkbox" checked={copyRoster} onChange={e => setCopyRoster(e.target.checked)} style={{ accentColor: PRIMARY }} /> Bring over teams from the current season (stats reset to 0)
+            </label>
+            <button onClick={() => { if (newName.trim()) { onCreate(newName.trim(), copyRoster); setNewName(''); } }} className="px-3 py-2 rounded font-bold text-sm flex items-center gap-1" style={{ background: PRIMARY, color: INK }}>
+              <Plus size={16} /> Create season
+            </button>
+          </div>
+        </Panel>
+      )}
       <Panel className="overflow-hidden" style={{ borderColor: PRIMARY }}>
         <SectionTitle accent={PRIMARY}>Seasons &amp; champions</SectionTitle>
         <div className="px-2 pb-3">
@@ -2495,7 +2489,7 @@ function ChampionBanner({ team }) {
   );
 }
 
-function HomeView({ season, teamsById, settings, onOpenTeam, h2hMatrix, sport, onStartPlayoffs, onClearPlayoffs, onStartPlayIn, onClearPlayIn, onOpenCompare, news, onViewNews }) {
+function HomeView({ season, teamsById, settings, onOpenTeam, h2hMatrix, sport, onStartPlayoffs, onClearPlayoffs, onStartPlayIn, onClearPlayIn, onOpenCompare, news, onViewNews, onOpenPlayer, onViewLeaders }) {
   if ((season.games || []).length === 0) {
     return <div className="p-4"><Panel><p className="px-4 py-8 text-sm text-center" style={{ color: CHALK_DIM }}>Import a schedule to see standings and scores here.</p></Panel></div>;
   }
@@ -2515,11 +2509,13 @@ function HomeView({ season, teamsById, settings, onOpenTeam, h2hMatrix, sport, o
   const seededStandings = buildMainBracketSeeds(liveStandings, settings, playInWinnerId);
   const allGamesChrono = sortGamesChronologically((season.games || []).filter(g => !g.isBye), settings.scheduleMode || 'date');
 
-  const newsPanel = (news || []).length > 0 && (
+  const newsPanel = (
     <Panel accent={PRIMARY} className="overflow-hidden">
       <SectionTitle accent={PRIMARY} right={<button onClick={onViewNews} className="text-[11px] font-bold" style={{ color: PRIMARY }}>View all</button>}>Latest news</SectionTitle>
       <div className="px-2 pb-3">
-        {news.slice(0, 3).map(n => (
+        {(news || []).length === 0 ? (
+          <p className="px-2 py-3 text-sm" style={{ color: CHALK_DIM }}>No news posted yet.</p>
+        ) : news.slice(0, 3).map(n => (
           <button key={n.id} onClick={onViewNews} className="w-full flex items-center gap-2 text-left px-2 py-2 rounded" style={{ borderBottom: `1px solid ${LINE}` }}>
             {n.imageUrl && <img src={n.imageUrl} alt="" className="w-10 h-10 object-cover rounded flex-shrink-0" />}
             <div className="min-w-0 flex-1">
@@ -2528,6 +2524,35 @@ function HomeView({ season, teamsById, settings, onOpenTeam, h2hMatrix, sport, o
             </div>
           </button>
         ))}
+      </div>
+    </Panel>
+  );
+
+  const leaders = computeSeasonPlayerLeaders(season, teamsById);
+  const leaderPreviewCats = [
+    { title: 'Batting Avg', accent: GOLD, players: leaders.filter(p => p.totals.ab >= 3), valueFn: p => p.batting.avg, formatFn: (v) => v.toFixed(3).replace(/^0/, '') },
+    { title: 'Home Runs', players: leaders, valueFn: p => p.totals.hr, formatFn: (v) => String(Math.round(v)) },
+    { title: 'ERA', accent: NEGATIVE, players: leaders.filter(p => p.totals.outs >= 3), valueFn: p => p.pitching.era, formatFn: (v) => v.toFixed(2), sortDesc: false },
+  ];
+  const leadersPanel = (
+    <Panel accent={GOLD} className="overflow-hidden">
+      <SectionTitle accent={GOLD} right={<button onClick={onViewLeaders} className="text-[11px] font-bold" style={{ color: GOLD }}>View all</button>}>League leaders</SectionTitle>
+      <div className="px-2 pb-3">
+        {leaders.length === 0 ? (
+          <p className="px-2 py-3 text-sm" style={{ color: CHALK_DIM }}>No stats imported yet this season.</p>
+        ) : leaderPreviewCats.map(cat => {
+          const top = [...cat.players].sort((a, b) => cat.sortDesc === false ? cat.valueFn(a) - cat.valueFn(b) : cat.valueFn(b) - cat.valueFn(a))[0];
+          if (!top) return null;
+          const t = teamsById[top.teamId];
+          return (
+            <button key={cat.title} onClick={() => onOpenPlayer(top.name)} className="w-full flex items-center gap-2 px-2 py-2 text-left" style={{ borderTop: `1px solid ${LINE}` }}>
+              <span className="text-[10px] uppercase font-bold w-20 flex-shrink-0" style={{ color: CHALK_DIM }}>{cat.title}</span>
+              {t && <TeamMark team={t} size={14} />}
+              <span className="flex-1 text-sm font-semibold truncate" style={{ color: CHALK }}>{top.name}</span>
+              <span className="text-sm font-mono font-bold flex-shrink-0" style={{ color: cat.accent || PRIMARY }}>{cat.formatFn(cat.valueFn(top))}</span>
+            </button>
+          );
+        })}
       </div>
     </Panel>
   );
@@ -2582,42 +2607,32 @@ function HomeView({ season, teamsById, settings, onOpenTeam, h2hMatrix, sport, o
         } else if (playInGames.length > 0) {
           scoresTitle = 'Play-In Tournament';
         }
-        const GameLine = ({ g }) => {
+        const GameChip = ({ g }) => {
           const home = teamsById[g.homeTeamId], away = teamsById[g.awayTeamId];
-          const homeColor = home ? teamColor(home) : LINE, awayColor = away ? teamColor(away) : LINE;
           return (
-            <div className="flex items-center gap-2 px-2 py-2 text-sm rounded" style={{ borderLeft: `3px solid ${awayColor}`, borderRight: `3px solid ${homeColor}`, borderBottom: `1px solid ${LINE}` }}>
-              <span className="flex-1 truncate flex items-center gap-1.5" style={{ color: CHALK }}>
-                {away && <TeamMark team={away} size={14} />}
-                {away ? away.name : g.awayScheduleName} <span style={{ color: CHALK_DIM }}>@</span> {home ? home.name : g.homeScheduleName}
-                {home && <TeamMark team={home} size={14} />}
-              </span>
-              {g.played
-                ? <span className="font-mono text-xs px-2 py-0.5 rounded font-bold" style={{ background: PANEL2, color: PRIMARY }}>{g.awayScore}–{g.homeScore}</span>
-                : <span className="text-[11px]" style={{ color: CHALK_DIM }}>{g.date || 'upcoming'}</span>}
-              {g.streamUrl && !g.played && (
-                <a href={g.streamUrl} target="_blank" rel="noopener noreferrer" className="flex items-center gap-1 text-[10px] font-bold uppercase px-1.5 py-0.5 rounded flex-shrink-0" style={{ background: `${PRIMARY}22`, color: PRIMARY }}><Video size={10} /> Watch</a>
-              )}
+            <div className="flex-shrink-0 snap-start rounded-lg p-3" style={{ width: 168, background: PANEL2, border: `1px solid ${LINE}` }}>
+              <div className="text-[9px] uppercase font-bold mb-2 flex items-center justify-between" style={{ color: g.played ? CHALK_DIM : PRIMARY }}>
+                <span>{g.played ? 'Final' : (g.date || 'Upcoming')}</span>
+                {g.streamUrl && !g.played && <Video size={11} style={{ color: PRIMARY }} />}
+              </div>
+              <div className="flex items-center justify-between gap-1.5 mb-1">
+                <span className="flex items-center gap-1 min-w-0 text-xs font-semibold truncate" style={{ color: CHALK }}>{away && <TeamMark team={away} size={13} />} {away ? away.name : g.awayScheduleName}</span>
+                {g.played && <span className="font-head text-sm font-bold flex-shrink-0" style={{ color: CHALK }}>{g.awayScore}</span>}
+              </div>
+              <div className="flex items-center justify-between gap-1.5">
+                <span className="flex items-center gap-1 min-w-0 text-xs font-semibold truncate" style={{ color: CHALK }}>{home && <TeamMark team={home} size={13} />} {home ? home.name : g.homeScheduleName}</span>
+                {g.played && <span className="font-head text-sm font-bold flex-shrink-0" style={{ color: CHALK }}>{g.homeScore}</span>}
+              </div>
             </div>
           );
         };
+        const chipGames = [...(previousGame ? [previousGame] : []), ...nextUpcoming];
         return (
           <Panel className="overflow-hidden" style={{ borderColor: PRIMARY }}>
             <SectionTitle accent={PRIMARY}>{scoresTitle}</SectionTitle>
-            <div className="px-2 pb-3">
-              {previousGame && (
-                <>
-                  <div className="px-2 pb-1 text-[10px] uppercase font-bold" style={{ color: CHALK_DIM }}>Previous</div>
-                  <GameLine g={previousGame} />
-                </>
-              )}
-              {nextUpcoming.length > 0 && (
-                <>
-                  <div className="px-2 pt-2 pb-1 text-[10px] uppercase font-bold" style={{ color: CHALK_DIM }}>Upcoming</div>
-                  {nextUpcoming.map(g => <GameLine key={g.id} g={g} />)}
-                </>
-              )}
-              {!previousGame && nextUpcoming.length === 0 && <p className="px-2 py-3 text-sm" style={{ color: CHALK_DIM }}>No games yet.</p>}
+            <div className="px-3 pb-3 flex gap-2.5 overflow-x-auto snap-x">
+              {chipGames.length === 0 && <p className="px-1 py-3 text-sm" style={{ color: CHALK_DIM }}>No games yet.</p>}
+              {chipGames.map(g => <GameChip key={g.id} g={g} />)}
             </div>
           </Panel>
         );
@@ -2739,6 +2754,7 @@ function HomeView({ season, teamsById, settings, onOpenTeam, h2hMatrix, sport, o
       </div>
       <div className="space-y-4">
         {newsPanel}
+        {leadersPanel}
       </div>
       </div>
     </div>
@@ -2918,17 +2934,21 @@ function StandingsView({ standings, updateMemberField, season, settings, movemen
 /* ==================================================================== */
 function AppearanceSettings({ theme, saveTheme }) {
   const { isLoggedIn } = useAuth();
+  // The league-wide default theme is admin-only — every visitor (logged in
+  // or not) already has their own light/dark override via the header
+  // toggle, so there's nothing here for a logged-out visitor to use.
+  if (!isLoggedIn) return null;
   return (
     <Panel>
       <SectionTitle>Appearance</SectionTitle>
       <div className="px-4 pb-4 space-y-4 text-sm">
-        <p className="text-xs" style={{ color: CHALK_DIM }}>Changes apply everywhere in the app immediately, and stick across leagues and seasons.</p>
+        <p className="text-xs" style={{ color: CHALK_DIM }}>Sets the default theme for visitors who haven't picked their own with the header toggle. Changes apply everywhere in the app immediately, and stick across leagues and seasons.</p>
         <div className="flex gap-2">
           {[['dark', 'Dark mode'], ['light', 'Light mode']].map(([key, label]) => (
-            <button key={key} onClick={() => saveTheme({ ...THEME_PRESETS[key] })} disabled={!isLoggedIn} className="flex-1 px-3 py-2 rounded font-bold text-xs disabled:opacity-50" style={{ background: PANEL2, color: PRIMARY, border: `1px solid ${LINE}` }}>{label}</button>
+            <button key={key} onClick={() => saveTheme({ ...THEME_PRESETS[key] })} className="flex-1 px-3 py-2 rounded font-bold text-xs" style={{ background: PANEL2, color: PRIMARY, border: `1px solid ${LINE}` }}>{label}</button>
           ))}
         </div>
-        {isLoggedIn && [
+        {[
           ['chalk', 'Main text color', DEFAULT_THEME.chalk],
           ['chalkDim', 'Secondary text color', DEFAULT_THEME.chalkDim],
           ['primary', 'Accent color', DEFAULT_THEME.primary],
@@ -3051,19 +3071,21 @@ function SettingsView({ settings, saveSettings, theme, saveTheme, sport, season,
       {isLoggedIn && (
         <ScheduleManagementPanel season={season} settings={settings} importGames={importGames} addManualGame={addManualGame} generateSchedule={generateSchedule} teamsById={teamsById} />
       )}
-      <Panel>
-        <SectionTitle>Odds display</SectionTitle>
-        <div className="px-4 pb-4 text-sm">
-          <div className="flex items-center justify-between gap-2" style={{ color: CHALK }}>
-            <span>Odds format<div className="text-[11px]" style={{ color: CHALK_DIM }}>Percent chance, or American moneyline ("+125")</div></span>
-            <div className="flex rounded overflow-hidden border" style={{ borderColor: LINE }}>
-              {['percent', 'american'].map(m => (
-                <button key={m} onClick={() => saveSettings({ ...settings, oddsFormat: m })} disabled={!isLoggedIn} className="px-2.5 py-1 text-xs font-semibold capitalize disabled:opacity-50" style={{ background: (settings.oddsFormat || 'percent') === m ? PRIMARY : 'transparent', color: (settings.oddsFormat || 'percent') === m ? INK : CHALK_DIM }}>{m}</button>
-              ))}
+      {isLoggedIn && (
+        <Panel>
+          <SectionTitle>Odds display</SectionTitle>
+          <div className="px-4 pb-4 text-sm">
+            <div className="flex items-center justify-between gap-2" style={{ color: CHALK }}>
+              <span>Default odds format<div className="text-[11px]" style={{ color: CHALK_DIM }}>Percent chance, or American moneyline ("+125") — visitors can override this for themselves from the Odds tab</div></span>
+              <div className="flex rounded overflow-hidden border" style={{ borderColor: LINE }}>
+                {['percent', 'american'].map(m => (
+                  <button key={m} onClick={() => saveSettings({ ...settings, oddsFormat: m })} className="px-2.5 py-1 text-xs font-semibold capitalize" style={{ background: (settings.oddsFormat || 'percent') === m ? PRIMARY : 'transparent', color: (settings.oddsFormat || 'percent') === m ? INK : CHALK_DIM }}>{m}</button>
+                ))}
+              </div>
             </div>
           </div>
-        </div>
-      </Panel>
+        </Panel>
+      )}
       <AppearanceSettings theme={theme} saveTheme={saveTheme} />
     </div>
   );
@@ -3516,13 +3538,14 @@ function computePlayerWAR(t, leagueERA) {
 // with career-style totals/advanced stats scoped to just this season — the
 // pool the Leaders page ranks. WAR needs a league-average ERA baseline, so
 // it's computed once here and threaded through rather than per-player.
-function computeSeasonPlayerLeaders(season, teamsById) {
+function computeSeasonPlayerLeaders(season, teamsById, mode = 'regular') {
   const byPlayer = new Map();
   (season.members || []).forEach(member => {
     (member.roster || []).forEach(p => byPlayer.set(p.id, { playerId: p.id, name: p.name, teamId: member.teamId, rows: [] }));
   });
   (season.games || []).forEach(g => {
     if (g.isBye || g.isSpringTraining) return;
+    if (!!g.isPlayoff !== (mode === 'playoffs')) return;
     ['home', 'away'].forEach(side => {
       ((g.playerStats && g.playerStats[side]) || []).forEach(row => {
         const entry = byPlayer.get(row.playerId);
@@ -5441,7 +5464,9 @@ function LeaderBoardCard({ title, accent = PRIMARY, players, valueFn, formatFn, 
 }
 
 function StatLeadersView({ season, teamsById, onOpenPlayer }) {
-  const players = useMemo(() => computeSeasonPlayerLeaders(season, teamsById), [season, teamsById]);
+  const [mode, setMode] = useState('regular');
+  const hasPlayoffGames = useMemo(() => (season.games || []).some(g => g.isPlayoff && !g.isBye), [season]);
+  const players = useMemo(() => computeSeasonPlayerLeaders(season, teamsById, mode), [season, teamsById, mode]);
   // Small samples make rate stats (AVG/OPS/ERA…) meaningless — a 1-for-1
   // game is a .1000 hitter otherwise. Counting stats (HR, RBI, K…) don't
   // need a qualifier since more games played only helps, never inflates.
@@ -5451,29 +5476,45 @@ function StatLeadersView({ season, teamsById, onOpenPlayer }) {
   const fmt2 = (v) => v.toFixed(2);
   const fmt1 = (v) => (v >= 0 ? '+' : '') + v.toFixed(1);
   const fmtInt = (v) => String(Math.round(v));
+  const fmtIp = (v) => v.toFixed(1);
 
   return (
     <div className="p-4 space-y-4">
       <Panel className="overflow-hidden" style={{ borderColor: GOLD }}>
-        <SectionTitle accent={GOLD}>Stat leaders</SectionTitle>
-        <p className="px-4 pb-4 text-xs" style={{ color: CHALK_DIM }}>Ranked from imported game stats for this season only. Rate stats (AVG, OPS, ERA, WHIP) need at least 3 AB or 1 IP to qualify. WAR is a simplified estimate — linear-weights batting runs plus runs saved vs. this season's league-average ERA, not an official sabermetric figure.</p>
+        <SectionTitle accent={GOLD} right={hasPlayoffGames && (
+          <div className="flex rounded-lg overflow-hidden border" style={{ borderColor: LINE }}>
+            {[['regular', 'Regular Season'], ['playoffs', 'Playoffs']].map(([m, label]) => (
+              <button key={m} onClick={() => setMode(m)} className="px-3 py-1.5 text-xs font-bold" style={{ background: mode === m ? GOLD : 'transparent', color: mode === m ? INK : CHALK_DIM }}>{label}</button>
+            ))}
+          </div>
+        )}>Stat leaders</SectionTitle>
+        <p className="px-4 pb-4 text-xs" style={{ color: CHALK_DIM }}>Ranked from imported game stats for this season's {mode === 'playoffs' ? 'playoff games' : 'regular season'} only. Rate stats (AVG, OPS, ERA, WHIP) need at least 3 AB or 1 IP to qualify. WAR is a simplified estimate — linear-weights batting runs plus runs saved vs. this season's league-average ERA, not an official sabermetric figure.</p>
       </Panel>
 
       {players.length === 0 ? (
-        <Panel><p className="px-4 py-8 text-sm text-center" style={{ color: CHALK_DIM }}>No stats imported yet this season — import a game's box score from the Schedule tab.</p></Panel>
+        <Panel><p className="px-4 py-8 text-sm text-center" style={{ color: CHALK_DIM }}>{mode === 'playoffs' ? 'No playoff stats imported yet this season.' : "No stats imported yet this season — import a game's box score from the Schedule tab."}</p></Panel>
       ) : (
-        <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+        <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3">
           <LeaderBoardCard title="Batting Average" players={batters} valueFn={p => p.batting.avg} formatFn={fmtRate} teamsById={teamsById} onOpenPlayer={onOpenPlayer} />
           <LeaderBoardCard title="OPS" accent={GOLD} players={batters} valueFn={p => p.batting.ops} formatFn={fmtRate} teamsById={teamsById} onOpenPlayer={onOpenPlayer} />
           <LeaderBoardCard title="On-Base %" players={batters} valueFn={p => p.batting.obp} formatFn={fmtRate} teamsById={teamsById} onOpenPlayer={onOpenPlayer} />
           <LeaderBoardCard title="Slugging %" players={batters} valueFn={p => p.batting.slg} formatFn={fmtRate} teamsById={teamsById} onOpenPlayer={onOpenPlayer} />
+          <LeaderBoardCard title="Isolated Power" players={batters} valueFn={p => p.batting.iso} formatFn={fmtRate} teamsById={teamsById} onOpenPlayer={onOpenPlayer} />
           <LeaderBoardCard title="Home Runs" players={players} valueFn={p => p.totals.hr} formatFn={fmtInt} teamsById={teamsById} onOpenPlayer={onOpenPlayer} />
           <LeaderBoardCard title="RBI" players={players} valueFn={p => p.totals.rbi} formatFn={fmtInt} teamsById={teamsById} onOpenPlayer={onOpenPlayer} />
           <LeaderBoardCard title="Hits" players={players} valueFn={p => p.totals.h} formatFn={fmtInt} teamsById={teamsById} onOpenPlayer={onOpenPlayer} />
           <LeaderBoardCard title="Runs" players={players} valueFn={p => p.totals.r} formatFn={fmtInt} teamsById={teamsById} onOpenPlayer={onOpenPlayer} />
+          <LeaderBoardCard title="Doubles" players={players} valueFn={p => p.totals.doubles} formatFn={fmtInt} teamsById={teamsById} onOpenPlayer={onOpenPlayer} />
+          <LeaderBoardCard title="Triples" players={players} valueFn={p => p.totals.triples} formatFn={fmtInt} teamsById={teamsById} onOpenPlayer={onOpenPlayer} />
+          <LeaderBoardCard title="Walks (Batting)" players={players} valueFn={p => p.totals.bb} formatFn={fmtInt} teamsById={teamsById} onOpenPlayer={onOpenPlayer} />
+          <LeaderBoardCard title="Strikeouts (Batting)" accent={NEGATIVE} players={players} valueFn={p => p.totals.so} formatFn={fmtInt} teamsById={teamsById} onOpenPlayer={onOpenPlayer} sortDesc={false} />
           <LeaderBoardCard title="ERA" accent={NEGATIVE} players={pitchers} valueFn={p => p.pitching.era} formatFn={fmt2} teamsById={teamsById} onOpenPlayer={onOpenPlayer} sortDesc={false} />
           <LeaderBoardCard title="WHIP" accent={NEGATIVE} players={pitchers} valueFn={p => p.pitching.whip} formatFn={fmt2} teamsById={teamsById} onOpenPlayer={onOpenPlayer} sortDesc={false} />
+          <LeaderBoardCard title="Innings Pitched" players={pitchers} valueFn={p => p.pitching.ip} formatFn={fmtIp} teamsById={teamsById} onOpenPlayer={onOpenPlayer} />
           <LeaderBoardCard title="Strikeouts (Pitching)" players={pitchers} valueFn={p => p.totals.k} formatFn={fmtInt} teamsById={teamsById} onOpenPlayer={onOpenPlayer} />
+          <LeaderBoardCard title="K/9" players={pitchers} valueFn={p => p.pitching.k9} formatFn={fmt2} teamsById={teamsById} onOpenPlayer={onOpenPlayer} />
+          <LeaderBoardCard title="BB/9" accent={NEGATIVE} players={pitchers} valueFn={p => p.pitching.bb9} formatFn={fmt2} teamsById={teamsById} onOpenPlayer={onOpenPlayer} sortDesc={false} />
+          <LeaderBoardCard title="K/BB" players={pitchers} valueFn={p => (p.pitching.kbb === Infinity ? 999 : p.pitching.kbb)} formatFn={(v) => v === 999 ? '∞' : fmt2(v)} teamsById={teamsById} onOpenPlayer={onOpenPlayer} />
           <LeaderBoardCard title="WAR" accent={GOLD} players={players} valueFn={p => p.war} formatFn={fmt1} teamsById={teamsById} onOpenPlayer={onOpenPlayer} />
         </div>
       )}
@@ -6755,7 +6796,6 @@ function App() {
     if (league && league.id === id) persistLeague({ ...league, name });
     else { const lg = await loadObj(`league:${id}`); if (lg) await saveObj(`league:${id}`, { ...lg, name }); }
   };
-  const setLeagueTagline = (tagline) => { if (league) persistLeague({ ...league, tagline }); };
   const setLeagueLogo = (logoUrl) => { if (league) persistLeague({ ...league, logoUrl }); };
   const backToLeagues = async () => {
     try { await flushAllQueues(); } catch (e) { /* best effort */ }
@@ -7473,13 +7513,13 @@ function App() {
   } else if (screen === 'league' && league) {
     const activeSeasonPublic = activeSeason ? activeSeason.public !== false : true;
     if (tab === 'seasons') {
-      body = <SeasonsView league={league} viewingSeasonId={activeSeason && activeSeason.id} onBack={() => setTab('home')} onSwitch={switchSeason} onSetDefault={setDefaultSeason} onCreate={createSeason} onRename={renameSeason} onDelete={deleteSeason} onSetChampion={setChampion} onSetPublic={setSeasonPublic} teamsById={teamsById} onSetTagline={setLeagueTagline} onSetLogo={setLeagueLogo} />;
+      body = <SeasonsView league={league} viewingSeasonId={activeSeason && activeSeason.id} onBack={() => setTab('home')} onSwitch={switchSeason} onSetDefault={setDefaultSeason} onCreate={createSeason} onRename={renameSeason} onDelete={deleteSeason} onSetChampion={setChampion} onSetPublic={setSeasonPublic} teamsById={teamsById} onSetLogo={setLeagueLogo} />;
     } else if (!activeSeason) {
       body = <div className="p-4"><Panel><p className="px-4 py-8 text-sm text-center" style={{ color: CHALK_DIM }}>This league has no seasons yet.</p></Panel></div>;
     } else if (!activeSeasonPublic && !isLoggedIn) {
       body = <div className="p-4"><Panel><p className="px-4 py-8 text-sm text-center" style={{ color: CHALK_DIM }}>This season isn't public yet. Check back later, or log in if you're an admin.</p></Panel></div>;
     } else if (tab === 'home') {
-      body = <HomeView season={activeSeason} teamsById={displayTeamsById} settings={activeSeason.settings} onOpenTeam={onOpenTeam} h2hMatrix={h2hMatrix} sport={sport} onStartPlayoffs={startPlayoffs} onClearPlayoffs={clearPlayoffs} onStartPlayIn={startPlayIn} onClearPlayIn={clearPlayIn} onOpenCompare={onOpenCompare} news={league.news || []} onViewNews={() => setTab('news')} />;
+      body = <HomeView season={activeSeason} teamsById={displayTeamsById} settings={activeSeason.settings} onOpenTeam={onOpenTeam} h2hMatrix={h2hMatrix} sport={sport} onStartPlayoffs={startPlayoffs} onClearPlayoffs={clearPlayoffs} onStartPlayIn={startPlayIn} onClearPlayIn={clearPlayIn} onOpenCompare={onOpenCompare} news={league.news || []} onViewNews={() => setTab('news')} onOpenPlayer={onOpenPlayer} onViewLeaders={() => setTab('leaders')} />;
     } else if (tab === 'standings') {
       body = <StandingsView standings={standings} updateMemberField={updateMemberField} season={activeSeason} settings={activeSeason.settings} movementById={movementById} onOpenTeam={onOpenTeam} />;
     } else if (tab === 'teams' && isLoggedIn) {
@@ -7569,7 +7609,7 @@ function App() {
             <TabBtn active={tab === 'extras'} onClick={() => setTab('extras')} label="Extras" />
             <TabBtn active={tab === 'graphs'} onClick={() => setTab('graphs')} label="Graphs" />
             <TabBtn active={tab === 'info'} onClick={() => setTab('info')} label="Info" />
-            <TabBtn active={tab === 'settings'} onClick={() => setTab('settings')} label="Settings" />
+            {isLoggedIn && <TabBtn active={tab === 'settings'} onClick={() => setTab('settings')} label="Settings" />}
           </nav>
         )}
       </header>
