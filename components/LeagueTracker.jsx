@@ -12,7 +12,7 @@ import {
   Award as AwardIcon, Eye, EyeOff, Sun, Moon, Video, ClipboardList, Newspaper, Info as InfoIcon, TrendingUp, Star
 } from 'lucide-react';
 import { supabase } from '../lib/supabaseClient';
-import { AuthProvider, useAuth } from '../lib/AuthContext';
+import { AuthProvider, useAuth, ROLE_LABELS } from '../lib/AuthContext';
 import LoginControl from './LoginControl';
 
 // Single league this site serves. Set once you've created your league (see
@@ -1999,7 +1999,8 @@ function SeriesMatchCard({ slotGames, teamsById, winsNeeded, seriesLength, stand
 }
 
 function PlayInBracket({ standings, settings, playInGames, teamsById, onStart, onClear, onOpenTeam, onOpenCompare }) {
-  const { isLoggedIn } = useAuth();
+  const { hasPermission } = useAuth();
+  const isLoggedIn = hasPermission('manageSeasons');
   const playInTeams = settings.playInTeams || 0;
   if (playInTeams < 2) return null;
   const hasPlayIn = playInGames.length > 0;
@@ -2078,7 +2079,8 @@ function PlayInBracket({ standings, settings, playInGames, teamsById, onStart, o
 }
 
 function BracketView({ standings, settings, playoffGames, teamsById, onStart, onClear, onOpenTeam, h2hMatrix, onOpenCompare }) {
-  const { isLoggedIn } = useAuth();
+  const { hasPermission } = useAuth();
+  const isLoggedIn = hasPermission('manageSeasons');
   const playoffSpots = settings.playoffSpots;
   const n = Math.min(playoffSpots, standings.length);
   const hasPlayoffs = playoffGames.length > 0;
@@ -2175,7 +2177,8 @@ function BracketView({ standings, settings, playoffGames, teamsById, onStart, on
 /* Leagues screen                                                        */
 /* ==================================================================== */
 function LeaguesView({ index, onOpen, onCreate, onDelete, onRename, onRefresh, loadError, onOpenRegistry, onOpenAppearance }) {
-  const { isLoggedIn } = useAuth();
+  const { hasPermission } = useAuth();
+  const isLoggedIn = hasPermission('manageAdmins');
   const [newName, setNewName] = useState('');
   const [newSport, setNewSport] = useState('baseball');
   const [renamingId, setRenamingId] = useState(null);
@@ -2245,7 +2248,8 @@ function LeaguesView({ index, onOpen, onCreate, onDelete, onRename, onRefresh, l
 /* Global team registry + cross-league history                          */
 /* ==================================================================== */
 function BrandEditor({ gt, updateGlobalTeamField }) {
-  const { isLoggedIn } = useAuth();
+  const { hasPermission } = useAuth();
+  const isLoggedIn = hasPermission('manageRosters');
   const [busy, setBusy] = useState(null);
   const handleImage = async (field, file) => {
     if (!file) return;
@@ -2287,7 +2291,8 @@ function BrandEditor({ gt, updateGlobalTeamField }) {
 }
 
 function TeamRegistryView({ teamsIndex, teamsById, onBack, onCreate, onOpenHistory, updateGlobalTeamField }) {
-  const { isLoggedIn } = useAuth();
+  const { hasPermission } = useAuth();
+  const isLoggedIn = hasPermission('manageRosters');
   const [name, setName] = useState('');
   return (
     <div className="p-4 space-y-4">
@@ -2369,7 +2374,8 @@ function TeamHistoryPage({ team, history, onBack, loading }) {
 /* Seasons management                                                    */
 /* ==================================================================== */
 function SeasonsView({ league, viewingSeasonId, onBack, onSwitch, onSetDefault, onCreate, onRename, onDelete, onSetChampion, onSetPublic, teamsById, onSetLogo }) {
-  const { isLoggedIn } = useAuth();
+  const { hasPermission } = useAuth();
+  const isLoggedIn = hasPermission('manageSeasons');
   const [newName, setNewName] = useState('');
   const [copyRoster, setCopyRoster] = useState(true);
   const [renamingId, setRenamingId] = useState(null);
@@ -2765,7 +2771,8 @@ function HomeView({ season, teamsById, settings, onOpenTeam, h2hMatrix, sport, o
 /* Standings view                                                        */
 /* ==================================================================== */
 function StandingsView({ standings, updateMemberField, season, settings, movementById, onOpenTeam }) {
-  const { isLoggedIn } = useAuth();
+  const { hasPermission } = useAuth();
+  const isLoggedIn = hasPermission('manageSeasons');
   const [editBaseline, setEditBaseline] = useState(false);
   const [view, setView] = useState('overall');
   const [copied, setCopied] = useState(false);
@@ -2933,11 +2940,11 @@ function StandingsView({ standings, updateMemberField, season, settings, movemen
 /* Settings view                                                         */
 /* ==================================================================== */
 function AppearanceSettings({ theme, saveTheme }) {
-  const { isLoggedIn } = useAuth();
+  const { hasPermission } = useAuth();
   // The league-wide default theme is admin-only — every visitor (logged in
   // or not) already has their own light/dark override via the header
-  // toggle, so there's nothing here for a logged-out visitor to use.
-  if (!isLoggedIn) return null;
+  // toggle, so there's nothing here for anyone without manageSettings.
+  if (!hasPermission('manageSettings')) return null;
   return (
     <Panel>
       <SectionTitle>Appearance</SectionTitle>
@@ -2969,11 +2976,102 @@ function AppearanceSettings({ theme, saveTheme }) {
     </Panel>
   );
 }
+// Site-Owner-only screen for granting/changing/revoking admin roles. Reads
+// and writes the admin_roles table directly (its own RLS, separate from the
+// kv_store queue everything else in this app goes through) since role
+// assignment is the one thing that stays database-enforced rather than
+// UI-only — see supabase/schema.sql.
+function ManageAdminsPanel() {
+  const { hasPermission, user } = useAuth();
+  const [rows, setRows] = useState(null);
+  const [error, setError] = useState(null);
+  const [busy, setBusy] = useState(false);
+  const [newUserId, setNewUserId] = useState('');
+  const [newUsername, setNewUsername] = useState('');
+  const [newRole, setNewRole] = useState('board');
+
+  const load = useCallback(() => {
+    supabase.from('admin_roles').select('user_id, username, role, updated_at').order('username')
+      .then(({ data, error: err }) => { if (err) setError(err.message); else { setRows(data || []); setError(null); } });
+  }, []);
+  useEffect(() => { load(); }, [load]);
+
+  if (!hasPermission('manageAdmins')) return null;
+
+  const addAdmin = async (e) => {
+    e.preventDefault();
+    if (!newUserId.trim() || !newUsername.trim()) return;
+    setBusy(true);
+    const { error: err } = await supabase.from('admin_roles').upsert({ user_id: newUserId.trim(), username: newUsername.trim(), role: newRole });
+    setBusy(false);
+    if (err) { setError(err.message); return; }
+    setNewUserId(''); setNewUsername(''); setNewRole('board');
+    load();
+  };
+  const changeRole = async (userId, role) => {
+    setBusy(true);
+    const { error: err } = await supabase.from('admin_roles').update({ role }).eq('user_id', userId);
+    setBusy(false);
+    if (err) { setError(err.message); return; }
+    load();
+  };
+  const removeAdmin = async (userId, username) => {
+    if (!confirm(`Remove admin access for "${username}"? They'll still be able to log in but won't be able to do anything until re-added.`)) return;
+    setBusy(true);
+    const { error: err } = await supabase.from('admin_roles').delete().eq('user_id', userId);
+    setBusy(false);
+    if (err) { setError(err.message); return; }
+    load();
+  };
+
+  return (
+    <Panel className="overflow-hidden" style={{ borderColor: GOLD }}>
+      <SectionTitle accent={GOLD}>Manage admins</SectionTitle>
+      <div className="px-4 pb-4 space-y-3">
+        <p className="text-xs" style={{ color: CHALK_DIM }}>
+          Create the account itself in the Supabase dashboard (Authentication → Users → Add user, email <code>username@admin.local</code>), copy its User UID, then grant it a role here.
+        </p>
+        {error && <p className="text-xs" style={{ color: NEGATIVE }}>{error}</p>}
+        {rows === null ? (
+          <p className="text-sm" style={{ color: CHALK_DIM }}>Loading…</p>
+        ) : rows.length === 0 ? (
+          <p className="text-sm" style={{ color: CHALK_DIM }}>No admins granted a role yet.</p>
+        ) : (
+          <div className="space-y-2">
+            {rows.map(r => (
+              <div key={r.user_id} className="flex items-center gap-2 px-3 py-2 rounded-lg" style={{ background: PANEL2 }}>
+                <span className="flex-1 text-sm font-semibold truncate" style={{ color: CHALK }}>{r.username}{r.user_id === user?.id ? ' (you)' : ''}</span>
+                <select value={r.role} disabled={busy} onChange={e => changeRole(r.user_id, e.target.value)} className="bg-[#242424] border rounded px-2 py-1 text-xs disabled:opacity-50" style={{ borderColor: LINE, color: CHALK }}>
+                  {Object.entries(ROLE_LABELS).map(([key, label]) => <option key={key} value={key}>{label}</option>)}
+                </select>
+                <button onClick={() => removeAdmin(r.user_id, r.username)} disabled={busy} className="p-1 rounded disabled:opacity-50" style={{ color: NEGATIVE }}><Trash2 size={14} /></button>
+              </div>
+            ))}
+          </div>
+        )}
+        <form onSubmit={addAdmin} className="pt-2 space-y-2" style={{ borderTop: `1px solid ${LINE}` }}>
+          <div className="text-[10px] uppercase font-bold" style={{ color: PRIMARY }}>Grant a role</div>
+          <input value={newUsername} onChange={e => setNewUsername(e.target.value)} placeholder="Username" className="w-full bg-[#242424] border rounded px-3 py-2 text-sm" style={{ borderColor: LINE, color: CHALK }} />
+          <input value={newUserId} onChange={e => setNewUserId(e.target.value)} placeholder="User UID (from Authentication → Users)" className="w-full bg-[#242424] border rounded px-3 py-2 text-sm font-mono" style={{ borderColor: LINE, color: CHALK }} />
+          <select value={newRole} onChange={e => setNewRole(e.target.value)} className="w-full bg-[#242424] border rounded px-3 py-2 text-sm" style={{ borderColor: LINE, color: CHALK }}>
+            {Object.entries(ROLE_LABELS).map(([key, label]) => <option key={key} value={key}>{label}</option>)}
+          </select>
+          <button type="submit" disabled={busy || !newUserId.trim() || !newUsername.trim()} className="px-3 py-2 rounded font-bold text-sm flex items-center gap-1 disabled:opacity-50" style={{ background: GOLD, color: INK }}>
+            <Plus size={16} /> Grant role
+          </button>
+        </form>
+      </div>
+    </Panel>
+  );
+}
+
 function SettingsView({ settings, saveSettings, theme, saveTheme, sport, season, teamsById, importGames, addManualGame, generateSchedule }) {
-  const { isLoggedIn } = useAuth();
+  const { hasPermission } = useAuth();
+  const canManageSettings = hasPermission('manageSettings');
+  const canManageSchedule = hasPermission('manageSchedule');
   return (
     <div className="p-4 space-y-4">
-      {isLoggedIn && (
+      {canManageSettings && (
       <Panel>
         <SectionTitle>Season settings</SectionTitle>
         <div className="px-4 pb-4 space-y-4 text-sm">
@@ -3068,10 +3166,10 @@ function SettingsView({ settings, saveSettings, theme, saveTheme, sport, season,
         </div>
       </Panel>
       )}
-      {isLoggedIn && (
+      {canManageSchedule && (
         <ScheduleManagementPanel season={season} settings={settings} importGames={importGames} addManualGame={addManualGame} generateSchedule={generateSchedule} teamsById={teamsById} />
       )}
-      {isLoggedIn && (
+      {canManageSettings && (
         <Panel>
           <SectionTitle>Odds display</SectionTitle>
           <div className="px-4 pb-4 text-sm">
@@ -3087,6 +3185,7 @@ function SettingsView({ settings, saveSettings, theme, saveTheme, sport, season,
         </Panel>
       )}
       <AppearanceSettings theme={theme} saveTheme={saveTheme} />
+      <ManageAdminsPanel />
     </div>
   );
 }
@@ -3094,7 +3193,8 @@ function SettingsView({ settings, saveSettings, theme, saveTheme, sport, season,
 /* Teams (season roster) view                                            */
 /* ==================================================================== */
 function TeamsView({ season, teamsById, teamsIndex, addExistingTeam, createAndAddTeam, updateMemberField, updateGlobalTeamField, removeMember, onOpenTeam, importRosterSheet, addDivision, updateDivision, removeDivision, assignMemberDivision }) {
-  const { isLoggedIn } = useAuth();
+  const { hasPermission } = useAuth();
+  const isLoggedIn = hasPermission('manageRosters');
   const [name, setName] = useState('');
   const [pickId, setPickId] = useState('');
   const [sheetText, setSheetText] = useState('');
@@ -3264,7 +3364,8 @@ function TeamsView({ season, teamsById, teamsIndex, addExistingTeam, createAndAd
 }
 
 function DivisionsPanel({ divisions, addDivision, updateDivision, removeDivision }) {
-  const { isLoggedIn } = useAuth();
+  const { hasPermission } = useAuth();
+  const isLoggedIn = hasPermission('manageRosters');
   const [name, setName] = useState('');
   const [conference, setConference] = useState('');
   const [editingId, setEditingId] = useState(null);
@@ -3349,7 +3450,8 @@ function ScheduleBalanceChecker({ season, teamsById }) {
 }
 
 function RoundRobinGenerator({ season, teamsById, generateSchedule }) {
-  const { isLoggedIn } = useAuth();
+  const { hasPermission } = useAuth();
+  const isLoggedIn = hasPermission('manageSchedule');
   const [selected, setSelected] = useState(() => new Set(season.members.map(m => m.teamId)));
   const [roundsOfPlay, setRoundsOfPlay] = useState(2);
   const [open, setOpen] = useState(false);
@@ -3841,7 +3943,8 @@ function StatImportModal({ game, side, team, roster, existingRows, onSave, onClo
 }
 
 function ScheduleView({ season, settings, saveScore, deleteGame, declareForfeit, setWinnerOverride, teamsById, sport, updateGameNotes, updateGameStreamUrl, saveGamePlayerStats, setGameOngoing, swapHomeAway }) {
-  const { isLoggedIn } = useAuth();
+  const { hasPermission } = useAuth();
+  const isLoggedIn = hasPermission('manageSchedule');
   const scheduleMode = settings.scheduleMode || 'date';
   const [editingId, setEditingId] = useState(null);
   const [scoreForm, setScoreForm] = useState({ away: '', home: '', innings: '7' });
@@ -4424,7 +4527,8 @@ function StarLevelEditor({ value, onChange, disabled = false }) {
 }
 
 function RosterPanel({ member, color, updatePlayerField, removePlayer, addPlayer, addPlayersBulk, teamOptions, onTrade, onSuspend, onOpenPlayer, teamGamesPlayed }) {
-  const { isLoggedIn } = useAuth();
+  const { hasPermission } = useAuth();
+  const isLoggedIn = hasPermission('manageRosters');
   const [name, setName] = useState('');
   const [starLevel, setStarLevel] = useState(null);
   const [showBulk, setShowBulk] = useState(false);
@@ -4720,7 +4824,8 @@ function RebrandPanel({ team, color, onRebrand, onClearRebrand }) {
 }
 
 function TeamPage({ season, settings, team, standingsRow, teamsById, h2hMatrix, championshipCount, onBack, onOpenGlobalHistory, onOpenCompare, updatePlayerField, removePlayer, addPlayer, addPlayersBulk, tradePlayer, updateMemberField, setPlayerSuspended, onOpenPlayer, onRebrand, onClearRebrand }) {
-  const { isLoggedIn } = useAuth();
+  const { hasPermission } = useAuth();
+  const isLoggedIn = hasPermission('manageRosters');
   if (!team) return <div className="p-4"><button onClick={onBack} className="flex items-center gap-1 text-sm mb-3" style={{ color: CHALK_DIM }}><ArrowLeft size={14} /> Back</button><Panel><p className="px-4 py-8 text-sm text-center" style={{ color: CHALK_DIM }}>That team could not be found.</p></Panel></div>;
   const color = teamColor(team);
   const games = sortGamesChronologically((season.games || []).filter(g => g.homeTeamId === team.id || g.awayTeamId === team.id), (season.settings && season.settings.scheduleMode) || 'date');
@@ -5627,7 +5732,8 @@ function FuturesPanel({ season, standings, teamsById, settings, h2hMatrix }) {
 }
 
 function OddsView({ season, teamsById, standings, settings, onOpenTeam, h2hMatrix, onStartPlayoffs, onClearPlayoffs, onStartPlayIn, onClearPlayIn, onOpenCompare }) {
-  const { isLoggedIn } = useAuth();
+  const { hasPermission } = useAuth();
+  const isLoggedIn = hasPermission('manageSeasons');
   const [sim, setSim] = useState(null);
   const [running, setRunning] = useState(false);
   const [playoffSim, setPlayoffSim] = useState(null);
@@ -5868,7 +5974,8 @@ function OddsView({ season, teamsById, standings, settings, onOpenTeam, h2hMatri
 /* Awards                                                                */
 /* ==================================================================== */
 function AwardsView({ league, season, standings, teamsById, addAwardDef, updateAwardDef, removeAwardDef, addAwardWinner, removeAwardWinnerAt }) {
-  const { isLoggedIn } = useAuth();
+  const { hasPermission } = useAuth();
+  const isLoggedIn = hasPermission('manageAwards');
   const [name, setName] = useState('');
   const [desc, setDesc] = useState('');
   const [pickerId, setPickerId] = useState(null);
@@ -5959,7 +6066,8 @@ function AwardsView({ league, season, standings, teamsById, addAwardDef, updateA
 }
 
 function LeagueInfoView({ league, updateLeagueInfo, addStaffMember, updateStaffMember, removeStaffMember }) {
-  const { isLoggedIn } = useAuth();
+  const { hasPermission } = useAuth();
+  const isLoggedIn = hasPermission('manageLeagueInfo');
   const info = league.info || {};
   const staff = league.staff || [];
   const [descDraft, setDescDraft] = useState(info.description || '');
@@ -6044,7 +6152,8 @@ function LeagueInfoView({ league, updateLeagueInfo, addStaffMember, updateStaffM
 }
 
 function NewsView({ league, addNewsPost, updateNewsPost, removeNewsPost }) {
-  const { isLoggedIn } = useAuth();
+  const { hasPermission } = useAuth();
+  const isLoggedIn = hasPermission('manageNews');
   const news = league.news || [];
   const [title, setTitle] = useState('');
   const [body, setBody] = useState('');
@@ -6158,7 +6267,8 @@ function NewsView({ league, addNewsPost, updateNewsPost, removeNewsPost }) {
 }
 
 function ExtrasView({ extras, teamsById, leagueRecords, activityLog, season, standings, onRemoveActivity }) {
-  const { isLoggedIn } = useAuth();
+  const { hasPermission } = useAuth();
+  const isLoggedIn = hasPermission('manageSeasons');
   if (!extras) return <div className="p-4 space-y-4"><Panel><p className="px-4 py-8 text-sm text-center" style={{ color: CHALK_DIM }}>Enter some scores to unlock fun stats here.</p></Panel></div>;
   const GameCard = ({ label, g, note }) => {
     if (!g) return null;

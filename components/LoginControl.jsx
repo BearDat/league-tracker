@@ -4,14 +4,14 @@ import React, { useState } from 'react';
 import { LogIn, LogOut, X } from 'lucide-react';
 import { useAuth } from '../lib/AuthContext';
 
-// Header auth control: a small "Log in" button that opens an email/password
+// Header auth control: a small "Log in" button that opens a username/password
 // form in a popover, or "Log out" once a session exists. Kept deliberately
 // separate from LeagueTracker.jsx so the ported file's own code stays a pure
 // diff against the original — this is new UI, not a modification of existing UI.
 export default function LoginControl({ chalk, chalkDim, primary, ink, panel, panel2, line }) {
-  const { isLoggedIn, user, login, logout, authLoading } = useAuth();
+  const { isLoggedIn, roleLabel, roleLoading, login, logout, authLoading } = useAuth();
   const [open, setOpen] = useState(false);
-  const [email, setEmail] = useState('');
+  const [username, setUsername] = useState('');
   const [password, setPassword] = useState('');
   const [error, setError] = useState(null);
   const [submitting, setSubmitting] = useState(false);
@@ -22,11 +22,11 @@ export default function LoginControl({ chalk, chalkDim, primary, ink, panel, pan
     e.preventDefault();
     setSubmitting(true);
     setError(null);
-    const { error: err } = await login(email, password);
+    const { error: err } = await login(username, password);
     setSubmitting(false);
     if (err) { setError(err); return; }
     setOpen(false);
-    setEmail('');
+    setUsername('');
     setPassword('');
   };
 
@@ -34,12 +34,13 @@ export default function LoginControl({ chalk, chalkDim, primary, ink, panel, pan
     return (
       <button
         onClick={logout}
-        title={user?.email || 'Log out'}
+        title="Log out"
         className="flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg text-[11px] font-semibold uppercase tracking-wide transition-colors flex-shrink-0"
         style={{ color: chalkDim, border: `1px solid ${line}` }}
       >
         <LogOut size={13} />
         Log out
+        {!roleLoading && roleLabel && <span style={{ color: primary }}>· {roleLabel}</span>}
       </button>
     );
   }
@@ -65,8 +66,8 @@ export default function LoginControl({ chalk, chalkDim, primary, ink, panel, pan
           </div>
           <form onSubmit={submit} className="flex flex-col gap-2">
             <input
-              type="email" required autoComplete="email" placeholder="Email" value={email}
-              onChange={(e) => setEmail(e.target.value)}
+              type="text" required autoComplete="username" placeholder="Username" value={username}
+              onChange={(e) => setUsername(e.target.value)}
               className="px-2 py-1.5 rounded text-sm border"
               style={{ background: panel2, borderColor: line, color: chalk }}
             />
