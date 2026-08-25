@@ -3183,7 +3183,57 @@ function ManageAdminsPanel() {
   );
 }
 
-function SettingsView({ settings, saveSettings, theme, saveTheme, sport, season, teamsById, importGames, addManualGame, generateSchedule }) {
+// Bulk-imports KPB (hcbb.info) season totals for players already tracked in
+// this league, matched by Roblox account rather than name so a stale local
+// name or a Roblox username change doesn't cause a miss. One mapping row per
+// hcbb season (S1-S3) picks which local season that data lands in — skip any
+// that don't apply to this league.
+function KpbImportPanel({ league, onRunImport }) {
+  const [mapping, setMapping] = useState({ '1': '', '2': '', '3': '' });
+  const [running, setRunning] = useState(false);
+  const [result, setResult] = useState(null);
+  const seasons = (league && league.seasons) || [];
+  const anyMapped = Object.values(mapping).some(Boolean);
+  const run = async () => {
+    setRunning(true); setResult(null);
+    const clean = Object.fromEntries(Object.entries(mapping).filter(([, v]) => v));
+    const res = await onRunImport(clean);
+    setResult(res);
+    setRunning(false);
+  };
+  return (
+    <Panel className="overflow-hidden" style={{ borderColor: PRIMARY }}>
+      <SectionTitle accent={PRIMARY}>Import KPB stats (hcbb.info)</SectionTitle>
+      <div className="px-4 pb-4 space-y-3 text-sm">
+        <p className="text-xs" style={{ color: CHALK_DIM }}>Pulls full-season batting and pitching totals for the KPB league from hcbb.info and matches players by their Roblox account — checking every player already tracked here, on a roster or in free agency, in any season — rather than just their current on-site name. Unfiltered totals (Qualify: any games, no minimum AB/IP). Unmatched hcbb players are skipped; matched players not yet in the target season are added there as free agents so the stats have somewhere to attach. Re-running with the same mapping replaces the previous import instead of duplicating it.</p>
+        {['1', '2', '3'].map(s => (
+          <div key={s} className="flex items-center justify-between gap-2">
+            <span style={{ color: CHALK }}>KPB Season {s}</span>
+            <select value={mapping[s]} onChange={e => setMapping(m => ({ ...m, [s]: e.target.value }))} className="bg-[#242424] border rounded px-2 py-1.5 text-xs" style={{ borderColor: LINE, color: CHALK }}>
+              <option value="" style={{ background: PANEL2, color: CHALK }}>Skip</option>
+              {seasons.map(se => <option key={se.id} value={se.id} style={{ background: PANEL2, color: CHALK }}>{se.name}</option>)}
+            </select>
+          </div>
+        ))}
+        <button onClick={run} disabled={running || !anyMapped} className="px-3 py-2 rounded font-bold text-sm disabled:opacity-40" style={{ background: PRIMARY, color: INK }}>
+          {running ? 'Importing…' : 'Run import'}
+        </button>
+        {result && result.error && <p className="text-xs" style={{ color: NEGATIVE }}>{result.error}</p>}
+        {result && result.seasons && (
+          <div className="space-y-1 pt-2" style={{ borderTop: `1px solid ${LINE}` }}>
+            {Object.entries(result.seasons).map(([s, r]) => (
+              <p key={s} className="text-xs" style={{ color: r.error ? NEGATIVE : CHALK_DIM }}>
+                S{s}: {r.error || `matched ${r.matched}/${r.total} into "${r.targetSeasonName}"${r.created ? ` (${r.created} added as free agents)` : ''} — ${r.unmatched} unmatched`}
+              </p>
+            ))}
+          </div>
+        )}
+      </div>
+    </Panel>
+  );
+}
+
+function SettingsView({ settings, saveSettings, theme, saveTheme, sport, season, teamsById, importGames, addManualGame, generateSchedule, league, onRunKpbImport }) {
   const { hasPermission } = useAuth();
   const canManageSettings = hasPermission('manageSettings');
   const canManageSchedule = hasPermission('manageSchedule');
@@ -3293,6 +3343,7 @@ function SettingsView({ settings, saveSettings, theme, saveTheme, sport, season,
       {canManageSchedule && (
         <ScheduleManagementPanel season={season} settings={settings} importGames={importGames} addManualGame={addManualGame} generateSchedule={generateSchedule} teamsById={teamsById} />
       )}
+      {canManageSettings && <KpbImportPanel league={league} onRunImport={onRunKpbImport} />}
       {canManageSettings && (
         <Panel>
           <SectionTitle>Odds display</SectionTitle>
@@ -3672,6 +3723,11 @@ function normalizeStatRow(row, extra) {
     er: Number(row.er) || 0, bbAllowed: Number(row.bbAllowed) || 0, k: Number(row.k) || 0,
     hrAllowed: Number(row.hrAllowed) || 0, e: Number(row.e) || 0, hr: Number(row.hr) || 0,
     doubles: Number(row.doubles) || 0, triples: Number(row.triples) || 0,
+    // Only set on rows that represent more than one game at once (e.g. an
+    // hcbb.info season import) — sumPlayerTotals falls back to counting 1
+    // per row (its long-standing behavior) when this is absent, since every
+    // other row in the app is genuinely a single game's box score.
+    g: row.g != null ? Number(row.g) || 0 : undefined,
   };
 }
 
@@ -3716,13 +3772,24 @@ function getPlayerCareerData(league, playerName) {
         }));
       });
     });
+    // Season totals imported from an external site (currently just hcbb.info's
+    // KPB leaderboard) aren't tied to any one game, so they're kept in their
+    // own array instead of season.games — one synthetic "row" per import,
+    // folded into the same gameLog every other total is summed from.
+    (info.season.importedStatLines || []).filter(r => r.playerId === info.playerId).forEach(row => {
+      gameLog.push(normalizeStatRow(row, {
+        seasonId: info.season.id, seasonName: info.season.name, teamId: info.teamId,
+        oppTeamId: null, side: null, gameId: row.id, date: row.sourceLabel || 'Imported',
+        isPlayoff: false, isPlayIn: false, isImport: true, sourceLabel: row.sourceLabel,
+      }));
+    });
   });
   gameLog.sort((a, b) => (a.date || '').localeCompare(b.date || ''));
   return { seasonsInfo, gameLog };
 }
 
 function sumPlayerTotals(gameLog) {
-  const t = { g: gameLog.length, ab: 0, r: 0, h: 0, rbi: 0, bb: 0, so: 0, outs: 0, ha: 0, er: 0, bbAllowed: 0, k: 0, hrAllowed: 0, e: 0, hr: 0, doubles: 0, triples: 0 };
+  const t = { g: gameLog.reduce((s, row) => s + (row.g != null ? row.g : 1), 0), ab: 0, r: 0, h: 0, rbi: 0, bb: 0, so: 0, outs: 0, ha: 0, er: 0, bbAllowed: 0, k: 0, hrAllowed: 0, e: 0, hr: 0, doubles: 0, triples: 0 };
   gameLog.forEach(row => {
     t.ab += row.ab; t.r += row.r; t.h += row.h; t.rbi += row.rbi; t.bb += row.bb; t.so += row.so;
     t.outs += ipDisplayToOuts(row.ip); t.ha += row.ha; t.er += row.er; t.bbAllowed += row.bbAllowed;
@@ -3789,6 +3856,13 @@ function computeSeasonPlayerLeaders(season, teamsById, mode = 'regular') {
       });
     });
   });
+  // Imported season totals (e.g. from hcbb.info) are always regular-season.
+  if (mode === 'regular') {
+    (season.importedStatLines || []).forEach(row => {
+      const entry = byPlayer.get(row.playerId);
+      if (entry) entry.rows.push(normalizeStatRow(row, {}));
+    });
+  }
   const players = [...byPlayer.values()].filter(e => e.rows.length > 0).map(e => {
     const totals = sumPlayerTotals(e.rows);
     return { playerId: e.playerId, name: e.name, teamId: e.teamId, totals, batting: computeBattingAdvanced(totals), pitching: computePitchingAdvanced(totals) };
@@ -5564,10 +5638,14 @@ function PlayerPage({ league, teamsById, playerName, onBack, onOpenTeam, onOpenP
   const latest = seasonsInfo[seasonsInfo.length - 1];
   const latestTeam = teamsById[latest.teamId];
   const color = latestTeam ? teamColor(latestTeam) : PRIMARY;
-  const highs = computePlayerGameHighs(gameLog);
-  const notable = computePlayerNotableGames(gameLog);
-  const topPerformances = [...gameLog].map(row => ({ row, score: playerGameScore(row) })).sort((a, b) => b.score - a.score).slice(0, 5);
-  const recentGames = [...gameLog].slice(-10).reverse();
+  // Game-by-game highlight sections don't make sense for an imported season
+  // total (it's not one game), so those are summed into the season/career
+  // totals above but left out of anything framed as a single performance.
+  const gameOnlyLog = gameLog.filter(r => !r.isImport);
+  const highs = computePlayerGameHighs(gameOnlyLog);
+  const notable = computePlayerNotableGames(gameOnlyLog);
+  const topPerformances = [...gameOnlyLog].map(row => ({ row, score: playerGameScore(row) })).sort((a, b) => b.score - a.score).slice(0, 5);
+  const recentGames = [...gameOnlyLog].slice(-10).reverse();
   const trendData = (() => {
     if (hasBatting) {
       let cumH = 0, cumAB = 0;
@@ -7846,6 +7924,132 @@ function App() {
     persistLeague({ ...league, seasons });
   };
 
+  /* ---- KPB (hcbb.info) stat import ---- */
+  // Converts hcbb.info's per-season combined batting+pitching totals for one
+  // player into this app's normalized stat-row shape. hcbb's innings_pitched
+  // is true decimal innings; this app stores IP in the ".1/.2 = thirds of an
+  // inning" box-score notation everywhere else, so it has to be converted
+  // via outs rather than copied straight across.
+  const hcbbRowToStatFields = (hp) => ({
+    // games_played covers every game this player appeared in at all (the
+    // same "one row = one game" convention the rest of the app uses for G),
+    // so it's what stands in for a game count on this single aggregate row.
+    g: hp.games_played || 0,
+    ab: hp.at_bats || 0, r: hp.runs_scored || 0, h: hp.hits || 0, rbi: hp.rbis || 0,
+    bb: hp.walks || 0, so: hp.strikeouts || 0,
+    ip: outsToIpDisplay(Math.round((hp.innings_pitched || 0) * 3)),
+    ha: hp.hits_allowed || 0, er: hp.er || 0, bbAllowed: hp.walks_pitching || 0,
+    k: hp.strikeouts_pitched || 0, hrAllowed: hp.homeruns_allowed || 0, e: hp.errors || 0,
+    hr: hp.homeruns || 0, doubles: hp.doubles || 0, triples: hp.triples || 0,
+  });
+  // mapping: { '1': localSeasonId|null, '2': ..., '3': ... }. Runs entirely
+  // client-side (this is an admin-triggered, one-off bulk action, not
+  // something that needs a server route beyond the CORS proxy) and returns a
+  // summary object the UI reports back to whoever ran it. Re-running with the
+  // same mapping is safe — each import line is keyed by (source, source
+  // season, player) and replaced rather than duplicated.
+  const runKpbImport = async (mapping) => {
+    if (!league) return { error: 'No league loaded.' };
+    const seasonEntries = Object.entries(mapping).filter(([, sid]) => sid);
+    if (seasonEntries.length === 0) return { error: 'Pick at least one season to import into.' };
+
+    const norm = (s) => (s || '').trim().toLowerCase();
+    // Deep-enough clone: every array that might get a new/changed player
+    // needs its own copy so mutations below don't touch the live league
+    // state until the single persistLeague call at the end.
+    const seasonsDraft = league.seasons.map(s => ({
+      ...s,
+      members: (s.members || []).map(m => ({ ...m, roster: (m.roster || []).map(p => ({ ...p })) })),
+      freeAgents: (s.freeAgents || []).map(p => ({ ...p })),
+      importedStatLines: [...(s.importedStatLines || [])],
+    }));
+
+    const collectEntries = () => {
+      const out = [];
+      seasonsDraft.forEach(s => {
+        s.members.forEach(m => m.roster.forEach(p => out.push({ seasonId: s.id, teamId: m.teamId, player: p })));
+        s.freeAgents.forEach(p => out.push({ seasonId: s.id, teamId: null, player: p }));
+      });
+      return out;
+    };
+    const allEntries = collectEntries();
+    if (allEntries.length === 0) return { error: 'No players tracked in this league yet — nothing to match hcbb.info players against.' };
+
+    // Resolve a Roblox account id for every local name that doesn't already
+    // have one, so matching goes by id (survives Roblox username changes)
+    // rather than a name that might be stale. Deduped by name and rate-
+    // limited to a handful of concurrent lookups since this can be dozens of
+    // players.
+    const nameToId = new Map();
+    allEntries.forEach(({ player }) => { if (player.robloxUserId) nameToId.set(norm(player.name), player.robloxUserId); });
+    const unresolvedNames = [...new Set(allEntries.filter(({ player }) => !player.robloxUserId).map(({ player }) => norm(player.name)))];
+    const CONCURRENCY = 5;
+    for (let i = 0; i < unresolvedNames.length; i += CONCURRENCY) {
+      const batch = unresolvedNames.slice(i, i + CONCURRENCY);
+      await Promise.all(batch.map(async (nm) => {
+        try {
+          const res = await fetch(`/api/roblox-avatar?username=${encodeURIComponent(nm)}`);
+          if (res.ok) { const data = await res.json(); if (data.userId) nameToId.set(nm, data.userId); }
+        } catch (e) { /* leave unresolved — this player just won't match */ }
+      }));
+    }
+    allEntries.forEach(({ player }) => { if (!player.robloxUserId) { const id = nameToId.get(norm(player.name)); if (id) player.robloxUserId = id; } });
+
+    const byRobloxId = new Map();
+    allEntries.forEach(entry => {
+      const id = entry.player.robloxUserId;
+      if (!id) return;
+      if (!byRobloxId.has(id)) byRobloxId.set(id, []);
+      byRobloxId.get(id).push(entry);
+    });
+
+    const seasonById = new Map(seasonsDraft.map(s => [s.id, s]));
+    const summary = { seasons: {} };
+
+    for (const [kpbSeason, targetSeasonId] of seasonEntries) {
+      const targetSeason = seasonById.get(targetSeasonId);
+      const sourceLabel = `KPB S${kpbSeason}`;
+      if (!targetSeason) { summary.seasons[kpbSeason] = { error: 'That local season no longer exists.' }; continue; }
+      let data;
+      try {
+        const res = await fetch(`/api/hcbb-import?season=${kpbSeason}`);
+        if (!res.ok) { summary.seasons[kpbSeason] = { error: `hcbb.info request failed (${res.status}).` }; continue; }
+        data = await res.json();
+      } catch (e) { summary.seasons[kpbSeason] = { error: 'Network error contacting hcbb.info.' }; continue; }
+
+      let matched = 0, unmatched = 0, created = 0;
+      (data.players || []).forEach(hp => {
+        const robloxId = hp.player_id;
+        const locals = robloxId ? byRobloxId.get(robloxId) : null;
+        if (!locals || locals.length === 0) { unmatched++; return; }
+        matched++;
+        let entry = locals.find(e => e.seasonId === targetSeasonId);
+        if (!entry) {
+          // Known player, but not part of this local season yet — land them
+          // as a free agent so the import has somewhere to attach and they
+          // still show up in that season's stat leaders.
+          const bestName = locals[locals.length - 1].player.name;
+          const newFa = { ...newPlayer(bestName), robloxUserId: robloxId };
+          targetSeason.freeAgents.push(newFa);
+          entry = { seasonId: targetSeasonId, teamId: null, player: newFa };
+          byRobloxId.get(robloxId).push(entry);
+          created++;
+        }
+        const line = {
+          id: uid('imp'), playerId: entry.player.id, source: 'hcbb-kpb', sourceSeason: String(kpbSeason), sourceLabel,
+          importedAt: Date.now(), ...hcbbRowToStatFields(hp),
+        };
+        const existingIdx = targetSeason.importedStatLines.findIndex(l => l.source === 'hcbb-kpb' && l.sourceSeason === String(kpbSeason) && l.playerId === entry.player.id);
+        if (existingIdx >= 0) targetSeason.importedStatLines[existingIdx] = line;
+        else targetSeason.importedStatLines.push(line);
+      });
+      summary.seasons[kpbSeason] = { targetSeasonName: targetSeason.name, matched, unmatched, created, total: (data.players || []).length };
+    }
+
+    persistLeague({ ...league, seasons: seasonsDraft });
+    return summary;
+  };
+
   /* ---- awards ---- */
   const addAwardDef = (name, description) => {
     if (!league) return;
@@ -8301,7 +8505,7 @@ function App() {
     } else if (tab === 'info') {
       body = <LeagueInfoView league={league} updateLeagueInfo={updateLeagueInfo} addStaffMember={addStaffMember} updateStaffMember={updateStaffMember} removeStaffMember={removeStaffMember} />;
     } else if (tab === 'settings') {
-      body = <SettingsView settings={activeSeason.settings} saveSettings={saveSettings} theme={theme} saveTheme={saveTheme} sport={sport} season={activeSeason} teamsById={teamsById} importGames={importGames} addManualGame={addManualGame} generateSchedule={generateSchedule} />;
+      body = <SettingsView settings={activeSeason.settings} saveSettings={saveSettings} theme={theme} saveTheme={saveTheme} sport={sport} season={activeSeason} teamsById={teamsById} importGames={importGames} addManualGame={addManualGame} generateSchedule={generateSchedule} league={league} onRunKpbImport={runKpbImport} />;
     } else if (tab === 'team') {
       body = <TeamPage season={activeSeason} settings={activeSeason.settings} team={selectedTeamMerged} standingsRow={selectedStandingsRow} teamsById={displayTeamsById} h2hMatrix={h2hMatrix} championshipCount={selectedTeamId ? (teamChampionshipCounts[selectedTeamId] || 0) : 0} onBack={backFromTeam} onOpenGlobalHistory={(id) => openTeamHistory(id, 'league')} onOpenCompare={onOpenCompare} updatePlayerField={updatePlayerField} removePlayer={removePlayer} addPlayer={addPlayer} addPlayersBulk={addPlayersBulk} tradePlayer={tradePlayer} updateMemberField={updateMemberField} setPlayerSuspended={setPlayerSuspended} setPlayerBanned={setPlayerBanned} onOpenPlayer={onOpenPlayer} onRebrand={rebrandTeam} onClearRebrand={clearRebrand} />;
     } else if (tab === 'compare') {
