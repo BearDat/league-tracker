@@ -1862,12 +1862,11 @@ async function saveObj(key, obj) { return storSet(key, JSON.stringify(obj)); }
 /* ==================================================================== */
 /* Small UI atoms                                                        */
 /* ==================================================================== */
-function TabBtn({ active, onClick, icon: Icon, label }) {
+function TabBtn({ active, onClick, label }) {
   return (
     <button onClick={onClick}
       className="font-head relative flex items-center gap-1.5 px-3 py-3 text-[12px] font-semibold uppercase tracking-wide transition-colors flex-shrink-0 whitespace-nowrap"
       style={{ color: active ? PRIMARY : CHALK_DIM }}>
-      <Icon size={14} />
       {label}
       <span className="absolute left-2 right-2 bottom-0 rounded-t" style={{ height: 2, background: active ? PRIMARY : 'transparent' }} />
     </button>
@@ -5845,17 +5844,17 @@ function AwardsView({ league, season, standings, teamsById, addAwardDef, updateA
 
   return (
     <div className="p-4 space-y-4">
-      <Panel>
-        <SectionTitle>Create an award</SectionTitle>
-        <fieldset disabled={!isLoggedIn} className="contents">
-        <div className="px-4 pb-4 space-y-2">
-          <input value={name} onChange={e => setName(e.target.value)} placeholder="Award name (e.g. MVP)" className="w-full bg-[#242424] border rounded px-3 py-2 text-sm" style={{ borderColor: LINE, color: CHALK }} />
-          <input value={desc} onChange={e => setDesc(e.target.value)} placeholder="Description (optional)" className="w-full bg-[#242424] border rounded px-3 py-2 text-sm" style={{ borderColor: LINE, color: CHALK }} />
-          <button onClick={() => { if (name.trim()) { addAwardDef(name.trim(), desc.trim()); setName(''); setDesc(''); } }} className="px-3 py-2 rounded font-bold text-sm flex items-center gap-1" style={{ background: PRIMARY, color: INK }}><Plus size={16} /> Create award</button>
-          <p className="text-xs" style={{ color: CHALK_DIM }}>Awards are shared across every season of this league — pick a winner for each one below, per season.</p>
-        </div>
-        </fieldset>
-      </Panel>
+      {isLoggedIn && (
+        <Panel>
+          <SectionTitle>Create an award</SectionTitle>
+          <div className="px-4 pb-4 space-y-2">
+            <input value={name} onChange={e => setName(e.target.value)} placeholder="Award name (e.g. MVP)" className="w-full bg-[#242424] border rounded px-3 py-2 text-sm" style={{ borderColor: LINE, color: CHALK }} />
+            <input value={desc} onChange={e => setDesc(e.target.value)} placeholder="Description (optional)" className="w-full bg-[#242424] border rounded px-3 py-2 text-sm" style={{ borderColor: LINE, color: CHALK }} />
+            <button onClick={() => { if (name.trim()) { addAwardDef(name.trim(), desc.trim()); setName(''); setDesc(''); } }} className="px-3 py-2 rounded font-bold text-sm flex items-center gap-1" style={{ background: PRIMARY, color: INK }}><Plus size={16} /> Create award</button>
+            <p className="text-xs" style={{ color: CHALK_DIM }}>Awards are shared across every season of this league — pick a winner for each one below, per season.</p>
+          </div>
+        </Panel>
+      )}
 
       {awardDefs.length === 0 && <Panel><p className="px-4 py-8 text-sm text-center" style={{ color: CHALK_DIM }}>No awards yet — create one above.</p></Panel>}
 
@@ -7534,7 +7533,6 @@ function App() {
             </div>
           )}
           <div className="flex-1 min-w-0">
-            <div className="text-[9px] font-bold uppercase tracking-[0.2em] truncate" style={{ color: PRIMARY }}>{screen === 'league' && league && league.tagline ? league.tagline : 'League Tracker'}</div>
             <h1 className="font-head text-lg font-bold tracking-tight truncate uppercase leading-none" style={{ color: CHALK, letterSpacing: '-0.01em' }}>
               {screen === 'league' && league ? league.name : screen === 'registry' ? 'All Teams' : screen === 'history' ? 'Team History' : screen === 'appearance' ? 'Settings & Appearance' : 'Your Leagues'}
             </h1>
@@ -7558,20 +7556,20 @@ function App() {
         </div>
         {inSeasonTabs && (
           <nav className="max-w-6xl mx-auto px-2 flex gap-1 overflow-x-auto" style={{ borderTop: `1px solid ${LINE}` }}>
-            <TabBtn active={tab === 'home'} onClick={() => setTab('home')} icon={HomeIcon} label="Home" />
-            <TabBtn active={tab === 'news'} onClick={() => setTab('news')} icon={Newspaper} label="News" />
-            <TabBtn active={tab === 'standings'} onClick={() => setTab('standings')} icon={Trophy} label="Standings" />
-            {isLoggedIn && <TabBtn active={tab === 'teams'} onClick={() => setTab('teams')} icon={Users} label="Teams" />}
-            {isLoggedIn && <TabBtn active={tab === 'roster'} onClick={() => setTab('roster')} icon={ClipboardList} label="Roster" />}
-            <TabBtn active={tab === 'schedule'} onClick={() => setTab('schedule')} icon={Calendar} label="Schedule" />
-            <TabBtn active={tab === 'stats'} onClick={() => setTab('stats')} icon={Activity} label="Stats" />
-            <TabBtn active={tab === 'leaders'} onClick={() => setTab('leaders')} icon={TrendingUp} label="Leaders" />
-            <TabBtn active={tab === 'awards'} onClick={() => setTab('awards')} icon={AwardIcon} label="Awards" />
-            <TabBtn active={tab === 'odds'} onClick={() => setTab('odds')} icon={Percent} label="Odds" />
-            <TabBtn active={tab === 'extras'} onClick={() => setTab('extras')} icon={Sparkles} label="Extras" />
-            <TabBtn active={tab === 'graphs'} onClick={() => setTab('graphs')} icon={BarChart3} label="Graphs" />
-            <TabBtn active={tab === 'info'} onClick={() => setTab('info')} icon={InfoIcon} label="Info" />
-            <TabBtn active={tab === 'settings'} onClick={() => setTab('settings')} icon={SettingsIcon} label="Settings" />
+            <TabBtn active={tab === 'home'} onClick={() => setTab('home')} label="Home" />
+            <TabBtn active={tab === 'news'} onClick={() => setTab('news')} label="News" />
+            <TabBtn active={tab === 'standings'} onClick={() => setTab('standings')} label="Standings" />
+            {isLoggedIn && <TabBtn active={tab === 'teams'} onClick={() => setTab('teams')} label="Teams" />}
+            {isLoggedIn && <TabBtn active={tab === 'roster'} onClick={() => setTab('roster')} label="Roster" />}
+            <TabBtn active={tab === 'schedule'} onClick={() => setTab('schedule')} label="Schedule" />
+            <TabBtn active={tab === 'stats'} onClick={() => setTab('stats')} label="Stats" />
+            <TabBtn active={tab === 'leaders'} onClick={() => setTab('leaders')} label="Leaders" />
+            <TabBtn active={tab === 'awards'} onClick={() => setTab('awards')} label="Awards" />
+            <TabBtn active={tab === 'odds'} onClick={() => setTab('odds')} label="Odds" />
+            <TabBtn active={tab === 'extras'} onClick={() => setTab('extras')} label="Extras" />
+            <TabBtn active={tab === 'graphs'} onClick={() => setTab('graphs')} label="Graphs" />
+            <TabBtn active={tab === 'info'} onClick={() => setTab('info')} label="Info" />
+            <TabBtn active={tab === 'settings'} onClick={() => setTab('settings')} label="Settings" />
           </nav>
         )}
       </header>
