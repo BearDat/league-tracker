@@ -710,19 +710,26 @@ function parseRosterSheetCsv(text) {
 // shaped like "R1 P1 | Team | Player | #1". The round/pick-in-round is read
 // straight off the "R#P#" label rather than the header line, since that's
 // right there on every row and doesn't depend on the header having survived
-// the paste intact. Rows that don't look like a pick (blank, a stray
+// the paste intact. The label is looked for in every column of the row,
+// not assumed to be in the first one — a real sheet export often has
+// leading spacer/indent columns (e.g. ",,R1 P1,Team,Player,#1,...") before
+// the actual data starts. Rows that don't look like a pick (blank, a stray
 // header) are skipped rather than aborting the whole parse.
 function parseDraftBoardSheet(text) {
   const rows = text.split(/\r?\n/).filter(l => l.trim().length > 0).map(splitSheetLine);
   const picks = [];
   rows.forEach(row => {
-    const label = (row[0] || '').trim();
-    const m = /^R\s*(\d+)\s*P\s*(\d+)$/i.exec(label);
-    if (!m) return; // "ROUND N" header row, blank row, or a stray label — skip
-    const teamName = (row[1] || '').trim();
-    const playerName = (row[2] || '').trim();
+    const labelIdx = row.findIndex(cell => /^R\s*(\d+)\s*P\s*(\d+)$/i.test((cell || '').trim()));
+    if (labelIdx === -1) return; // "ROUND N" header row, blank row, or a stray label — skip
+    const m = /^R\s*(\d+)\s*P\s*(\d+)$/i.exec(row[labelIdx].trim());
+    const teamName = (row[labelIdx + 1] || '').trim();
+    const playerName = (row[labelIdx + 2] || '').trim();
     if (!teamName || !playerName) return;
-    const overallMatch = /#\s*(\d+)/.exec(row[3] || '');
+    // The overall-pick cell ("#1") isn't always immediately after the
+    // player (some sheets have extra columns in between), so scan the rest
+    // of the row for it instead of assuming a fixed offset.
+    const overallCell = row.slice(labelIdx + 3).find(c => /#\s*\d+/.test(c || ''));
+    const overallMatch = overallCell ? /#\s*(\d+)/.exec(overallCell) : null;
     picks.push({
       round: Number(m[1]), pickInRound: Number(m[2]),
       overall: overallMatch ? Number(overallMatch[1]) : null,
@@ -8819,6 +8826,12 @@ function App() {
     const teamsByIdDraft = { ...teamsById };
     const teamsIndexDraft = [...teamsIndex];
     let membersDraft = [...activeSeason.members];
+    // A player who's currently listed as a free agent this season gets
+    // moved onto the roster (and dropped from free agency) instead of being
+    // duplicated as a brand-new player when a sheet re-drafts/re-signs them.
+    let freeAgentsDraft = [...(activeSeason.freeAgents || [])];
+    const normPN = (s) => (s || '').trim().toLowerCase();
+    const matchesName = (p, n) => normPN(p.name) === n || (p.usernameHistory || []).some(h => normPN(h) === n);
 
     for (const block of blocks) {
       const teamName = (block.teamName || '').trim();
@@ -8842,15 +8855,17 @@ function App() {
       // forking a second one. If the match came through an old name, the
       // already-resolved current name wins over the sheet's stale one.
       const existingRoster = (membersDraft[memberIdx] && membersDraft[memberIdx].roster) || [];
-      const normPN = (s) => (s || '').trim().toLowerCase();
-      const findExisting = (name) => {
-        const n = normPN(name);
-        return existingRoster.find(p => normPN(p.name) === n || (p.usernameHistory || []).some(h => normPN(h) === n));
-      };
       const newRoster = [...seen.values()].map(pl => {
-        const existing = findExisting(pl.name);
+        const n = normPN(pl.name);
+        const existing = existingRoster.find(p => matchesName(p, n));
         if (existing) {
-          return { ...existing, name: normPN(existing.name) === normPN(pl.name) ? pl.name : existing.name, starLevel: pl.starLevel, role: pl.role };
+          return { ...existing, name: normPN(existing.name) === n ? pl.name : existing.name, starLevel: pl.starLevel, role: pl.role };
+        }
+        const faIdx = freeAgentsDraft.findIndex(p => matchesName(p, n));
+        if (faIdx >= 0) {
+          const fa = freeAgentsDraft[faIdx];
+          freeAgentsDraft = freeAgentsDraft.filter((_, i) => i !== faIdx);
+          return { ...fa, name: normPN(fa.name) === n ? pl.name : fa.name, starLevel: pl.starLevel, role: pl.role };
         }
         return { ...newPlayer(pl.name, pl.starLevel), role: pl.role };
       });
@@ -8859,7 +8874,7 @@ function App() {
 
     setTeamsById(teamsByIdDraft);
     setTeamsIndex(teamsIndexDraft); saveList('teams-index', teamsIndexDraft);
-    const seasons = league.seasons.map(s => s.id === activeSeason.id ? { ...s, members: membersDraft } : s);
+    const seasons = league.seasons.map(s => s.id === activeSeason.id ? { ...s, members: membersDraft, freeAgents: freeAgentsDraft } : s);
     persistLeague({ ...league, seasons });
   };
   // Imports a draft board: each pick either sets draftPick on a player
@@ -8871,7 +8886,11 @@ function App() {
     const teamsByIdDraft = { ...teamsById };
     const teamsIndexDraft = [...teamsIndex];
     let membersDraft = [...activeSeason.members];
+    // A drafted player who's currently a free agent this season gets moved
+    // onto the team instead of being duplicated as a new player.
+    let freeAgentsDraft = [...(activeSeason.freeAgents || [])];
     const normPN = (s) => (s || '').trim().toLowerCase();
+    const matchesName = (p, n) => normPN(p.name) === n || (p.usernameHistory || []).some(h => normPN(h) === n);
 
     for (const pick of picks) {
       const teamId = await resolveOrCreateTeam(pick.teamName, resolutions, teamsByIdDraft, teamsIndexDraft);
@@ -8880,17 +8899,27 @@ function App() {
       const memberIdx = ensured.idx;
       const roster = membersDraft[memberIdx].roster || [];
       const n = normPN(pick.playerName);
-      const existingIdx = roster.findIndex(p => normPN(p.name) === n || (p.usernameHistory || []).some(h => normPN(h) === n));
+      const existingIdx = roster.findIndex(p => matchesName(p, n));
       const draftPick = { round: pick.round, pickInRound: pick.pickInRound, overall: pick.overall };
-      const newRoster = existingIdx >= 0
-        ? roster.map((p, i) => i === existingIdx ? { ...p, draftPick } : p)
-        : [...roster, { ...newPlayer(pick.playerName, null), draftPick }];
+      let newRoster;
+      if (existingIdx >= 0) {
+        newRoster = roster.map((p, i) => i === existingIdx ? { ...p, draftPick } : p);
+      } else {
+        const faIdx = freeAgentsDraft.findIndex(p => matchesName(p, n));
+        if (faIdx >= 0) {
+          const fa = freeAgentsDraft[faIdx];
+          freeAgentsDraft = freeAgentsDraft.filter((_, i) => i !== faIdx);
+          newRoster = [...roster, { ...fa, draftPick }];
+        } else {
+          newRoster = [...roster, { ...newPlayer(pick.playerName, null), draftPick }];
+        }
+      }
       membersDraft = membersDraft.map((m, i) => i === memberIdx ? { ...m, roster: newRoster } : m);
     }
 
     setTeamsById(teamsByIdDraft);
     setTeamsIndex(teamsIndexDraft); saveList('teams-index', teamsIndexDraft);
-    const seasons = league.seasons.map(s => s.id === activeSeason.id ? { ...s, members: membersDraft } : s);
+    const seasons = league.seasons.map(s => s.id === activeSeason.id ? { ...s, members: membersDraft, freeAgents: freeAgentsDraft } : s);
     persistLeague({ ...league, seasons });
   };
   // Imports a flat star-rating sheet: applies starLevel to a matched
@@ -8903,11 +8932,12 @@ function App() {
     let membersDraft = [...activeSeason.members];
     let freeAgentsDraft = [...(activeSeason.freeAgents || [])];
     const normPN = (s) => (s || '').trim().toLowerCase();
+    const matchesName = (p, n) => normPN(p.name) === n || (p.usernameHistory || []).some(h => normPN(h) === n);
 
     for (const row of rows) {
       const n = normPN(row.playerName);
       if (!row.teamName) {
-        const idx = freeAgentsDraft.findIndex(p => normPN(p.name) === n || (p.usernameHistory || []).some(h => normPN(h) === n));
+        const idx = freeAgentsDraft.findIndex(p => matchesName(p, n));
         freeAgentsDraft = idx >= 0
           ? freeAgentsDraft.map((p, i) => i === idx ? { ...p, starLevel: row.starLevel } : p)
           : [...freeAgentsDraft, { ...newPlayer(row.playerName, row.starLevel) }];
@@ -8918,10 +8948,22 @@ function App() {
       membersDraft = ensured.membersDraft;
       const memberIdx = ensured.idx;
       const roster = membersDraft[memberIdx].roster || [];
-      const existingIdx = roster.findIndex(p => normPN(p.name) === n || (p.usernameHistory || []).some(h => normPN(h) === n));
-      const newRoster = existingIdx >= 0
-        ? roster.map((p, i) => i === existingIdx ? { ...p, starLevel: row.starLevel } : p)
-        : [...roster, newPlayer(row.playerName, row.starLevel)];
+      const existingIdx = roster.findIndex(p => matchesName(p, n));
+      let newRoster;
+      if (existingIdx >= 0) {
+        newRoster = roster.map((p, i) => i === existingIdx ? { ...p, starLevel: row.starLevel } : p);
+      } else {
+        // A player who's currently a free agent this season is moved onto
+        // the team instead of being duplicated as a new player.
+        const faIdx = freeAgentsDraft.findIndex(p => matchesName(p, n));
+        if (faIdx >= 0) {
+          const fa = freeAgentsDraft[faIdx];
+          freeAgentsDraft = freeAgentsDraft.filter((_, i) => i !== faIdx);
+          newRoster = [...roster, { ...fa, starLevel: row.starLevel }];
+        } else {
+          newRoster = [...roster, newPlayer(row.playerName, row.starLevel)];
+        }
+      }
       membersDraft = membersDraft.map((m, i) => i === memberIdx ? { ...m, roster: newRoster } : m);
     }
 
