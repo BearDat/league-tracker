@@ -2829,7 +2829,7 @@ function HomeView({ season, teamsById, settings, onOpenTeam, h2hMatrix, sport, o
               <div className="text-[9px] uppercase font-bold mb-2 flex items-center justify-between" style={{ color: isLive ? NEGATIVE : g.played ? CHALK_DIM : PRIMARY }}>
                 <span className="flex items-center gap-1">
                   {isLive && <span className="w-1.5 h-1.5 rounded-full flex-shrink-0" style={{ background: NEGATIVE, animation: 'lt-live-pulse 1.4s ease-in-out infinite' }} />}
-                  {isLive ? (periodLabel || 'Live') : g.played ? 'Final' : (g.date || 'Upcoming')}
+                  {isLive ? (periodLabel || 'Live') : g.played ? 'Final' : (g.date ? (settings.scheduleMode === 'round' ? formatRoundLabel(g.date) : g.date) : 'Upcoming')}
                 </span>
                 {g.streamUrl && !g.played && <Video size={11} style={{ color: PRIMARY }} />}
               </div>
@@ -2885,7 +2885,8 @@ function HomeView({ season, teamsById, settings, onOpenTeam, h2hMatrix, sport, o
               const oppId = isHome ? nextGame.awayTeamId : nextGame.homeTeamId;
               const opp = teamsById[oppId];
               const oppName = opp ? opp.name : (isHome ? nextGame.awayScheduleName : nextGame.homeScheduleName) || 'TBD';
-              nextGameText = `Next: ${isHome ? 'vs' : '@'} ${oppName}${nextGame.date ? ` · ${nextGame.date}` : ''}`;
+              const nextDateLabel = nextGame.date ? (settings.scheduleMode === 'round' ? formatRoundLabel(nextGame.date) : nextGame.date) : '';
+              nextGameText = `Next: ${isHome ? 'vs' : '@'} ${oppName}${nextDateLabel ? ` · ${nextDateLabel}` : ''}`;
             }
             return (
               <button key={t.id} onClick={() => onOpenTeam(t.id)} className="text-left px-3 py-2 rounded-lg" style={{ background: PANEL2, borderLeft: `3px solid ${teamColor(t)}` }}>
@@ -6000,13 +6001,14 @@ function PlayerStatLineForm({ initial, onSave, onCancel }) {
 // data doesn't cover), and add or correct a season's stat line directly.
 // Collapsed by default so it doesn't dominate the page for the common case
 // of just viewing stats.
-function PlayerEditPanel({ league, seasonsInfo, teamsById, playerBadges, playerAccolades, playerTeamCredits, primaryIdentityKey, onSetPlayerBadges, onAddPlayerAccolade, onRemovePlayerAccolade, onAddPlayerTeamCredit, onRemovePlayerTeamCredit, onUpsertManualStatLine, onDeleteManualStatLine }) {
+function PlayerEditPanel({ league, seasonsInfo, teamsById, displayName, playerBadges, playerAccolades, playerTeamCredits, primaryIdentityKey, onSetPlayerBadges, onAddPlayerAccolade, onRemovePlayerAccolade, onAddPlayerTeamCredit, onRemovePlayerTeamCredit, onUpsertManualStatLine, onDeleteManualStatLine, onRenamePlayer }) {
   const [open, setOpen] = useState(false);
   const [accName, setAccName] = useState('');
   const [accSeason, setAccSeason] = useState('');
   const [tcTeamId, setTcTeamId] = useState('');
   const [tcSeasonLabel, setTcSeasonLabel] = useState('');
   const [editingLine, setEditingLine] = useState(null); // { seasonId, line } | { newSeasonId }
+  const [nameDraft, setNameDraft] = useState(displayName || '');
   const badgeDefs = (league && league.badgeDefs) || [];
   const badgeIdSet = new Set(playerBadges.map(b => b.id));
   const toggleBadge = (id) => {
@@ -6014,6 +6016,11 @@ function PlayerEditPanel({ league, seasonsInfo, teamsById, playerBadges, playerA
     onSetPlayerBadges(primaryIdentityKey, next);
   };
   const allStatLines = seasonsInfo.flatMap(info => (info.season.importedStatLines || []).filter(l => l.playerId === info.playerId).map(l => ({ ...l, seasonId: info.season.id, seasonName: info.season.name })));
+  const nameChanged = nameDraft.trim() && nameDraft.trim() !== (displayName || '').trim();
+  const saveRename = () => {
+    if (!nameChanged) return;
+    onRenamePlayer(seasonsInfo.map(info => ({ seasonId: info.season.id, playerId: info.playerId })), nameDraft.trim());
+  };
 
   if (!open) {
     return <button onClick={() => setOpen(true)} className="w-full text-xs font-bold uppercase tracking-wide px-3 py-2 rounded-lg" style={{ background: PANEL2, color: PRIMARY, border: `1px solid ${LINE}` }}>Site Owner: edit player</button>;
@@ -6022,6 +6029,15 @@ function PlayerEditPanel({ league, seasonsInfo, teamsById, playerBadges, playerA
     <Panel className="overflow-hidden" style={{ borderColor: PRIMARY }}>
       <SectionTitle accent={PRIMARY} right={<button onClick={() => setOpen(false)} className="text-[11px] font-semibold" style={{ color: CHALK_DIM }}>Close</button>}>Site Owner: edit player</SectionTitle>
       <div className="px-4 pb-4 space-y-4 text-sm">
+        <div>
+          <div className="text-xs font-semibold mb-1.5" style={{ color: CHALK }}>Player name</div>
+          <p className="text-[10px] mb-1.5" style={{ color: CHALK_DIM }}>Fixes a misspelled import (e.g. a sheet typo that created a separate player) — renaming here merges it back into the correctly-spelled player's page automatically. The old name is kept on record so nothing that still uses it breaks.</p>
+          <div className="flex gap-1.5">
+            <input value={nameDraft} onChange={e => setNameDraft(e.target.value)} className="flex-1 bg-[#242424] border rounded px-2 py-1.5 text-xs" style={{ borderColor: LINE, color: CHALK }} />
+            <button onClick={saveRename} disabled={!nameChanged} className="px-2.5 py-1.5 rounded font-bold text-xs disabled:opacity-40" style={{ background: PRIMARY, color: INK }}>Save</button>
+          </div>
+        </div>
+
         <div>
           <div className="text-xs font-semibold mb-1.5" style={{ color: CHALK }}>Badges</div>
           {badgeDefs.length === 0 ? (
@@ -6123,7 +6139,7 @@ function PlayerEditPanel({ league, seasonsInfo, teamsById, playerBadges, playerA
   );
 }
 
-function PlayerPage({ league, teamsById, playerName, onBack, onOpenTeam, onOpenPlayerCompare, activeSeasonId, onRemoveActivity, onClearAllActivity, onBackfillRobloxId, onSyncRobloxRename, onPlayerRenamed, onSetPlayerBadges, onAddPlayerAccolade, onRemovePlayerAccolade, onAddPlayerTeamCredit, onRemovePlayerTeamCredit, onUpsertManualStatLine, onDeleteManualStatLine, onRemoveTeamPlayed }) {
+function PlayerPage({ league, teamsById, playerName, onBack, onOpenTeam, onOpenPlayerCompare, activeSeasonId, onRemoveActivity, onClearAllActivity, onBackfillRobloxId, onSyncRobloxRename, onPlayerRenamed, onRenamePlayer, onSetPlayerBadges, onAddPlayerAccolade, onRemovePlayerAccolade, onAddPlayerTeamCredit, onRemovePlayerTeamCredit, onUpsertManualStatLine, onDeleteManualStatLine, onRemoveTeamPlayed }) {
   const { hasPermission, role } = useAuth();
   const canManage = hasPermission('manageRosters');
   const isSiteOwner = role === 'site_owner';
@@ -6375,12 +6391,13 @@ function PlayerPage({ league, teamsById, playerName, onBack, onOpenTeam, onOpenP
 
       {isSiteOwner && (
         <PlayerEditPanel
-          league={league} seasonsInfo={seasonsInfo} teamsById={teamsById}
+          league={league} seasonsInfo={seasonsInfo} teamsById={teamsById} displayName={displayName}
           playerBadges={playerBadges} playerAccolades={playerAccolades} playerTeamCredits={playerTeamCredits}
           primaryIdentityKey={primaryIdentityKey}
           onSetPlayerBadges={onSetPlayerBadges} onAddPlayerAccolade={onAddPlayerAccolade} onRemovePlayerAccolade={onRemovePlayerAccolade}
           onAddPlayerTeamCredit={onAddPlayerTeamCredit} onRemovePlayerTeamCredit={onRemovePlayerTeamCredit}
           onUpsertManualStatLine={onUpsertManualStatLine} onDeleteManualStatLine={onDeleteManualStatLine}
+          onRenamePlayer={(entries, newName) => { onRenamePlayer(entries, newName); if (onPlayerRenamed) onPlayerRenamed(newName); }}
         />
       )}
 
@@ -7216,11 +7233,12 @@ function AwardsView({ league, season, standings, teamsById, addAwardDef, updateA
   );
 }
 
-function LeagueInfoView({ league, updateLeagueInfo, addStaffMember, updateStaffMember, removeStaffMember }) {
+function LeagueInfoView({ league, updateLeagueInfo, addStaffMember, updateStaffMember, removeStaffMember, addLeagueLink, updateLeagueLink, removeLeagueLink }) {
   const { hasPermission } = useAuth();
   const isLoggedIn = hasPermission('manageLeagueInfo');
   const info = league.info || {};
   const staff = league.staff || [];
+  const links = info.links || [];
   const [descDraft, setDescDraft] = useState(info.description || '');
   useEffect(() => { setDescDraft(info.description || ''); }, [info.description]);
   const [discordDraft, setDiscordDraft] = useState(info.discordUrl || '');
@@ -7229,6 +7247,8 @@ function LeagueInfoView({ league, updateLeagueInfo, addStaffMember, updateStaffM
   useEffect(() => { setCreatorDraft(info.creatorName || ''); }, [info.creatorName]);
   const [staffName, setStaffName] = useState('');
   const [staffRole, setStaffRole] = useState('');
+  const [linkLabel, setLinkLabel] = useState('');
+  const [linkUrl, setLinkUrl] = useState('');
 
   return (
     <div className="p-4 space-y-4">
@@ -7294,6 +7314,30 @@ function LeagueInfoView({ league, updateLeagueInfo, addStaffMember, updateStaffM
               <input value={creatorDraft} onChange={e => setCreatorDraft(e.target.value)} onBlur={() => updateLeagueInfo({ creatorName: creatorDraft })} placeholder="Name / handle" className="w-full bg-[#242424] border rounded px-3 py-2 text-sm" style={{ borderColor: LINE, color: CHALK }} />
             ) : (
               <p className="text-sm" style={{ color: CHALK_DIM }}>{info.creatorName || 'Not listed.'}</p>
+            )}
+          </div>
+          <div>
+            <div className="text-[10px] uppercase mb-1" style={{ color: CHALK_DIM }}>Other links</div>
+            {links.length === 0 && !isLoggedIn && <p className="text-sm" style={{ color: CHALK_DIM }}>No other links yet.</p>}
+            {links.length > 0 && (
+              <div className={isLoggedIn ? 'space-y-2 mb-2' : 'flex flex-wrap gap-2'}>
+                {links.map(l => isLoggedIn ? (
+                  <div key={l.id} className="flex items-center gap-2">
+                    <input defaultValue={l.label} onBlur={e => updateLeagueLink(l.id, 'label', e.target.value)} placeholder="Label (e.g. Twitter)" className="w-32 flex-shrink-0 bg-[#242424] border rounded px-2 py-1.5 text-sm" style={{ borderColor: LINE, color: CHALK }} />
+                    <input defaultValue={l.url} onBlur={e => updateLeagueLink(l.id, 'url', e.target.value)} placeholder="https://…" className="flex-1 bg-[#242424] border rounded px-2 py-1.5 text-sm" style={{ borderColor: LINE, color: CHALK }} />
+                    <button onClick={() => removeLeagueLink(l.id)} className="p-1 rounded flex-shrink-0" style={{ color: NEGATIVE }}><Trash2 size={14} /></button>
+                  </div>
+                ) : l.url ? (
+                  <a key={l.id} href={l.url} target="_blank" rel="noopener noreferrer" className="inline-flex items-center gap-2 px-3 py-2 rounded font-bold text-sm" style={{ background: PANEL2, color: PRIMARY, border: `1px solid ${LINE}` }}>{l.label || l.url}</a>
+                ) : null)}
+              </div>
+            )}
+            {isLoggedIn && (
+              <div className="flex flex-wrap items-center gap-2 pt-1">
+                <input value={linkLabel} onChange={e => setLinkLabel(e.target.value)} placeholder="Label (e.g. Twitter)" className="w-32 flex-shrink-0 bg-[#242424] border rounded px-2 py-1.5 text-sm" style={{ borderColor: LINE, color: CHALK }} />
+                <input value={linkUrl} onChange={e => setLinkUrl(e.target.value)} placeholder="https://…" className="flex-1 min-w-[140px] bg-[#242424] border rounded px-2 py-1.5 text-sm" style={{ borderColor: LINE, color: CHALK }} />
+                <button onClick={() => { if (linkUrl.trim()) { addLeagueLink(linkLabel.trim(), linkUrl.trim()); setLinkLabel(''); setLinkUrl(''); } }} disabled={!linkUrl.trim()} className="px-3 py-1.5 rounded font-bold text-xs flex items-center gap-1 flex-shrink-0 disabled:opacity-40" style={{ background: PRIMARY, color: INK }}><Plus size={14} /> Add</button>
+              </div>
             )}
           </div>
         </div>
@@ -9310,6 +9354,33 @@ function App() {
     });
     persistLeague({ ...league, seasons });
   };
+  // A manual, site-owner-triggered rename of a specific set of entries —
+  // unlike syncRobloxRename (which follows a Roblox account id automatically
+  // wherever it goes), this fixes the case where a sheet import created a
+  // stray, disconnected player from a misspelled name: renaming just that
+  // entry to the correct spelling makes it match the real player's name on
+  // the next page load, so getPlayerCareerData's closure folds it into the
+  // same page — no separate merge step needed. Also keeps the old (bad)
+  // name in usernameHistory so anything still referencing it — an old
+  // activity log line, an unresolved robloxUserId — still resolves here
+  // rather than forking a second identity again.
+  const renamePlayer = (entries, newName) => {
+    if (!league || !entries || entries.length === 0) return;
+    const trimmed = (newName || '').trim();
+    if (!trimmed) return;
+    const targets = new Set(entries.map(e => `${e.seasonId}:${e.playerId}`));
+    const renameIfTarget = (seasonId) => (p) => {
+      if (!targets.has(`${seasonId}:${p.id}`) || p.name === trimmed) return p;
+      const history = [...new Set([...(p.usernameHistory || []), p.name])];
+      return { ...p, name: trimmed, usernameHistory: history };
+    };
+    const seasons = league.seasons.map(s => ({
+      ...s,
+      members: (s.members || []).map(m => ({ ...m, roster: (m.roster || []).map(renameIfTarget(s.id)) })),
+      freeAgents: (s.freeAgents || []).map(renameIfTarget(s.id)),
+    }));
+    persistLeague({ ...league, seasons });
+  };
   /* ---- Roblox identity (avatar id + username-change sync) ---- */
   // The first time a player's Roblox avatar resolves, stamp their account id
   // onto every roster/free-agent entry across every season that currently
@@ -9457,6 +9528,26 @@ function App() {
   const removeStaffMember = (id) => {
     if (!league) return;
     persistLeague({ ...league, staff: (league.staff || []).filter(s => s.id !== id) });
+  };
+  // Free-form extra links (Twitter, YouTube, Twitch, a website, a rulebook
+  // doc, ...) alongside the dedicated Discord field — league.info.links is
+  // an ordered {id, label, url} list rather than more named fields, since
+  // there's no fixed set of platforms a league might want to link to.
+  const addLeagueLink = (label, url) => {
+    if (!league) return;
+    const link = { id: uid('link'), label, url };
+    const info = league.info || {};
+    persistLeague({ ...league, info: { ...info, links: [...(info.links || []), link] } });
+  };
+  const updateLeagueLink = (id, field, value) => {
+    if (!league) return;
+    const info = league.info || {};
+    persistLeague({ ...league, info: { ...info, links: (info.links || []).map(l => l.id === id ? { ...l, [field]: value } : l) } });
+  };
+  const removeLeagueLink = (id) => {
+    if (!league) return;
+    const info = league.info || {};
+    persistLeague({ ...league, info: { ...info, links: (info.links || []).filter(l => l.id !== id) } });
   };
 
   /* ---- news ---- */
@@ -9800,7 +9891,7 @@ function App() {
     } else if (tab === 'news') {
       body = <NewsView league={league} addNewsPost={addNewsPost} updateNewsPost={updateNewsPost} removeNewsPost={removeNewsPost} />;
     } else if (tab === 'info') {
-      body = <LeagueInfoView league={league} updateLeagueInfo={updateLeagueInfo} addStaffMember={addStaffMember} updateStaffMember={updateStaffMember} removeStaffMember={removeStaffMember} />;
+      body = <LeagueInfoView league={league} updateLeagueInfo={updateLeagueInfo} addStaffMember={addStaffMember} updateStaffMember={updateStaffMember} removeStaffMember={removeStaffMember} addLeagueLink={addLeagueLink} updateLeagueLink={updateLeagueLink} removeLeagueLink={removeLeagueLink} />;
     } else if (tab === 'settings') {
       body = <SettingsView settings={activeSeason.settings} saveSettings={saveSettings} theme={theme} saveTheme={saveTheme} sport={sport} season={activeSeason} teamsById={teamsById} importGames={importGames} addManualGame={addManualGame} generateSchedule={generateSchedule} league={league} onRunKpbImport={runKpbImport} onSyncPlayerIdentities={syncPlayerIdentities} onAddBadgeDef={addBadgeDef} onRemoveBadgeDef={removeBadgeDef} onOpenRegistry={openRegistry} />;
     } else if (tab === 'team') {
@@ -9808,7 +9899,7 @@ function App() {
     } else if (tab === 'compare') {
       body = <ComparePage season={activeSeason} standingsAll={standingsResult.all} teamsById={displayTeamsById} h2hMatrix={h2hMatrix} initialTeamId={compareInitialId} initialTeamBId={compareSecondId} onBack={backFromCompare} onOpenTeam={onOpenTeam} />;
     } else if (tab === 'player') {
-      body = <PlayerPage league={league} teamsById={displayTeamsById} playerName={selectedPlayerName} onBack={backFromPlayer} onOpenTeam={onOpenTeam} onOpenPlayerCompare={onOpenPlayerCompare} activeSeasonId={activeSeason && activeSeason.id} onRemoveActivity={removeActivityItem} onClearAllActivity={removeActivityItems} onBackfillRobloxId={backfillRobloxId} onSyncRobloxRename={syncRobloxRename} onPlayerRenamed={setSelectedPlayerName} onSetPlayerBadges={setPlayerBadges} onAddPlayerAccolade={addPlayerAccolade} onRemovePlayerAccolade={removePlayerAccolade} onAddPlayerTeamCredit={addPlayerTeamCredit} onRemovePlayerTeamCredit={removePlayerTeamCredit} onUpsertManualStatLine={upsertManualStatLine} onDeleteManualStatLine={deleteManualStatLine} onRemoveTeamPlayed={removeTeamPlayed} />;
+      body = <PlayerPage league={league} teamsById={displayTeamsById} playerName={selectedPlayerName} onBack={backFromPlayer} onOpenTeam={onOpenTeam} onOpenPlayerCompare={onOpenPlayerCompare} activeSeasonId={activeSeason && activeSeason.id} onRemoveActivity={removeActivityItem} onClearAllActivity={removeActivityItems} onBackfillRobloxId={backfillRobloxId} onSyncRobloxRename={syncRobloxRename} onPlayerRenamed={setSelectedPlayerName} onRenamePlayer={renamePlayer} onSetPlayerBadges={setPlayerBadges} onAddPlayerAccolade={addPlayerAccolade} onRemovePlayerAccolade={removePlayerAccolade} onAddPlayerTeamCredit={addPlayerTeamCredit} onRemovePlayerTeamCredit={removePlayerTeamCredit} onUpsertManualStatLine={upsertManualStatLine} onDeleteManualStatLine={deleteManualStatLine} onRemoveTeamPlayed={removeTeamPlayed} />;
     } else if (tab === 'playerCompare') {
       body = <PlayerComparePage league={league} teamsById={displayTeamsById} initialNameA={comparePlayerAName} initialNameB={comparePlayerBName} onBack={backFromPlayerCompare} onOpenPlayer={onOpenPlayer} activeSeasonId={activeSeason && activeSeason.id} />;
     }
