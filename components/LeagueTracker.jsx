@@ -4038,7 +4038,7 @@ function getPlayerCareerData(league, playerName) {
       gameLog.push(normalizeStatRow(row, {
         seasonId: info.season.id, seasonName: info.season.name, teamId: info.teamId,
         oppTeamId: null, side: null, gameId: row.id, date: row.sourceLabel || 'Imported',
-        isPlayoff: false, isPlayIn: false, isImport: true, sourceLabel: row.sourceLabel,
+        isPlayoff: !!row.isPlayoff, isPlayIn: false, isImport: true, sourceLabel: row.sourceLabel,
         isTournament: isTournamentSeason,
       }));
     });
@@ -4115,13 +4115,14 @@ function computeSeasonPlayerLeaders(season, teamsById, mode = 'regular') {
       });
     });
   });
-  // Imported season totals (e.g. from hcbb.info) are always regular-season.
-  if (mode === 'regular') {
-    (season.importedStatLines || []).forEach(row => {
-      const entry = byPlayer.get(row.playerId);
-      if (entry) entry.rows.push(normalizeStatRow(row, {}));
-    });
-  }
+  // Imported season totals (e.g. from hcbb.info, or a manual entry) carry
+  // their own regular-season/playoffs flag now — hcbb imports are always
+  // regular season (set at import time), but a manual entry can be either.
+  (season.importedStatLines || []).forEach(row => {
+    if (!!row.isPlayoff !== (mode === 'playoffs')) return;
+    const entry = byPlayer.get(row.playerId);
+    if (entry) entry.rows.push(normalizeStatRow(row, {}));
+  });
   const players = [...byPlayer.values()].filter(e => e.rows.length > 0).map(e => {
     const totals = sumPlayerTotals(e.rows);
     return { playerId: e.playerId, name: e.name, teamId: e.teamId, totals, batting: computeBattingAdvanced(totals), pitching: computePitchingAdvanced(totals) };
@@ -5833,37 +5834,75 @@ function PlayerPitchingTable({ rows }) {
 }
 
 const MANUAL_STAT_FIELDS = [
-  { key: 'g', label: 'G' }, { key: 'ab', label: 'AB' }, { key: 'r', label: 'R' }, { key: 'h', label: 'H' },
-  { key: 'hr', label: 'HR' }, { key: 'doubles', label: '2B' }, { key: 'triples', label: '3B' },
-  { key: 'rbi', label: 'RBI' }, { key: 'bb', label: 'BB' }, { key: 'so', label: 'SO' },
-  { key: 'ha', label: 'HA' }, { key: 'er', label: 'ER' }, { key: 'bbAllowed', label: 'BB (P)' },
-  { key: 'k', label: "K's" }, { key: 'hrAllowed', label: 'HR (P)' }, { key: 'e', label: 'E' },
+  { key: 'ab', label: 'At-Bats', group: 'batting' }, { key: 'r', label: 'Runs', group: 'batting' },
+  { key: 'h', label: 'Hits', group: 'batting' }, { key: 'hr', label: 'Home Runs', group: 'batting' },
+  { key: 'doubles', label: 'Doubles', group: 'batting' }, { key: 'triples', label: 'Triples', group: 'batting' },
+  { key: 'rbi', label: 'RBI', group: 'batting' }, { key: 'bb', label: 'Walks', group: 'batting' },
+  { key: 'so', label: 'Strikeouts', group: 'batting' },
+  { key: 'ha', label: 'Hits Allowed', group: 'pitching' }, { key: 'er', label: 'Earned Runs', group: 'pitching' },
+  { key: 'bbAllowed', label: 'Walks Allowed', group: 'pitching' }, { key: 'k', label: 'Strikeouts', group: 'pitching' },
+  { key: 'hrAllowed', label: 'Home Runs Allowed', group: 'pitching' }, { key: 'e', label: 'Errors', group: 'pitching' },
 ];
 // A compact add/edit form for one season stat line — used both for editing an
 // existing line (imported or manual) and for adding a brand-new manual one.
-// IP is entered directly in the app's box-score notation (".1"/".2" = thirds
-// of an inning) since that's what every other IP field in the app expects.
+// Batting and pitching are broken into their own clearly-labeled sections
+// (full words, not abbreviations like the old "BB (P)" — easy to mix up
+// with batting walks) since this is filled in by hand, unlike the
+// abbreviated columns in the OCR review table this reuses the data shape
+// from. IP is entered directly in the app's box-score notation (".1"/".2"
+// = thirds of an inning) since that's what every other IP field expects.
+// Regular season and playoffs are two independent lines for the same
+// player/season (a player can have both), not one line with a toggle that
+// overwrites the other.
 function PlayerStatLineForm({ initial, onSave, onCancel }) {
+  const battingFields = MANUAL_STAT_FIELDS.filter(f => f.group === 'batting');
+  const pitchingFields = MANUAL_STAT_FIELDS.filter(f => f.group === 'pitching');
   const [vals, setVals] = useState(() => Object.fromEntries(MANUAL_STAT_FIELDS.map(f => [f.key, (initial && initial[f.key]) || 0])));
+  const [g, setG] = useState((initial && initial.g) || 0);
   const [ip, setIp] = useState((initial && initial.ip) || '0.0');
+  const [isPlayoff, setIsPlayoff] = useState(!!(initial && initial.isPlayoff));
   const set = (k, v) => setVals(prev => ({ ...prev, [k]: v }));
-  return (
-    <div className="space-y-2 p-2 rounded" style={{ background: PANEL2, border: `1px solid ${LINE}` }}>
-      <div className="grid grid-cols-4 gap-1.5">
-        {MANUAL_STAT_FIELDS.map(f => (
-          <label key={f.key} className="flex flex-col items-center gap-0.5">
-            <span className="text-[9px] uppercase" style={{ color: CHALK_DIM }}>{f.label}</span>
-            <input type="number" value={vals[f.key]} onChange={e => set(f.key, Number(e.target.value) || 0)} className="w-full bg-[#242424] border rounded px-1 py-1 text-xs text-center" style={{ borderColor: LINE, color: CHALK }} />
-          </label>
-        ))}
-        <label className="flex flex-col items-center gap-0.5">
-          <span className="text-[9px] uppercase" style={{ color: CHALK_DIM }}>IP</span>
-          <input value={ip} onChange={e => setIp(e.target.value)} placeholder="5.1" className="w-full bg-[#242424] border rounded px-1 py-1 text-xs text-center" style={{ borderColor: LINE, color: CHALK }} />
+  const FieldGrid = ({ fields }) => (
+    <div className="grid grid-cols-3 gap-2">
+      {fields.map(f => (
+        <label key={f.key} className="flex flex-col gap-0.5">
+          <span className="text-[10px]" style={{ color: CHALK_DIM }}>{f.label}</span>
+          <input type="number" value={vals[f.key]} onChange={e => set(f.key, Number(e.target.value) || 0)} className="w-full bg-[#242424] border rounded px-1.5 py-1 text-xs text-center" style={{ borderColor: LINE, color: CHALK }} />
         </label>
+      ))}
+    </div>
+  );
+  return (
+    <div className="space-y-3 p-3 rounded" style={{ background: PANEL2, border: `1px solid ${LINE}` }}>
+      <div className="flex items-center justify-between gap-2 flex-wrap">
+        <label className="flex flex-col gap-0.5">
+          <span className="text-[10px]" style={{ color: CHALK_DIM }}>Games played</span>
+          <input type="number" value={g} onChange={e => setG(Number(e.target.value) || 0)} className="w-20 bg-[#242424] border rounded px-1.5 py-1 text-xs text-center" style={{ borderColor: LINE, color: CHALK }} />
+        </label>
+        <div className="flex rounded overflow-hidden border flex-shrink-0" style={{ borderColor: LINE }}>
+          {[[false, 'Regular season'], [true, 'Playoffs']].map(([v, label]) => (
+            <button key={label} onClick={() => setIsPlayoff(v)} className="px-2.5 py-1.5 text-xs font-semibold" style={{ background: isPlayoff === v ? (v ? GOLD : PRIMARY) : 'transparent', color: isPlayoff === v ? INK : CHALK_DIM }}>{label}</button>
+          ))}
+        </div>
+      </div>
+      <div>
+        <div className="text-[11px] font-bold uppercase tracking-wide mb-1.5" style={{ color: PRIMARY }}>Batting</div>
+        <FieldGrid fields={battingFields} />
+      </div>
+      <div>
+        <div className="text-[11px] font-bold uppercase tracking-wide mb-1.5" style={{ color: GOLD }}>Pitching</div>
+        <div className="grid grid-cols-3 gap-2 mb-2">
+          <label className="flex flex-col gap-0.5">
+            <span className="text-[10px]" style={{ color: CHALK_DIM }}>Innings Pitched</span>
+            <input value={ip} onChange={e => setIp(e.target.value)} placeholder="5.1" className="w-full bg-[#242424] border rounded px-1.5 py-1 text-xs text-center" style={{ borderColor: LINE, color: CHALK }} />
+          </label>
+        </div>
+        <p className="text-[10px] -mt-1 mb-2" style={{ color: CHALK_DIM }}>Box-score notation: 5.1 = 5⅓ innings, 5.2 = 5⅔ (the digit after the dot is outs, not tenths).</p>
+        <FieldGrid fields={pitchingFields} />
       </div>
       <div className="flex gap-2">
-        <button onClick={() => onSave({ ...vals, ip })} className="px-2.5 py-1.5 rounded font-bold text-xs" style={{ background: PRIMARY, color: INK }}>Save</button>
-        <button onClick={onCancel} className="px-2.5 py-1.5 rounded text-xs" style={{ color: CHALK_DIM }}>Cancel</button>
+        <button onClick={() => onSave({ ...vals, g, ip, isPlayoff })} className="px-3 py-1.5 rounded font-bold text-xs" style={{ background: PRIMARY, color: INK }}>Save</button>
+        <button onClick={onCancel} className="px-3 py-1.5 rounded text-xs" style={{ color: CHALK_DIM }}>Cancel</button>
       </div>
     </div>
   );
@@ -9065,11 +9104,15 @@ function App() {
   // duplicated.
   const upsertManualStatLine = (seasonId, playerId, fields) => {
     if (!league || !seasonId || !playerId) return;
+    const isPlayoff = !!fields.isPlayoff;
     const seasons = league.seasons.map(s => {
       if (s.id !== seasonId) return s;
       const lines = [...(s.importedStatLines || [])];
-      const idx = lines.findIndex(l => l.source === 'manual' && l.playerId === playerId);
-      const line = { id: idx >= 0 ? lines[idx].id : uid('imp'), playerId, source: 'manual', sourceSeason: 'manual', sourceLabel: 'Manual entry', importedAt: Date.now(), ...fields };
+      // Regular season and playoffs are independent lines for the same
+      // player/season, so the match has to include isPlayoff too — otherwise
+      // saving one would silently overwrite the other.
+      const idx = lines.findIndex(l => l.source === 'manual' && l.playerId === playerId && !!l.isPlayoff === isPlayoff);
+      const line = { id: idx >= 0 ? lines[idx].id : uid('imp'), playerId, source: 'manual', sourceSeason: 'manual', sourceLabel: isPlayoff ? 'Manual entry (Playoffs)' : 'Manual entry', importedAt: Date.now(), ...fields, isPlayoff };
       if (idx >= 0) lines[idx] = line; else lines.push(line);
       return { ...s, importedStatLines: lines };
     });
