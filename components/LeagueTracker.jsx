@@ -654,25 +654,31 @@ function normalizeTeamName(name) {
 // own "Team | <name> | Stars" header row). Finds every header wherever it
 // appears and reads that block's players until a "Star Total" row, a blank
 // role+username pair, or the next header at the same columns.
-function parseRosterSheetCsv(text) {
-  function splitCsvLine(line) {
-    const cells = [];
-    let cur = '', inQuotes = false;
-    for (let i = 0; i < line.length; i++) {
-      const c = line[i];
-      if (inQuotes) {
-        if (c === '"') { if (line[i + 1] === '"') { cur += '"'; i++; } else inQuotes = false; }
-        else cur += c;
-      } else {
-        if (c === '"') inQuotes = true;
-        else if (c === ',') { cells.push(cur); cur = ''; }
-        else cur += c;
-      }
+// Splits one line of pasted sheet data into cells. A line copied straight
+// out of Google Sheets/Excel is tab-separated (that's the clipboard format
+// spreadsheets use for a cell range) rather than comma-separated, so a tab
+// wins whenever the line has one; otherwise it's treated as CSV (comma
+// with quote-escaping) for text exported that way instead.
+function splitSheetLine(line) {
+  if (line.includes('\t')) return line.split('\t').map(c => c.trim());
+  const cells = [];
+  let cur = '', inQuotes = false;
+  for (let i = 0; i < line.length; i++) {
+    const c = line[i];
+    if (inQuotes) {
+      if (c === '"') { if (line[i + 1] === '"') { cur += '"'; i++; } else inQuotes = false; }
+      else cur += c;
+    } else {
+      if (c === '"') inQuotes = true;
+      else if (c === ',') { cells.push(cur); cur = ''; }
+      else cur += c;
     }
-    cells.push(cur);
-    return cells.map(c => c.trim());
   }
-  const rows = text.split(/\r?\n/).filter(l => l.length > 0).map(splitCsvLine);
+  cells.push(cur);
+  return cells.map(c => c.trim());
+}
+function parseRosterSheetCsv(text) {
+  const rows = text.split(/\r?\n/).filter(l => l.length > 0).map(splitSheetLine);
   const blocks = [];
   for (let r = 0; r < rows.length; r++) {
     const row = rows[r];
@@ -697,6 +703,52 @@ function parseRosterSheetCsv(text) {
     }
   }
   return blocks;
+}
+
+// Parses a draft board: a "ROUND N" header (its own row, possibly a merged
+// cell so only the first column has anything in it) followed by pick rows
+// shaped like "R1 P1 | Team | Player | #1". The round/pick-in-round is read
+// straight off the "R#P#" label rather than the header line, since that's
+// right there on every row and doesn't depend on the header having survived
+// the paste intact. Rows that don't look like a pick (blank, a stray
+// header) are skipped rather than aborting the whole parse.
+function parseDraftBoardSheet(text) {
+  const rows = text.split(/\r?\n/).filter(l => l.trim().length > 0).map(splitSheetLine);
+  const picks = [];
+  rows.forEach(row => {
+    const label = (row[0] || '').trim();
+    const m = /^R\s*(\d+)\s*P\s*(\d+)$/i.exec(label);
+    if (!m) return; // "ROUND N" header row, blank row, or a stray label — skip
+    const teamName = (row[1] || '').trim();
+    const playerName = (row[2] || '').trim();
+    if (!teamName || !playerName) return;
+    const overallMatch = /#\s*(\d+)/.exec(row[3] || '');
+    picks.push({
+      round: Number(m[1]), pickInRound: Number(m[2]),
+      overall: overallMatch ? Number(overallMatch[1]) : null,
+      teamName, playerName,
+    });
+  });
+  return picks;
+}
+
+// Parses a flat star-rating sheet: one row per player, "Team | Player |
+// Stars" — unlike the block-grouped roster sheet above, the team repeats
+// (or is blank for a free agent/unrostered player) on every row instead of
+// appearing once as a section header. Treated as applying ratings to
+// players, not as a full roster declaration — a ratings sheet routinely
+// only lists the top tier of players, not literally everyone on a roster.
+function parseStarsSheet(text) {
+  const rows = text.split(/\r?\n/).filter(l => l.trim().length > 0).map(splitSheetLine);
+  const out = [];
+  rows.forEach(row => {
+    const teamName = (row[0] || '').trim();
+    const playerName = (row[1] || '').trim();
+    if (/^team$/i.test(teamName) && /^player$/i.test(playerName)) return; // header row
+    if (!playerName) return;
+    out.push({ teamName, playerName, starLevel: parseStarValue(row[2]) });
+  });
+  return out;
 }
 
 /* ---- awards ---- */
@@ -3454,13 +3506,76 @@ function SettingsView({ settings, saveSettings, theme, saveTheme, sport, season,
 /* ==================================================================== */
 /* Teams (season roster) view                                            */
 /* ==================================================================== */
-function TeamsView({ season, teamsById, teamsIndex, addExistingTeam, createAndAddTeam, updateMemberField, updateGlobalTeamField, removeMember, onOpenTeam, importRosterSheet, addDivision, updateDivision, removeDivision, assignMemberDivision }) {
+// Generic paste → preview → (resolve unmatched teams) → import panel, shared
+// by the draft-board and star-rating importers below — same shape as the
+// roster sheet importer just above (textarea, preview list, a resolver for
+// any team name that didn't match one already on file), just without that
+// one's per-team roster-replace semantics since these two apply narrower
+// per-row edits (a draft pick, a star rating) instead of declaring a whole
+// roster.
+function SheetTextImportPanel({ title, placeholder, description, parseFn, renderRow, onImport, summaryText, teamsIndex, borderColor = PRIMARY }) {
+  const [open, setOpen] = useState(false);
+  const [text, setText] = useState('');
+  const [items, setItems] = useState(null);
+  const [resolutions, setResolutions] = useState({});
+  const preview = () => { setItems(parseFn(text)); setResolutions({}); };
+  const unmatchedNames = items
+    ? [...new Set(items.map(it => it.teamName).filter(Boolean))].filter(n => !teamsIndex.some(t => normalizeTeamName(t.name) === normalizeTeamName(n)))
+    : [];
+  const reset = () => { setItems(null); setText(''); setResolutions({}); setOpen(false); };
+  return (
+    <Panel className="overflow-hidden" style={{ borderColor }}>
+      <SectionTitle accent={borderColor} right={<button onClick={() => setOpen(v => !v)} className="text-[11px] font-bold" style={{ color: borderColor }}>{open ? 'Hide' : 'Import'}</button>}>{title}</SectionTitle>
+      {open && (
+        <div className="px-4 pb-4 space-y-2">
+          <p className="text-xs" style={{ color: CHALK_DIM }}>{description}</p>
+          <textarea value={text} onChange={e => setText(e.target.value)} rows={5} placeholder={placeholder} className="w-full bg-[#242424] border rounded px-3 py-2 text-xs font-mono" style={{ borderColor: LINE, color: CHALK }} />
+          <button onClick={preview} disabled={!text.trim()} className="px-3 py-2 rounded font-bold text-sm disabled:opacity-40" style={{ background: borderColor, color: INK }}>Preview import</button>
+          {items && (
+            <div className="rounded-lg border" style={{ borderColor: LINE }}>
+              {items.length === 0 ? (
+                <p className="px-3 py-3 text-xs" style={{ color: NEGATIVE }}>Couldn't find any rows to import in that text.</p>
+              ) : (
+                <>
+                  <div className="max-h-56 overflow-y-auto divide-y" style={{ borderColor: LINE }}>
+                    {items.map((it, i) => <div key={i} className="px-3 py-2 text-xs" style={{ color: CHALK }}>{renderRow(it)}</div>)}
+                  </div>
+                  {unmatchedNames.length > 0 && (
+                    <div className="px-3 py-2 space-y-1.5" style={{ borderTop: `1px solid ${LINE}` }}>
+                      <p className="text-[11px] font-semibold" style={{ color: GOLD }}>These team names don't match anything on file (probably a rebrand this sheet predates) — pick the right team, or leave it to create a new one:</p>
+                      {unmatchedNames.map(n => (
+                        <div key={n} className="flex items-center justify-between gap-2">
+                          <span className="text-xs truncate" style={{ color: CHALK }}>{n}</span>
+                          <select value={resolutions[n] || ''} onChange={e => setResolutions(r => ({ ...r, [n]: e.target.value }))} className="bg-[#242424] border rounded px-1.5 py-1 text-[11px]" style={{ borderColor: GOLD, color: CHALK }}>
+                            <option value="" style={{ background: PANEL2, color: CHALK }}>Create new team "{n}"</option>
+                            {[...teamsIndex].sort((a, c) => a.name.localeCompare(c.name)).map(t => <option key={t.id} value={t.id} style={{ background: PANEL2, color: CHALK }}>Actually: {t.name}</option>)}
+                          </select>
+                        </div>
+                      ))}
+                    </div>
+                  )}
+                  <div className="flex justify-end gap-2 px-3 py-2">
+                    <button onClick={reset} className="text-xs" style={{ color: CHALK_DIM }}>Cancel</button>
+                    <button onClick={() => { onImport(items, resolutions); reset(); }} className="px-3 py-1.5 rounded font-bold text-xs" style={{ background: borderColor, color: INK }}>{summaryText(items)}</button>
+                  </div>
+                </>
+              )}
+            </div>
+          )}
+        </div>
+      )}
+    </Panel>
+  );
+}
+
+function TeamsView({ season, teamsById, teamsIndex, addExistingTeam, createAndAddTeam, updateMemberField, updateGlobalTeamField, removeMember, onOpenTeam, importRosterSheet, importDraftBoard, importStarsSheet, addDivision, updateDivision, removeDivision, assignMemberDivision }) {
   const { hasPermission } = useAuth();
   const isLoggedIn = hasPermission('manageRosters');
   const [name, setName] = useState('');
   const [pickId, setPickId] = useState('');
   const [sheetText, setSheetText] = useState('');
   const [sheetPreview, setSheetPreview] = useState(null);
+  const [sheetResolutions, setSheetResolutions] = useState({});
   const [showSheetImport, setShowSheetImport] = useState(false);
   const [search, setSearch] = useState('');
   const memberIds = new Set(season.members.map(m => m.teamId));
@@ -3491,7 +3606,7 @@ function TeamsView({ season, teamsById, teamsIndex, addExistingTeam, createAndAd
     reader.onload = () => setSheetText(String(reader.result || ''));
     reader.readAsText(f);
   };
-  const runSheetPreview = () => setSheetPreview(parseRosterSheetCsv(sheetText));
+  const runSheetPreview = () => { setSheetPreview(parseRosterSheetCsv(sheetText)); setSheetResolutions({}); };
 
   return (
     <div className="p-4 space-y-4">
@@ -3551,21 +3666,27 @@ function TeamsView({ season, teamsById, teamsIndex, addExistingTeam, createAndAd
                   <>
                     <div className="max-h-56 overflow-y-auto divide-y" style={{ borderColor: LINE }}>
                       {sheetPreview.map((b, i) => {
-                        const existing = teamsIndex.find(t => t.name.toLowerCase() === b.teamName.toLowerCase());
+                        const existing = teamsIndex.find(t => normalizeTeamName(t.name) === normalizeTeamName(b.teamName));
                         return (
                           <div key={i} className="px-3 py-2 text-xs">
-                            <div className="flex items-center gap-2">
+                            <div className="flex items-center gap-2 flex-wrap">
                               {existing ? <Check size={12} style={{ color: WIN }} /> : <Plus size={12} style={{ color: GOLD }} />}
                               <span className="font-bold" style={{ color: CHALK }}>{b.teamName}</span>
-                              <span style={{ color: CHALK_DIM }}>{existing ? '(existing team)' : '(will be created)'} · {b.players.length} players</span>
+                              <span style={{ color: CHALK_DIM }}>{existing ? '(existing team)' : '(no exact match)'} · {b.players.length} players</span>
+                              {!existing && (
+                                <select value={sheetResolutions[b.teamName] || ''} onChange={e => setSheetResolutions(r => ({ ...r, [b.teamName]: e.target.value }))} className="bg-[#242424] border rounded px-1.5 py-1 text-[11px]" style={{ borderColor: GOLD, color: CHALK }}>
+                                  <option value="" style={{ background: PANEL2, color: CHALK }}>Create new team "{b.teamName}"</option>
+                                  {[...teamsIndex].sort((a, c) => a.name.localeCompare(c.name)).map(t => <option key={t.id} value={t.id} style={{ background: PANEL2, color: CHALK }}>Actually: {t.name}</option>)}
+                                </select>
+                              )}
                             </div>
                           </div>
                         );
                       })}
                     </div>
                     <div className="flex justify-end gap-2 px-3 py-2">
-                      <button onClick={() => { setSheetPreview(null); setSheetText(''); setShowSheetImport(false); }} className="text-xs" style={{ color: CHALK_DIM }}>Cancel</button>
-                      <button onClick={() => { importRosterSheet(sheetPreview); setSheetPreview(null); setSheetText(''); setShowSheetImport(false); }} className="px-3 py-1.5 rounded font-bold text-xs" style={{ background: PRIMARY, color: INK }}>Import {sheetPreview.reduce((s, b) => s + b.players.length, 0)} players across {sheetPreview.length} teams</button>
+                      <button onClick={() => { setSheetPreview(null); setSheetText(''); setSheetResolutions({}); setShowSheetImport(false); }} className="text-xs" style={{ color: CHALK_DIM }}>Cancel</button>
+                      <button onClick={() => { importRosterSheet(sheetPreview, sheetResolutions); setSheetPreview(null); setSheetText(''); setSheetResolutions({}); setShowSheetImport(false); }} className="px-3 py-1.5 rounded font-bold text-xs" style={{ background: PRIMARY, color: INK }}>Import {sheetPreview.reduce((s, b) => s + b.players.length, 0)} players across {sheetPreview.length} teams</button>
                     </div>
                   </>
                 )}
@@ -3574,6 +3695,28 @@ function TeamsView({ season, teamsById, teamsIndex, addExistingTeam, createAndAd
           </div>
         )}
       </Panel>
+      {isLoggedIn && (
+        <SheetTextImportPanel
+          title="Import a draft board" borderColor={GOLD} teamsIndex={teamsIndex}
+          description={'Paste a draft board — one row per pick, shaped like "R1 P1 | Team | Player | #1" (a ROUND N row above each round is fine, it\'s ignored — the round/pick number comes from the R#P# label). Sets each player\'s draft pick; creates them on that team if they aren\'t tracked yet.'}
+          placeholder={'R1 P1\tLA Stars\t2facedyam\t#1\nR1 P2\tPittsburg Stallions\tAceelord\t#2'}
+          parseFn={parseDraftBoardSheet}
+          renderRow={(p) => <>Round {p.round}, Pick {p.pickInRound}{p.overall ? ` (#${p.overall} overall)` : ''} — <span className="font-bold">{p.teamName}</span>: {p.playerName}</>}
+          summaryText={(items) => `Import ${items.length} draft picks`}
+          onImport={(items, resolutions) => importDraftBoard(items, resolutions)}
+        />
+      )}
+      {isLoggedIn && (
+        <SheetTextImportPanel
+          title="Import star ratings" borderColor={GOLD} teamsIndex={teamsIndex}
+          description="Paste a flat Team/Player/Stars sheet (team repeats per row, or leave it blank for a free agent). Applies each rating to that player — creates them (on that team, or as a free agent) if they aren't tracked yet. Not treated as a full roster: players missing from the sheet are left alone."
+          placeholder={'Anaheim\txjrdnz\t4.5\nAnaheim\tJoshyboyhitsbombs\t4.5\n\tWorldNutCon\t4.5'}
+          parseFn={parseStarsSheet}
+          renderRow={(r) => <>{r.starLevel != null ? `${r.starLevel}★` : 'R'} — {r.teamName ? <><span className="font-bold">{r.teamName}</span>: </> : <span style={{ color: CHALK_DIM }}>(free agent) </span>}{r.playerName}</>}
+          summaryText={(items) => `Import ${items.length} star ratings`}
+          onImport={(items, resolutions) => importStarsSheet(items, resolutions)}
+        />
+      )}
       <Panel className="overflow-hidden" style={{ borderColor: PRIMARY }}>
         <SectionTitle accent={PRIMARY}>Roster, colors &amp; logos</SectionTitle>
         <fieldset disabled={!isLoggedIn} className="contents">
@@ -5854,7 +5997,7 @@ function PlayerEditPanel({ league, seasonsInfo, teamsById, playerBadges, playerA
   );
 }
 
-function PlayerPage({ league, teamsById, playerName, onBack, onOpenTeam, onOpenPlayerCompare, activeSeasonId, onRemoveActivity, onClearAllActivity, onBackfillRobloxId, onSyncRobloxRename, onPlayerRenamed, onSetPlayerBadges, onAddPlayerAccolade, onRemovePlayerAccolade, onAddPlayerTeamCredit, onRemovePlayerTeamCredit, onUpsertManualStatLine, onDeleteManualStatLine }) {
+function PlayerPage({ league, teamsById, playerName, onBack, onOpenTeam, onOpenPlayerCompare, activeSeasonId, onRemoveActivity, onClearAllActivity, onBackfillRobloxId, onSyncRobloxRename, onPlayerRenamed, onSetPlayerBadges, onAddPlayerAccolade, onRemovePlayerAccolade, onAddPlayerTeamCredit, onRemovePlayerTeamCredit, onUpsertManualStatLine, onDeleteManualStatLine, onRemoveTeamPlayed }) {
   const { hasPermission, role } = useAuth();
   const canManage = hasPermission('manageRosters');
   const isSiteOwner = role === 'site_owner';
@@ -5990,7 +6133,10 @@ function PlayerPage({ league, teamsById, playerName, onBack, onOpenTeam, onOpenP
   const teamsPlayedOn = seasonsInfo.flatMap((info, i) => {
     const split = seasonSplits[i];
     const teamIds = split.perTeam ? split.perTeam.map(pt => pt.teamId) : [info.teamId];
-    return teamIds.map(teamId => ({ season: info.season, teamId }));
+    // draftPick is a field on the player's one roster/FA record for that
+    // season, not per-team, so it's the same value regardless of which of
+    // this season's teamIds we're building a row for here.
+    return teamIds.map(teamId => ({ season: info.season, teamId, playerId: info.playerId, draftPick: info.player.draftPick || null }));
   });
 
   const latest = currentSeasonEntry;
@@ -6120,12 +6266,21 @@ function PlayerPage({ league, teamsById, playerName, onBack, onOpenTeam, onOpenP
               {teamsPlayedOn.map((entry, i) => {
                 const t = teamsById[entry.teamId];
                 const isFA = entry.teamId == null;
+                const dp = entry.draftPick;
                 return (
-                  <button key={i} onClick={() => t && onOpenTeam(entry.teamId)} disabled={isFA} className="w-full flex items-center gap-2 px-2 py-2 text-left disabled:cursor-default" style={{ borderTop: i > 0 ? `1px solid ${LINE}` : 'none' }}>
-                    {t && <TeamMark team={t} size={18} />}
-                    <span className="flex-1 text-sm font-semibold truncate" style={{ color: CHALK }}>{t ? t.name : (isFA ? 'Free Agent' : 'Unknown team')}</span>
-                    <span className="text-xs flex-shrink-0" style={{ color: CHALK_DIM }}>{entry.season.name}</span>
-                  </button>
+                  <div key={i} className="flex items-center gap-2 px-2 py-2" style={{ borderTop: i > 0 ? `1px solid ${LINE}` : 'none' }}>
+                    <button onClick={() => t && onOpenTeam(entry.teamId)} disabled={isFA} className="flex-1 min-w-0 flex items-center gap-2 text-left disabled:cursor-default">
+                      {t && <TeamMark team={t} size={18} />}
+                      <span className="flex-1 min-w-0 text-sm font-semibold truncate" style={{ color: CHALK }}>{t ? t.name : (isFA ? 'Free Agent' : 'Unknown team')}</span>
+                    </button>
+                    <span className="text-right flex-shrink-0">
+                      <span className="block text-xs" style={{ color: CHALK_DIM }}>{entry.season.name}</span>
+                      {dp && <span className="block text-[10px]" style={{ color: GOLD }}>R{dp.round} P{dp.pickInRound}{dp.overall ? ` · #${dp.overall} overall` : ''}</span>}
+                    </span>
+                    {canManage && !isFA && (
+                      <button onClick={() => { if (confirm(`Remove ${t ? t.name : 'this team'} from ${displayName}'s history for ${entry.season.name}? Any stats already recorded there for them go with it — this can't be undone.`)) onRemoveTeamPlayed(entry.season.id, entry.teamId, entry.playerId); }} className="p-1 rounded flex-shrink-0" style={{ color: CHALK_DIM }}><X size={13} /></button>
+                    )}
+                  </div>
                 );
               })}
               {playerTeamCredits.map((c, i) => {
@@ -6252,12 +6407,21 @@ function PlayerPage({ league, teamsById, playerName, onBack, onOpenTeam, onOpenP
               {teamsPlayedOn.map((entry, i) => {
                 const t = teamsById[entry.teamId];
                 const isFA = entry.teamId == null;
+                const dp = entry.draftPick;
                 return (
-                  <button key={i} onClick={() => t && onOpenTeam(entry.teamId)} disabled={isFA} className="w-full flex items-center gap-2 px-2 py-2 text-left disabled:cursor-default" style={{ borderTop: i > 0 ? `1px solid ${LINE}` : 'none' }}>
-                    {t && <TeamMark team={t} size={18} />}
-                    <span className="flex-1 text-sm font-semibold truncate" style={{ color: CHALK }}>{t ? t.name : (isFA ? 'Free Agent' : 'Unknown team')}</span>
-                    <span className="text-xs flex-shrink-0" style={{ color: CHALK_DIM }}>{entry.season.name}</span>
-                  </button>
+                  <div key={i} className="flex items-center gap-2 px-2 py-2" style={{ borderTop: i > 0 ? `1px solid ${LINE}` : 'none' }}>
+                    <button onClick={() => t && onOpenTeam(entry.teamId)} disabled={isFA} className="flex-1 min-w-0 flex items-center gap-2 text-left disabled:cursor-default">
+                      {t && <TeamMark team={t} size={18} />}
+                      <span className="flex-1 min-w-0 text-sm font-semibold truncate" style={{ color: CHALK }}>{t ? t.name : (isFA ? 'Free Agent' : 'Unknown team')}</span>
+                    </button>
+                    <span className="text-right flex-shrink-0">
+                      <span className="block text-xs" style={{ color: CHALK_DIM }}>{entry.season.name}</span>
+                      {dp && <span className="block text-[10px]" style={{ color: GOLD }}>R{dp.round} P{dp.pickInRound}{dp.overall ? ` · #${dp.overall} overall` : ''}</span>}
+                    </span>
+                    {canManage && !isFA && (
+                      <button onClick={() => { if (confirm(`Remove ${t ? t.name : 'this team'} from ${displayName}'s history for ${entry.season.name}? Any stats already recorded there for them go with it — this can't be undone.`)) onRemoveTeamPlayed(entry.season.id, entry.teamId, entry.playerId); }} className="p-1 rounded flex-shrink-0" style={{ color: CHALK_DIM }}><X size={13} /></button>
+                    )}
+                  </div>
                 );
               })}
               {playerTeamCredits.map((c, i) => {
@@ -8024,6 +8188,15 @@ function App() {
       const loadedT = {};
       for (const tid of [...new Set(ids)]) { const t = await loadObj(`team:${tid}`); if (t) loadedT[tid] = t; }
       setTeamsById(prev => ({ ...prev, ...loadedT }));
+      // teamsIndex (the {id,name} list of every team in the site-wide
+      // registry, not just this league's current members) otherwise only
+      // ever loads via the leagues-picker screen or the team registry — on
+      // a hosted single-league deployment neither of those is ever visited
+      // in the normal course of using the site, so teamsIndex silently
+      // stayed empty for the whole session. That's what was breaking
+      // "Add a team to this season"'s existing-team dropdown, and the
+      // sheet importers' unmatched-team detection.
+      setTeamsIndex(await loadList('teams-index'));
       setSelectedTeamId(null);
       setRoundIdx(0);
       setTab(shaped.seasons.length ? 'home' : 'seasons');
@@ -8276,6 +8449,18 @@ function App() {
     });
     persistLeague({ ...league, seasons });
   };
+  // Corrective tool for the player page's "Teams played on" list, not a
+  // normal roster move: a true delete of that one season/team roster
+  // entry (unlike removePlayer, which demotes to free agent and keeps
+  // stats attached) — for cleaning up a bad import match (e.g. a sheet
+  // that matched the wrong post-rebrand team), which the confirm dialog
+  // in the UI warns is exactly what this does. Season-aware (not limited
+  // to activeSeason) since the entry being removed can be from any season.
+  const removeTeamPlayed = (seasonId, teamId, playerId) => {
+    if (!league) return;
+    const seasons = league.seasons.map(s => s.id === seasonId ? { ...s, members: s.members.map(m => m.teamId === teamId ? { ...m, roster: (m.roster || []).filter(p => p.id !== playerId) } : m) } : s);
+    persistLeague({ ...league, seasons });
+  };
   // Signs a player out of the free agent pool onto a roster — the inverse of
   // removePlayer. Keeps the same player id so their free-agent-stint stats
   // (if any were imported while unattached) stay attributed to them.
@@ -8426,7 +8611,41 @@ function App() {
   // parsed players — updating role/star level for players that already exist
   // (matched by name) so re-importing an updated sheet doesn't wipe out stats
   // you've already entered, and adding anyone new.
-  const importRosterSheet = async (blocks) => {
+  // Resolves a sheet's raw team-name text to a local team id: an explicit
+  // resolution (the admin picking the correct team for a name that didn't
+  // auto-match — a rebrand the sheet predates is the usual reason) always
+  // wins; otherwise tries an exact normalized-name match against the
+  // global team registry, and only creates a brand-new team if nothing
+  // matched at all. Mutates teamsByIdDraft/teamsIndexDraft in place.
+  const resolveOrCreateTeam = async (teamName, resolutions, teamsByIdDraft, teamsIndexDraft) => {
+    if (resolutions && resolutions[teamName]) return resolutions[teamName];
+    const normTeamName = normalizeTeamName(teamName);
+    let gt = Object.values(teamsByIdDraft).find(t => normalizeTeamName(t.name) === normTeamName);
+    if (!gt) {
+      const idxEntry = teamsIndexDraft.find(t => normalizeTeamName(t.name) === normTeamName);
+      if (idxEntry) { gt = await loadObj(`team:${idxEntry.id}`); if (gt) teamsByIdDraft[idxEntry.id] = gt; }
+    }
+    if (!gt) {
+      gt = { id: uid('t'), name: teamName, color: null, logoUrl: null, wordmarkUrl: null, createdAt: Date.now() };
+      teamsByIdDraft[gt.id] = gt;
+      teamsIndexDraft.push({ id: gt.id, name: gt.name });
+      await saveObj(`team:${gt.id}`, gt);
+    }
+    return gt.id;
+  };
+  // Makes sure the season has a member row (with a roster array to push
+  // players into) for this team, creating one if this is its first
+  // appearance in the season. Returns the updated members array and the
+  // row's index.
+  const ensureSeasonMember = (membersDraft, teamId, scheduleName) => {
+    let idx = membersDraft.findIndex(m => m.teamId === teamId);
+    if (idx < 0) {
+      membersDraft = [...membersDraft, { teamId, scheduleName, baselineW: 0, baselineL: 0, baselineRF: 0, baselineRA: 0, active: true, roster: [] }];
+      idx = membersDraft.length - 1;
+    }
+    return { membersDraft, idx };
+  };
+  const importRosterSheet = async (blocks, resolutions) => {
     if (!league || !activeSeason) return;
     const teamsByIdDraft = { ...teamsById };
     const teamsIndexDraft = [...teamsIndex];
@@ -8435,26 +8654,10 @@ function App() {
     for (const block of blocks) {
       const teamName = (block.teamName || '').trim();
       if (!teamName) continue;
-      const normTeamName = normalizeTeamName(teamName);
-      let memberIdx = membersDraft.findIndex(m => {
-        const gt = teamsByIdDraft[m.teamId];
-        return (gt && normalizeTeamName(gt.name) === normTeamName) || normalizeTeamName(m.scheduleName) === normTeamName;
-      });
-      if (memberIdx < 0) {
-        let gt = Object.values(teamsByIdDraft).find(t => normalizeTeamName(t.name) === normTeamName);
-        if (!gt) {
-          const idxEntry = teamsIndexDraft.find(t => normalizeTeamName(t.name) === normTeamName);
-          if (idxEntry) { gt = await loadObj(`team:${idxEntry.id}`); if (gt) teamsByIdDraft[idxEntry.id] = gt; }
-        }
-        if (!gt) {
-          gt = { id: uid('t'), name: teamName, color: null, logoUrl: null, wordmarkUrl: null, createdAt: Date.now() };
-          teamsByIdDraft[gt.id] = gt;
-          teamsIndexDraft.push({ id: gt.id, name: gt.name });
-          await saveObj(`team:${gt.id}`, gt);
-        }
-        membersDraft = [...membersDraft, { teamId: gt.id, scheduleName: teamName, baselineW: 0, baselineL: 0, baselineRF: 0, baselineRA: 0, active: true, roster: [] }];
-        memberIdx = membersDraft.length - 1;
-      }
+      const teamId = await resolveOrCreateTeam(teamName, resolutions, teamsByIdDraft, teamsIndexDraft);
+      const ensured = ensureSeasonMember(membersDraft, teamId, teamName);
+      membersDraft = ensured.membersDraft;
+      const memberIdx = ensured.idx;
       // Full replace, not merge: the sheet is the source of truth for this
       // team's roster on every import, so re-importing an updated sheet
       // can't leave stale players behind or create name-variant duplicates.
@@ -8488,6 +8691,74 @@ function App() {
     setTeamsById(teamsByIdDraft);
     setTeamsIndex(teamsIndexDraft); saveList('teams-index', teamsIndexDraft);
     const seasons = league.seasons.map(s => s.id === activeSeason.id ? { ...s, members: membersDraft } : s);
+    persistLeague({ ...league, seasons });
+  };
+  // Imports a draft board: each pick either sets draftPick on a player
+  // already on that team's roster (matched by name/usernameHistory, same
+  // identity rules as everywhere else) or creates them there if the draft
+  // is the first record of them existing at all.
+  const importDraftBoard = async (picks, resolutions) => {
+    if (!league || !activeSeason) return;
+    const teamsByIdDraft = { ...teamsById };
+    const teamsIndexDraft = [...teamsIndex];
+    let membersDraft = [...activeSeason.members];
+    const normPN = (s) => (s || '').trim().toLowerCase();
+
+    for (const pick of picks) {
+      const teamId = await resolveOrCreateTeam(pick.teamName, resolutions, teamsByIdDraft, teamsIndexDraft);
+      const ensured = ensureSeasonMember(membersDraft, teamId, pick.teamName);
+      membersDraft = ensured.membersDraft;
+      const memberIdx = ensured.idx;
+      const roster = membersDraft[memberIdx].roster || [];
+      const n = normPN(pick.playerName);
+      const existingIdx = roster.findIndex(p => normPN(p.name) === n || (p.usernameHistory || []).some(h => normPN(h) === n));
+      const draftPick = { round: pick.round, pickInRound: pick.pickInRound, overall: pick.overall };
+      const newRoster = existingIdx >= 0
+        ? roster.map((p, i) => i === existingIdx ? { ...p, draftPick } : p)
+        : [...roster, { ...newPlayer(pick.playerName, null), draftPick }];
+      membersDraft = membersDraft.map((m, i) => i === memberIdx ? { ...m, roster: newRoster } : m);
+    }
+
+    setTeamsById(teamsByIdDraft);
+    setTeamsIndex(teamsIndexDraft); saveList('teams-index', teamsIndexDraft);
+    const seasons = league.seasons.map(s => s.id === activeSeason.id ? { ...s, members: membersDraft } : s);
+    persistLeague({ ...league, seasons });
+  };
+  // Imports a flat star-rating sheet: applies starLevel to a matched
+  // player (on the given team, or as a free agent when the sheet left the
+  // team blank), creating them if this is the first record of them.
+  const importStarsSheet = async (rows, resolutions) => {
+    if (!league || !activeSeason) return;
+    const teamsByIdDraft = { ...teamsById };
+    const teamsIndexDraft = [...teamsIndex];
+    let membersDraft = [...activeSeason.members];
+    let freeAgentsDraft = [...(activeSeason.freeAgents || [])];
+    const normPN = (s) => (s || '').trim().toLowerCase();
+
+    for (const row of rows) {
+      const n = normPN(row.playerName);
+      if (!row.teamName) {
+        const idx = freeAgentsDraft.findIndex(p => normPN(p.name) === n || (p.usernameHistory || []).some(h => normPN(h) === n));
+        freeAgentsDraft = idx >= 0
+          ? freeAgentsDraft.map((p, i) => i === idx ? { ...p, starLevel: row.starLevel } : p)
+          : [...freeAgentsDraft, { ...newPlayer(row.playerName, row.starLevel) }];
+        continue;
+      }
+      const teamId = await resolveOrCreateTeam(row.teamName, resolutions, teamsByIdDraft, teamsIndexDraft);
+      const ensured = ensureSeasonMember(membersDraft, teamId, row.teamName);
+      membersDraft = ensured.membersDraft;
+      const memberIdx = ensured.idx;
+      const roster = membersDraft[memberIdx].roster || [];
+      const existingIdx = roster.findIndex(p => normPN(p.name) === n || (p.usernameHistory || []).some(h => normPN(h) === n));
+      const newRoster = existingIdx >= 0
+        ? roster.map((p, i) => i === existingIdx ? { ...p, starLevel: row.starLevel } : p)
+        : [...roster, newPlayer(row.playerName, row.starLevel)];
+      membersDraft = membersDraft.map((m, i) => i === memberIdx ? { ...m, roster: newRoster } : m);
+    }
+
+    setTeamsById(teamsByIdDraft);
+    setTeamsIndex(teamsIndexDraft); saveList('teams-index', teamsIndexDraft);
+    const seasons = league.seasons.map(s => s.id === activeSeason.id ? { ...s, members: membersDraft, freeAgents: freeAgentsDraft } : s);
     persistLeague({ ...league, seasons });
   };
 
@@ -9148,7 +9419,7 @@ function App() {
     } else if (tab === 'standings') {
       body = <StandingsView standings={standings} updateMemberField={updateMemberField} season={activeSeason} settings={activeSeason.settings} movementById={movementById} onOpenTeam={onOpenTeam} />;
     } else if (tab === 'teams' && isLoggedIn) {
-      body = <TeamsView season={activeSeason} teamsById={teamsById} teamsIndex={teamsIndex} addExistingTeam={addExistingTeamToSeason} createAndAddTeam={createAndAddTeamToSeason} updateMemberField={updateMemberField} updateGlobalTeamField={updateGlobalTeamField} removeMember={removeMember} onOpenTeam={onOpenTeam} importRosterSheet={importRosterSheet} addDivision={addDivision} updateDivision={updateDivision} removeDivision={removeDivision} assignMemberDivision={assignMemberDivision} />;
+      body = <TeamsView season={activeSeason} teamsById={teamsById} teamsIndex={teamsIndex} addExistingTeam={addExistingTeamToSeason} createAndAddTeam={createAndAddTeamToSeason} updateMemberField={updateMemberField} updateGlobalTeamField={updateGlobalTeamField} removeMember={removeMember} onOpenTeam={onOpenTeam} importRosterSheet={importRosterSheet} importDraftBoard={importDraftBoard} importStarsSheet={importStarsSheet} addDivision={addDivision} updateDivision={updateDivision} removeDivision={removeDivision} assignMemberDivision={assignMemberDivision} />;
     } else if (tab === 'roster' && isLoggedIn) {
       body = <RosterManagementView season={activeSeason} teamsById={displayTeamsById} updatePlayerField={updatePlayerField} removePlayer={removePlayer} addPlayer={addPlayer} addPlayersBulk={addPlayersBulk} tradePlayer={tradePlayer} tradePlayers={tradePlayers} setPlayerSuspended={setPlayerSuspended} setPlayerBanned={setPlayerBanned} onOpenPlayer={onOpenPlayer} signFreeAgent={signFreeAgent} deleteFreeAgent={deleteFreeAgent} />;
     } else if (tab === 'schedule') {
@@ -9178,7 +9449,7 @@ function App() {
     } else if (tab === 'compare') {
       body = <ComparePage season={activeSeason} standingsAll={standingsResult.all} teamsById={displayTeamsById} h2hMatrix={h2hMatrix} initialTeamId={compareInitialId} initialTeamBId={compareSecondId} onBack={backFromCompare} onOpenTeam={onOpenTeam} />;
     } else if (tab === 'player') {
-      body = <PlayerPage league={league} teamsById={displayTeamsById} playerName={selectedPlayerName} onBack={backFromPlayer} onOpenTeam={onOpenTeam} onOpenPlayerCompare={onOpenPlayerCompare} activeSeasonId={activeSeason && activeSeason.id} onRemoveActivity={removeActivityItem} onClearAllActivity={removeActivityItems} onBackfillRobloxId={backfillRobloxId} onSyncRobloxRename={syncRobloxRename} onPlayerRenamed={setSelectedPlayerName} onSetPlayerBadges={setPlayerBadges} onAddPlayerAccolade={addPlayerAccolade} onRemovePlayerAccolade={removePlayerAccolade} onAddPlayerTeamCredit={addPlayerTeamCredit} onRemovePlayerTeamCredit={removePlayerTeamCredit} onUpsertManualStatLine={upsertManualStatLine} onDeleteManualStatLine={deleteManualStatLine} />;
+      body = <PlayerPage league={league} teamsById={displayTeamsById} playerName={selectedPlayerName} onBack={backFromPlayer} onOpenTeam={onOpenTeam} onOpenPlayerCompare={onOpenPlayerCompare} activeSeasonId={activeSeason && activeSeason.id} onRemoveActivity={removeActivityItem} onClearAllActivity={removeActivityItems} onBackfillRobloxId={backfillRobloxId} onSyncRobloxRename={syncRobloxRename} onPlayerRenamed={setSelectedPlayerName} onSetPlayerBadges={setPlayerBadges} onAddPlayerAccolade={addPlayerAccolade} onRemovePlayerAccolade={removePlayerAccolade} onAddPlayerTeamCredit={addPlayerTeamCredit} onRemovePlayerTeamCredit={removePlayerTeamCredit} onUpsertManualStatLine={upsertManualStatLine} onDeleteManualStatLine={deleteManualStatLine} onRemoveTeamPlayed={removeTeamPlayed} />;
     } else if (tab === 'playerCompare') {
       body = <PlayerComparePage league={league} teamsById={displayTeamsById} initialNameA={comparePlayerAName} initialNameB={comparePlayerBName} onBack={backFromPlayerCompare} onOpenPlayer={onOpenPlayer} activeSeasonId={activeSeason && activeSeason.id} />;
     }
