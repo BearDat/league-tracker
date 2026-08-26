@@ -2410,7 +2410,7 @@ function BrandEditor({ gt, updateGlobalTeamField }) {
   );
 }
 
-function TeamRegistryView({ teamsIndex, teamsById, onBack, onCreate, onOpenHistory, updateGlobalTeamField }) {
+function TeamRegistryView({ teamsIndex, teamsById, onBack, onCreate, onOpenHistory, updateGlobalTeamField, onSyncTeams }) {
   const { hasPermission, role } = useAuth();
   const isLoggedIn = hasPermission('manageRosters');
   // Creating a brand-new global team (as opposed to editing/branding an
@@ -2420,6 +2420,12 @@ function TeamRegistryView({ teamsIndex, teamsById, onBack, onCreate, onOpenHisto
   // tighter than who can manage a single season's rosters.
   const canCreate = role === 'site_owner';
   const [name, setName] = useState('');
+  const [syncing, setSyncing] = useState(false);
+  const [syncResult, setSyncResult] = useState(null);
+  const runSync = async () => {
+    setSyncing(true);
+    try { setSyncResult(await onSyncTeams()); } finally { setSyncing(false); }
+  };
   return (
     <div className="p-4 space-y-4">
       <button onClick={onBack} className="flex items-center gap-1 text-sm" style={{ color: CHALK_DIM }}><ArrowLeft size={14} /> Back</button>
@@ -2433,6 +2439,23 @@ function TeamRegistryView({ teamsIndex, teamsById, onBack, onCreate, onOpenHisto
           </button>
         </div>
         <p className="px-4 pb-4 text-xs" style={{ color: CHALK_DIM }}>Site Owner only. Teams created here can be added to any season of any league, keep their colors and logos everywhere they're used, and keep one history across all of them.</p>
+      </Panel>
+      )}
+      {canCreate && (
+      <Panel className="overflow-hidden" style={{ borderColor: GOLD }}>
+        <SectionTitle accent={GOLD}>Sync teams from seasons</SectionTitle>
+        <div className="px-4 pb-4 space-y-2">
+          <p className="text-xs" style={{ color: CHALK_DIM }}>Makes sure every team that's ever played a current or past season is in this registry, and merges any duplicates (e.g. two entries for the same team created by an import) into one — the merged team's seasons, games, awards and credits all move to the survivor, so its History shows everything it actually played.</p>
+          <button onClick={runSync} disabled={syncing} className="px-3 py-2 rounded font-bold text-sm disabled:opacity-50" style={{ background: GOLD, color: INK }}>{syncing ? 'Syncing…' : 'Sync now'}</button>
+          {syncResult && (
+            <div className="text-xs space-y-1 pt-1" style={{ color: CHALK }}>
+              <p>Added {syncResult.added} team{syncResult.added === 1 ? '' : 's'} to the registry.</p>
+              {syncResult.merged.length > 0 && <p>Merged duplicates for: {syncResult.merged.join(', ')}.</p>}
+              {syncResult.skipped.length > 0 && <p style={{ color: GOLD }}>Left alone (two teams share this name within the same season, so they weren't merged): {syncResult.skipped.join(', ')}.</p>}
+              {syncResult.added === 0 && syncResult.merged.length === 0 && syncResult.skipped.length === 0 && <p style={{ color: CHALK_DIM }}>Nothing to do — the registry is already in sync.</p>}
+            </div>
+          )}
+        </div>
       </Panel>
       )}
       <TeamRegistryFolders teamsIndex={teamsIndex} teamsById={teamsById} isLoggedIn={isLoggedIn} onOpenHistory={onOpenHistory} updateGlobalTeamField={updateGlobalTeamField} />
@@ -3523,12 +3546,28 @@ function SheetTextImportPanel({ title, placeholder, description, parseFn, render
     ? [...new Set(items.map(it => it.teamName).filter(Boolean))].filter(n => !teamsIndex.some(t => normalizeTeamName(t.name) === normalizeTeamName(n)))
     : [];
   const reset = () => { setItems(null); setText(''); setResolutions({}); setOpen(false); };
+  const handleFile = (e) => {
+    const f = e.target.files[0];
+    if (!f) return;
+    const reader = new FileReader();
+    // parseFn already reads tab-separated or comma-CSV rows either way
+    // (splitSheetLine detects which), so a raw CSV file's text drops
+    // straight into the same pipeline as pasted text — no separate parser
+    // needed to "detect" the file's columns.
+    reader.onload = () => { setText(String(reader.result || '')); setItems(null); setResolutions({}); };
+    reader.readAsText(f);
+    e.target.value = '';
+  };
   return (
     <Panel className="overflow-hidden" style={{ borderColor }}>
       <SectionTitle accent={borderColor} right={<button onClick={() => setOpen(v => !v)} className="text-[11px] font-bold" style={{ color: borderColor }}>{open ? 'Hide' : 'Import'}</button>}>{title}</SectionTitle>
       {open && (
         <div className="px-4 pb-4 space-y-2">
           <p className="text-xs" style={{ color: CHALK_DIM }}>{description}</p>
+          <label className="inline-flex items-center gap-2 px-3 py-2 rounded text-sm font-semibold cursor-pointer" style={{ background: PANEL2, color: CHALK, border: `1px solid ${LINE}` }}>
+            <Upload size={14} /> Choose .csv file
+            <input type="file" accept=".csv,.txt" className="hidden" onChange={handleFile} />
+          </label>
           <textarea value={text} onChange={e => setText(e.target.value)} rows={5} placeholder={placeholder} className="w-full bg-[#242424] border rounded px-3 py-2 text-xs font-mono" style={{ borderColor: LINE, color: CHALK }} />
           <button onClick={preview} disabled={!text.trim()} className="px-3 py-2 rounded font-bold text-sm disabled:opacity-40" style={{ background: borderColor, color: INK }}>Preview import</button>
           {items && (
@@ -8293,6 +8332,97 @@ function App() {
     setTeamsById(prev => ({ ...prev, [gt.id]: gt }));
     return gt;
   };
+  // Backfills any season-referenced team missing from the site-wide registry
+  // (possible during the period teamsIndex was silently broken on this
+  // hosted deployment — see the openLeague note above, and it's also just a
+  // reasonable safety net going forward), then looks for registry entries
+  // that share a normalized name. Those are almost always a duplicate
+  // created by an import that couldn't see the already-registered team (the
+  // same root cause) rather than two different teams that happen to share a
+  // name, so each group gets merged into one canonical team (the oldest of
+  // the group) — every reference across every season is repointed to it, so
+  // the merged-away id's seasons/games/awards/credits all show up under the
+  // survivor and its History page reflects every season it actually played.
+  // A name-group is left alone (reported as skipped, nothing touched) if two
+  // of its ids are ever members of the SAME season at once — that's the one
+  // case that really can be two different teams sharing a name.
+  const syncTeamRegistry = async () => {
+    if (!league) return { added: 0, merged: [], skipped: [] };
+    const referencedIds = new Set();
+    league.seasons.forEach(s => s.members.forEach(m => referencedIds.add(m.teamId)));
+
+    let idx = [...teamsIndex];
+    const idxIds = new Set(idx.map(t => t.id));
+    const byIdDraft = { ...teamsById };
+    let added = 0;
+    for (const tid of referencedIds) {
+      let gt = byIdDraft[tid];
+      if (!gt) { gt = await loadObj(`team:${tid}`); if (gt) byIdDraft[tid] = gt; }
+      if (!gt) {
+        const member = league.seasons.flatMap(s => s.members).find(m => m.teamId === tid);
+        gt = { id: tid, name: (member && member.scheduleName) || 'Unnamed team', color: null, logoUrl: null, wordmarkUrl: null, createdAt: Date.now() };
+        await saveObj(`team:${tid}`, gt);
+        byIdDraft[tid] = gt;
+      }
+      if (!idxIds.has(tid)) { idx.push({ id: tid, name: gt.name }); idxIds.add(tid); added++; }
+    }
+
+    const groups = new Map();
+    idx.forEach(t => {
+      const key = normalizeTeamName(t.name);
+      if (!key) return;
+      if (!groups.has(key)) groups.set(key, []);
+      groups.get(key).push(t.id);
+    });
+
+    const remap = {};
+    const mergedNames = [];
+    const skipped = [];
+    groups.forEach((ids) => {
+      if (ids.length < 2) return;
+      const withCreated = ids.map(id => ({ id, createdAt: (byIdDraft[id] && byIdDraft[id].createdAt) || 0 }));
+      withCreated.sort((a, b) => a.createdAt - b.createdAt);
+      const canonical = withCreated[0].id;
+      const losers = withCreated.slice(1).map(x => x.id);
+      const collides = league.seasons.some(s => {
+        const present = new Set(s.members.map(m => m.teamId));
+        return [canonical, ...losers].filter(id => present.has(id)).length > 1;
+      });
+      if (collides) { skipped.push((byIdDraft[canonical] && byIdDraft[canonical].name) || canonical); return; }
+      losers.forEach(l => { remap[l] = canonical; });
+      mergedNames.push((byIdDraft[canonical] && byIdDraft[canonical].name) || canonical);
+    });
+
+    if (Object.keys(remap).length === 0) {
+      if (added > 0) { setTeamsIndex(idx); await saveList('teams-index', idx); setTeamsById(byIdDraft); }
+      return { added, merged: [], skipped };
+    }
+
+    const rid = (id) => remap[id] || id;
+    const seasons = league.seasons.map(s => ({
+      ...s,
+      members: s.members.map(m => ({ ...m, teamId: rid(m.teamId) })),
+      games: (s.games || []).map(g => ({ ...g, homeTeamId: g.homeTeamId ? rid(g.homeTeamId) : g.homeTeamId, awayTeamId: g.awayTeamId ? rid(g.awayTeamId) : g.awayTeamId, higherSeedId: g.higherSeedId ? rid(g.higherSeedId) : g.higherSeedId })),
+      championTeamId: s.championTeamId ? rid(s.championTeamId) : s.championTeamId,
+      activityLog: (s.activityLog || []).map(a => ({ ...a, teamId: a.teamId ? rid(a.teamId) : a.teamId, toTeamId: a.toTeamId ? rid(a.toTeamId) : a.toTeamId })),
+    }));
+    const awardDefs = (league.awardDefs || []).map(a => ({
+      ...a,
+      winners: (a.winners || []).map(w => w.type === 'team' ? { ...w, teamId: rid(w.teamId) } : w),
+    }));
+    const profiles = league.playerProfiles || {};
+    const playerProfiles = Object.fromEntries(Object.entries(profiles).map(([k, p]) => [k, { ...p, teamCredits: (p.teamCredits || []).map(c => ({ ...c, teamId: rid(c.teamId) })) }]));
+
+    const finalIdx = idx.filter(t => !remap[t.id]);
+    const finalById = { ...byIdDraft };
+    Object.keys(remap).forEach(l => { delete finalById[l]; });
+
+    setTeamsIndex(finalIdx); await saveList('teams-index', finalIdx);
+    setTeamsById(finalById);
+    persistLeague({ ...league, seasons, awardDefs, playerProfiles });
+
+    return { added, merged: mergedNames, skipped };
+  };
   const openTeamHistory = async (teamId, back) => {
     setHistoryBack(back || screen);
     setHistoryTeamId(teamId);
@@ -9446,7 +9576,7 @@ function App() {
       </div>
     );
   } else if (screen === 'registry') {
-    body = <TeamRegistryView teamsIndex={teamsIndex} teamsById={teamsById} onBack={() => setScreen(FIXED_LEAGUE_ID ? 'league' : 'leagues')} onCreate={createGlobalTeam} onOpenHistory={(id) => openTeamHistory(id, 'registry')} updateGlobalTeamField={updateGlobalTeamField} />;
+    body = <TeamRegistryView teamsIndex={teamsIndex} teamsById={teamsById} onBack={() => setScreen(FIXED_LEAGUE_ID ? 'league' : 'leagues')} onCreate={createGlobalTeam} onOpenHistory={(id) => openTeamHistory(id, 'registry')} updateGlobalTeamField={updateGlobalTeamField} onSyncTeams={syncTeamRegistry} />;
   } else if (screen === 'history') {
     body = <TeamHistoryPage team={historyTeam} history={historyData} loading={historyLoading} onBack={() => setScreen(historyBack)} />;
   } else if (screen === 'league' && league) {
