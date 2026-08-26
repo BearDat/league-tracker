@@ -22,10 +22,13 @@ export const ROLE_LABELS = {
   media: 'Media',
 };
 const ALL_PERMS = ['manageAdmins', 'manageSettings', 'manageSeasons', 'manageRosters', 'manageSchedule', 'manageNews', 'manageAwards', 'manageLeagueInfo'];
+// Board of Directors is Commissioner-equivalent — every permission except
+// manageAdmins, which stays Site Owner-exclusive so role-granting can't be
+// handed out any further than that.
 const ROLE_PERMISSIONS = {
   site_owner: ALL_PERMS,
   commissioner: ['manageSettings', 'manageSeasons', 'manageRosters', 'manageSchedule', 'manageNews', 'manageAwards', 'manageLeagueInfo'],
-  board: ['manageLeagueInfo'],
+  board: ['manageSettings', 'manageSeasons', 'manageRosters', 'manageSchedule', 'manageNews', 'manageAwards', 'manageLeagueInfo'],
   stat_mod: ['manageSchedule'],
   media: ['manageNews'],
 };
