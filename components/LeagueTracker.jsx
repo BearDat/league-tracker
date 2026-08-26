@@ -3347,6 +3347,46 @@ function KpbImportPanel({ league, onRunImport }) {
   );
 }
 
+// A player who's currently a free agent in some past season, under a since-
+// changed Roblox username, only gets linked into the rest of their career
+// when that specific season's page happens to get visited (that's what
+// triggers the normal per-page-view rename sync). This runs that same
+// linking proactively for everyone at once: pulls each known Roblox
+// account's full username history and backfills the account id onto any
+// other roster/free-agent entry, anywhere in the league, whose name matches
+// one of those past usernames.
+function PlayerIdentitySyncPanel({ onRunSync }) {
+  const [running, setRunning] = useState(false);
+  const [result, setResult] = useState(null);
+  const run = async () => {
+    setRunning(true); setResult(null);
+    const res = await onRunSync();
+    setResult(res);
+    setRunning(false);
+  };
+  return (
+    <Panel className="overflow-hidden" style={{ borderColor: GOLD }}>
+      <SectionTitle accent={GOLD}>Combine player pages by Roblox history</SectionTitle>
+      <div className="px-4 pb-4 space-y-3 text-sm">
+        <p className="text-xs" style={{ color: CHALK_DIM }}>Looks up every tracked player's Roblox account and its full past-username history, then links that account to any other roster or free-agent entry (in any season) that's still filed under one of those old usernames — like a player showing up as a free agent for a past season because they were on a roster that season under a name they've since changed. Once linked, their player pages combine automatically; nothing gets deleted or renamed.</p>
+        <button onClick={run} disabled={running} className="px-3 py-2 rounded font-bold text-sm disabled:opacity-40" style={{ background: GOLD, color: INK }}>{running ? 'Syncing…' : 'Sync now'}</button>
+        {result && result.error && <p className="text-xs" style={{ color: NEGATIVE }}>{result.error}</p>}
+        {result && !result.error && (
+          <div className="space-y-1 pt-2" style={{ borderTop: `1px solid ${LINE}` }}>
+            <p className="text-xs" style={{ color: CHALK_DIM }}>Checked {result.checked} Roblox account{result.checked === 1 ? '' : 's'} — linked {result.linked} entr{result.linked === 1 ? 'y' : 'ies'} into their real page, enriched past-name records on {result.namesEnriched}.</p>
+            {result.conflicts.length > 0 && (
+              <div>
+                <p className="text-xs font-semibold" style={{ color: GOLD }}>Left alone (already linked to a different Roblox account — check these by hand):</p>
+                {result.conflicts.map((c, i) => <p key={i} className="text-xs" style={{ color: CHALK_DIM }}>{c.name}</p>)}
+              </div>
+            )}
+          </div>
+        )}
+      </div>
+    </Panel>
+  );
+}
+
 // Badge definitions are global to the whole site (like the team registry),
 // not per-league, so Site Owner is the only role that can create or delete
 // one — same restriction as creating a new team. Any admin can still assign
@@ -3387,7 +3427,7 @@ function BadgeManagerPanel({ league, onAddBadgeDef, onRemoveBadgeDef }) {
   );
 }
 
-function SettingsView({ settings, saveSettings, theme, saveTheme, sport, season, teamsById, importGames, addManualGame, generateSchedule, league, onRunKpbImport, onAddBadgeDef, onRemoveBadgeDef, onOpenRegistry }) {
+function SettingsView({ settings, saveSettings, theme, saveTheme, sport, season, teamsById, importGames, addManualGame, generateSchedule, league, onRunKpbImport, onSyncPlayerIdentities, onAddBadgeDef, onRemoveBadgeDef, onOpenRegistry }) {
   const { hasPermission, role } = useAuth();
   const isSiteOwner = role === 'site_owner';
   const canManageSettings = hasPermission('manageSettings');
@@ -3503,6 +3543,7 @@ function SettingsView({ settings, saveSettings, theme, saveTheme, sport, season,
         <ScheduleManagementPanel season={season} settings={settings} importGames={importGames} addManualGame={addManualGame} generateSchedule={generateSchedule} teamsById={teamsById} />
       )}
       {canManageSettings && <KpbImportPanel league={league} onRunImport={onRunKpbImport} />}
+      {canManageSettings && <PlayerIdentitySyncPanel onRunSync={onSyncPlayerIdentities} />}
       <BadgeManagerPanel league={league} onAddBadgeDef={onAddBadgeDef} onRemoveBadgeDef={onRemoveBadgeDef} />
       {isSiteOwner && (
         <Panel>
@@ -9099,6 +9140,109 @@ function App() {
     return summary;
   };
 
+  // Walks every player's Roblox account id, pulls their full past-username
+  // history from Roblox, and backfills that id onto any other roster/free
+  // agent entry anywhere in the league whose name matches one of those past
+  // usernames — the case the site owner reported: a player shows up as a
+  // free agent for some past season under an old username because that
+  // season's entry was never individually visited (which is what triggers
+  // the site's normal per-page-view rename sync), so it never got linked to
+  // the rest of their history. getPlayerCareerData already unions any
+  // entries that share a robloxUserId (or a name/usernameHistory overlap)
+  // into one page, so once every entry that's really the same person carries
+  // the same id, their pages combine automatically — no separate "merge"
+  // step needed. Also folds every known past name into usernameHistory on
+  // each linked entry, so future sheet imports (which match by name, not by
+  // Roblox id) find the same identity too.
+  // Two entries that already carry two DIFFERENT non-null Roblox ids are
+  // left alone and reported as a conflict rather than guessed at — that's
+  // either two different real people who happened to share a username at
+  // different times, or a bad manual edit, and either way isn't safe to
+  // auto-merge.
+  const syncPlayerIdentities = async () => {
+    if (!league) return { error: 'No league loaded.' };
+    const norm = (s) => (s || '').trim().toLowerCase();
+    const seasonsDraft = league.seasons.map(s => ({
+      ...s,
+      members: (s.members || []).map(m => ({ ...m, roster: (m.roster || []).map(p => ({ ...p })) })),
+      freeAgents: (s.freeAgents || []).map(p => ({ ...p })),
+    }));
+    const allEntries = [];
+    seasonsDraft.forEach(s => {
+      s.members.forEach(m => m.roster.forEach(p => allEntries.push(p)));
+      s.freeAgents.forEach(p => allEntries.push(p));
+    });
+    if (allEntries.length === 0) return { error: 'No players tracked in this league yet.' };
+
+    // Resolve a Roblox id for every entry that doesn't have one yet, same
+    // as the KPB import's bulk lookup, so as many entries as possible start
+    // this pass already carrying an id to look up history for.
+    const nameToId = new Map();
+    allEntries.forEach(p => { if (p.robloxUserId) nameToId.set(norm(p.name), p.robloxUserId); });
+    const unresolvedNames = [...new Set(allEntries.filter(p => !p.robloxUserId).map(p => norm(p.name)))];
+    const CONCURRENCY = 5;
+    for (let i = 0; i < unresolvedNames.length; i += CONCURRENCY) {
+      const batch = unresolvedNames.slice(i, i + CONCURRENCY);
+      await Promise.all(batch.map(async (nm) => {
+        try {
+          const res = await fetch(`/api/roblox-avatar?username=${encodeURIComponent(nm)}`);
+          if (res.ok) { const data = await res.json(); if (data.userId) nameToId.set(nm, data.userId); }
+        } catch (e) { /* leave unresolved */ }
+      }));
+    }
+    allEntries.forEach(p => { if (!p.robloxUserId) { const id = nameToId.get(norm(p.name)); if (id) p.robloxUserId = id; } });
+
+    const knownIds = [...new Set(allEntries.map(p => p.robloxUserId).filter(Boolean))];
+    // Properly-cased usernames from Roblox, keyed by id — kept as Roblox
+    // returns them (not lowercased) so usernameHistory stays readable.
+    const historyById = new Map();
+    for (let i = 0; i < knownIds.length; i += CONCURRENCY) {
+      const batch = knownIds.slice(i, i + CONCURRENCY);
+      await Promise.all(batch.map(async (id) => {
+        try {
+          const res = await fetch(`/api/roblox-username-history?userId=${encodeURIComponent(id)}`);
+          if (res.ok) { const data = await res.json(); historyById.set(id, data.usernames || []); }
+        } catch (e) { /* leave this id's history unknown — it just won't link anything new */ }
+      }));
+    }
+
+    let linked = 0;
+    let namesEnriched = 0;
+    const conflicts = [];
+    knownIds.forEach(id => {
+      // Every name known to belong to this Roblox id: its Roblox history,
+      // plus every local entry already confirmed to carry this id (current
+      // name and any usernameHistory already recorded) — normalized key to
+      // dedupe, but keeping the best-known original casing for storage.
+      const namesById = new Map();
+      (historyById.get(id) || []).forEach(nm => namesById.set(norm(nm), nm));
+      allEntries.forEach(p => {
+        if (p.robloxUserId !== id) return;
+        if (!namesById.has(norm(p.name))) namesById.set(norm(p.name), p.name);
+        (p.usernameHistory || []).forEach(h => { if (!namesById.has(norm(h))) namesById.set(norm(h), h); });
+      });
+      if (namesById.size === 0) return;
+      const normSet = new Set(namesById.keys());
+
+      allEntries.forEach(p => {
+        const n = norm(p.name);
+        const matchesPastName = normSet.has(n) || (p.usernameHistory || []).some(h => normSet.has(norm(h)));
+        if (!matchesPastName) return;
+        if (!p.robloxUserId) { p.robloxUserId = id; linked++; }
+        else if (p.robloxUserId !== id) {
+          conflicts.push({ name: p.name, existingId: p.robloxUserId, conflictingId: id });
+          return;
+        }
+        const existingNorm = new Set((p.usernameHistory || []).map(norm));
+        const additions = [...namesById.entries()].filter(([nk]) => nk !== n && !existingNorm.has(nk)).map(([, nv]) => nv);
+        if (additions.length > 0) { p.usernameHistory = [...(p.usernameHistory || []), ...additions]; namesEnriched++; }
+      });
+    });
+
+    persistLeague({ ...league, seasons: seasonsDraft });
+    return { checked: knownIds.length, linked, namesEnriched, conflicts };
+  };
+
   /* ---- awards ---- */
   const addAwardDef = (name, description) => {
     if (!league) return;
@@ -9658,7 +9802,7 @@ function App() {
     } else if (tab === 'info') {
       body = <LeagueInfoView league={league} updateLeagueInfo={updateLeagueInfo} addStaffMember={addStaffMember} updateStaffMember={updateStaffMember} removeStaffMember={removeStaffMember} />;
     } else if (tab === 'settings') {
-      body = <SettingsView settings={activeSeason.settings} saveSettings={saveSettings} theme={theme} saveTheme={saveTheme} sport={sport} season={activeSeason} teamsById={teamsById} importGames={importGames} addManualGame={addManualGame} generateSchedule={generateSchedule} league={league} onRunKpbImport={runKpbImport} onAddBadgeDef={addBadgeDef} onRemoveBadgeDef={removeBadgeDef} onOpenRegistry={openRegistry} />;
+      body = <SettingsView settings={activeSeason.settings} saveSettings={saveSettings} theme={theme} saveTheme={saveTheme} sport={sport} season={activeSeason} teamsById={teamsById} importGames={importGames} addManualGame={addManualGame} generateSchedule={generateSchedule} league={league} onRunKpbImport={runKpbImport} onSyncPlayerIdentities={syncPlayerIdentities} onAddBadgeDef={addBadgeDef} onRemoveBadgeDef={removeBadgeDef} onOpenRegistry={openRegistry} />;
     } else if (tab === 'team') {
       body = <TeamPage season={activeSeason} settings={activeSeason.settings} team={selectedTeamMerged} standingsRow={selectedStandingsRow} teamsById={displayTeamsById} h2hMatrix={h2hMatrix} championshipCount={selectedTeamId ? (teamChampionshipCounts[selectedTeamId] || 0) : 0} onBack={backFromTeam} onOpenGlobalHistory={(id) => openTeamHistory(id, 'league')} onOpenCompare={onOpenCompare} updatePlayerField={updatePlayerField} removePlayer={removePlayer} addPlayer={addPlayer} addPlayersBulk={addPlayersBulk} tradePlayer={tradePlayer} updateMemberField={updateMemberField} setPlayerSuspended={setPlayerSuspended} setPlayerBanned={setPlayerBanned} onOpenPlayer={onOpenPlayer} onRebrand={rebrandTeam} onClearRebrand={clearRebrand} />;
     } else if (tab === 'compare') {
