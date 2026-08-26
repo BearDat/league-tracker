@@ -9,7 +9,8 @@ import {
   Trophy, Calendar, Users, BarChart3, Percent, Plus, Trash2, Upload,
   ChevronRight, ChevronLeft, ChevronUp, ChevronDown, Pencil, Check, X, Folder, Save, RefreshCw, ArrowLeft,
   Activity, AlertTriangle, Image as ImageIcon, Layers, Crown, History, Sparkles, Home as HomeIcon, Settings as SettingsIcon,
-  Award as AwardIcon, Eye, EyeOff, Sun, Moon, Video, ClipboardList, Newspaper, Info as InfoIcon, TrendingUp, Star, Ban
+  Award as AwardIcon, Eye, EyeOff, Sun, Moon, Video, ClipboardList, Newspaper, Info as InfoIcon, TrendingUp, Star, Ban,
+  Bell, Search
 } from 'lucide-react';
 import { supabase } from '../lib/supabaseClient';
 import { AuthProvider, useAuth, ROLE_LABELS } from '../lib/AuthContext';
@@ -248,6 +249,43 @@ function longestStreaks(results) {
     if (r === 'W') bestW = Math.max(bestW, curCount); else bestL = Math.max(bestL, curCount);
   });
   return { bestW, bestL };
+}
+// Active (still-ongoing, as of the most recently played game) hit streaks
+// and pitcher scoreless-appearance streaks — separate from team win/loss
+// streaks (computeStreak above already covers those, this just adds the
+// player-level layer that didn't exist yet). "Active" resets to 0 the
+// moment a player goes hitless (or allows an earned run), so this always
+// reads as "right now," not an all-time best.
+function computeActiveStreaks(season) {
+  const scheduleMode = (season.settings && season.settings.scheduleMode) || 'date';
+  const played = sortGamesChronologically((season.games || []).filter(g => g.played && !g.isBye && !g.isSpringTraining), scheduleMode);
+  const meta = new Map();
+  (season.members || []).forEach(m => (m.roster || []).forEach(p => meta.set(p.id, { name: p.name, teamId: m.teamId })));
+  (season.freeAgents || []).forEach(p => meta.set(p.id, { name: p.name, teamId: null }));
+
+  const byPlayer = new Map();
+  played.forEach(g => {
+    ['home', 'away'].forEach(side => {
+      ((g.playerStats && g.playerStats[side]) || []).forEach(row => {
+        if (!meta.has(row.playerId)) return;
+        const entry = byPlayer.get(row.playerId) || { hitStreak: 0, scorelessStreak: 0, hasPitched: false };
+        const ab = row.ab || 0, h = row.h || 0, outs = ipDisplayToOuts(row.ip || '0.0'), er = row.er || 0;
+        if (ab > 0) entry.hitStreak = h > 0 ? entry.hitStreak + 1 : 0;
+        if (outs > 0) { entry.hasPitched = true; entry.scorelessStreak = er === 0 ? entry.scorelessStreak + 1 : 0; }
+        byPlayer.set(row.playerId, entry);
+      });
+    });
+  });
+
+  const hitStreaks = [], scorelessStreaks = [];
+  byPlayer.forEach((entry, playerId) => {
+    const info = meta.get(playerId);
+    if (entry.hitStreak >= 3) hitStreaks.push({ playerId, name: info.name, teamId: info.teamId, count: entry.hitStreak });
+    if (entry.hasPitched && entry.scorelessStreak >= 2) scorelessStreaks.push({ playerId, name: info.name, teamId: info.teamId, count: entry.scorelessStreak });
+  });
+  hitStreaks.sort((a, b) => b.count - a.count);
+  scorelessStreaks.sort((a, b) => b.count - a.count);
+  return { hitStreaks: hitStreaks.slice(0, 5), scorelessStreaks: scorelessStreaks.slice(0, 5) };
 }
 
 function nextPow2(n) { let p = 1; while (p < n) p *= 2; return Math.max(p, 1); }
@@ -2851,6 +2889,50 @@ function HomeView({ season, teamsById, settings, onOpenTeam, h2hMatrix, sport, o
             <div className="px-3 pb-3 flex gap-2.5 overflow-x-auto snap-x">
               {chipGames.length === 0 && <p className="px-1 py-3 text-sm" style={{ color: CHALK_DIM }}>No games yet.</p>}
               {chipGames.map(g => <GameChip key={g.id} g={g} />)}
+            </div>
+          </Panel>
+        );
+      })()}
+
+      {(() => {
+        const hotTeams = [...liveStandings].filter(t => t.streak.type === 'W' && t.streak.count >= 2).sort((a, b) => b.streak.count - a.streak.count).slice(0, 3);
+        const coldTeams = [...liveStandings].filter(t => t.streak.type === 'L' && t.streak.count >= 2).sort((a, b) => b.streak.count - a.streak.count).slice(0, 3);
+        const { hitStreaks, scorelessStreaks } = computeActiveStreaks(season);
+        if (hotTeams.length === 0 && coldTeams.length === 0 && hitStreaks.length === 0 && scorelessStreaks.length === 0) return null;
+        const StreakCol = ({ title, color, rows, renderRow }) => rows.length === 0 ? null : (
+          <div>
+            <div className="text-[10px] uppercase font-bold mb-1.5" style={{ color }}>{title}</div>
+            {rows.map(renderRow)}
+          </div>
+        );
+        return (
+          <Panel className="overflow-hidden" style={{ borderColor: GOLD }}>
+            <SectionTitle accent={GOLD}>Hot &amp; cold</SectionTitle>
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 px-3 pb-4">
+              <StreakCol title="Win streaks" color={WIN} rows={hotTeams} renderRow={t => (
+                <button key={t.id} onClick={() => onOpenTeam(t.id)} className="w-full flex items-center justify-between px-2 py-1 text-xs">
+                  <span className="flex items-center gap-1.5 truncate" style={{ color: CHALK }}><TeamMark team={t} size={13} /> {t.displayName}</span>
+                  <span className="font-mono font-bold flex-shrink-0" style={{ color: WIN }}>{t.streak.label}</span>
+                </button>
+              )} />
+              <StreakCol title="Losing streaks" color={NEGATIVE} rows={coldTeams} renderRow={t => (
+                <button key={t.id} onClick={() => onOpenTeam(t.id)} className="w-full flex items-center justify-between px-2 py-1 text-xs">
+                  <span className="flex items-center gap-1.5 truncate" style={{ color: CHALK }}><TeamMark team={t} size={13} /> {t.displayName}</span>
+                  <span className="font-mono font-bold flex-shrink-0" style={{ color: NEGATIVE }}>{t.streak.label}</span>
+                </button>
+              )} />
+              <StreakCol title="Hit streaks" color={PRIMARY} rows={hitStreaks} renderRow={p => (
+                <button key={p.playerId} onClick={() => onOpenPlayer(p.name)} className="w-full flex items-center justify-between px-2 py-1 text-xs">
+                  <span className="truncate" style={{ color: CHALK }}>{p.name}</span>
+                  <span className="font-mono font-bold flex-shrink-0" style={{ color: PRIMARY }}>{p.count}G</span>
+                </button>
+              )} />
+              <StreakCol title="Scoreless streaks" color={PRIMARY} rows={scorelessStreaks} renderRow={p => (
+                <button key={p.playerId} onClick={() => onOpenPlayer(p.name)} className="w-full flex items-center justify-between px-2 py-1 text-xs">
+                  <span className="truncate" style={{ color: CHALK }}>{p.name}</span>
+                  <span className="font-mono font-bold flex-shrink-0" style={{ color: PRIMARY }}>{p.count}G</span>
+                </button>
+              )} />
             </div>
           </Panel>
         );
@@ -7611,6 +7693,96 @@ function PowerRankingsList({ rankings, teamsById, onOpenTeam }) {
     </div>
   );
 }
+// Drafts a preseason preview post from the previous season's results and
+// this season's rosters — a starting point for whoever writes it up, not a
+// finished article. Matches "returning" players by name (not id, since a
+// fresh season's rosters aren't guaranteed to reuse last season's player
+// ids) against last season's leaders. Returns null when there's no prior
+// season to preview off of.
+function buildSeasonPreviewDraft(league, season, teamsById) {
+  const priorSeasons = league.seasons.filter(s => s.id !== season.id && (s.createdAt || 0) < (season.createdAt || 0));
+  if (priorSeasons.length === 0) return null;
+  const prevSeason = [...priorSeasons].sort((a, b) => (b.createdAt || 0) - (a.createdAt || 0))[0];
+  const prevStandings = computeStandings(prevSeason, teamsById).active;
+  const champion = prevSeason.championTeamId ? teamsById[prevSeason.championTeamId] : null;
+  const norm = (s) => (s || '').trim().toLowerCase();
+  const currentNames = new Set();
+  (season.members || []).forEach(m => (m.roster || []).forEach(p => currentNames.add(norm(p.name))));
+  const prevLeaders = computeSeasonPlayerLeaders(prevSeason, teamsById, 'regular');
+  const returning = prevLeaders.filter(p => currentNames.has(norm(p.name)) && p.totals.ab >= 10).sort((a, b) => b.war - a.war).slice(0, 3);
+  const prevTeamKeys = new Set(prevSeason.members.map(pm => normalizeTeamName((teamsById[pm.teamId] && teamsById[pm.teamId].name) || pm.scheduleName)));
+  const newTeamNames = season.members.map(m => (teamsById[m.teamId] && teamsById[m.teamId].name) || m.scheduleName).filter(name => !prevTeamKeys.has(normalizeTeamName(name)));
+
+  const lines = [];
+  if (champion) lines.push(`Coming off a championship season, ${champion.name} enters ${season.name} as the team to beat.`);
+  if (prevStandings.length > 0) {
+    lines.push('', `Final ${prevSeason.name} standings:`);
+    prevStandings.slice(0, 5).forEach((t, i) => lines.push(`${i + 1}. ${t.displayName} (${t.w}-${t.l})`));
+  }
+  if (returning.length > 0) {
+    lines.push('', 'Players to watch:');
+    returning.forEach(p => {
+      const t = teamsById[p.teamId];
+      lines.push(`- ${p.name}${t ? ` (${t.name})` : ''} — ${p.totals.h}-for-${p.totals.ab}, ${p.totals.hr} HR, ${p.totals.rbi} RBI last season`);
+    });
+  }
+  if (newTeamNames.length > 0) lines.push('', `New for ${season.name}: ${newTeamNames.join(', ')}.`);
+  return { title: `${season.name} Preview`, body: lines.join('\n') };
+}
+// Finds the top WAR performer over a recent window (the last 7 calendar
+// days when the schedule uses real dates, otherwise the most recent couple
+// of labeled rounds, since round numbers don't carry a fixed cadence) — a
+// suggestion for the admin to confirm and publish, not an automatic post.
+function buildPlayerOfWeekDraft(season, teamsById) {
+  const scheduleMode = (season.settings && season.settings.scheduleMode) || 'date';
+  const allPlayed = sortGamesChronologically((season.games || []).filter(g => g.played && !g.isBye && !g.isSpringTraining), scheduleMode);
+  if (allPlayed.length === 0) return null;
+  let recentGames = [];
+  if (scheduleMode !== 'round') {
+    const lastDate = Date.parse(allPlayed[allPlayed.length - 1].date);
+    if (!isNaN(lastDate)) {
+      const cutoff = lastDate - 7 * 24 * 60 * 60 * 1000;
+      recentGames = allPlayed.filter(g => { const t = Date.parse(g.date); return !isNaN(t) && t >= cutoff; });
+    }
+  }
+  if (recentGames.length === 0) {
+    const labelsInOrder = [...new Set(allPlayed.map(g => g.date))];
+    const recentLabels = new Set(labelsInOrder.slice(-2));
+    recentGames = allPlayed.filter(g => recentLabels.has(g.date));
+  }
+  const meta = new Map();
+  (season.members || []).forEach(m => (m.roster || []).forEach(p => meta.set(p.id, { name: p.name, teamId: m.teamId })));
+  const byPlayer = new Map();
+  recentGames.forEach(g => {
+    ['home', 'away'].forEach(side => {
+      ((g.playerStats && g.playerStats[side]) || []).forEach(row => {
+        if (!meta.has(row.playerId)) return;
+        const rows = byPlayer.get(row.playerId) || [];
+        rows.push(normalizeStatRow(row, {}));
+        byPlayer.set(row.playerId, rows);
+      });
+    });
+  });
+  if (byPlayer.size === 0) return null;
+  const candidates = [...byPlayer.entries()].map(([playerId, rows]) => {
+    const totals = sumPlayerTotals(rows);
+    return { playerId, ...meta.get(playerId), totals, batting: computeBattingAdvanced(totals), pitching: computePitchingAdvanced(totals) };
+  });
+  const leagueOuts = candidates.reduce((s, p) => s + p.totals.outs, 0);
+  const leagueER = candidates.reduce((s, p) => s + p.totals.er, 0);
+  const leagueERA = leagueOuts > 0 ? (leagueER * 27) / leagueOuts : 4.5;
+  candidates.forEach(p => { p.war = computePlayerWAR(p.totals, leagueERA); });
+  candidates.sort((a, b) => b.war - a.war);
+  const top = candidates[0];
+  const t = teamsById[top.teamId];
+  const parts = [];
+  if (top.totals.ab > 0) parts.push(`${top.totals.h}-for-${top.totals.ab} (${top.batting.avg.toFixed(3).replace(/^0/, '')}), ${top.totals.hr} HR, ${top.totals.rbi} RBI`);
+  if (top.totals.outs > 0) parts.push(`${top.pitching.ip.toFixed(1)} IP, ${top.pitching.era.toFixed(2)} ERA, ${top.totals.k} K`);
+  return {
+    title: `Player of the Week: ${top.name}`,
+    body: `${top.name}${t ? ` (${t.name})` : ''} takes Player of the Week honors: ${parts.join('; ')}.`,
+  };
+}
 function NewsView({ league, season, teamsById, addNewsPost, updateNewsPost, removeNewsPost, onOpenTeam }) {
   const { hasPermission } = useAuth();
   const isLoggedIn = hasPermission('manageNews');
@@ -7688,7 +7860,14 @@ function NewsView({ league, season, teamsById, addNewsPost, updateNewsPost, remo
                 </>
               )
             ) : (
-              <textarea value={body} onChange={e => setBody(e.target.value)} placeholder="Story…" rows={4} className="w-full bg-[#242424] border rounded px-3 py-2 text-sm resize-none" style={{ borderColor: LINE, color: CHALK }} />
+              <>
+                <textarea value={body} onChange={e => setBody(e.target.value)} placeholder="Story…" rows={4} className="w-full bg-[#242424] border rounded px-3 py-2 text-sm resize-none" style={{ borderColor: LINE, color: CHALK }} />
+                <div className="flex flex-wrap gap-2">
+                  <button onClick={() => { const draft = buildSeasonPreviewDraft(league, season, teamsById); if (draft) { setTitle(draft.title); setBody(draft.body); } else alert('No prior season to preview off of yet.'); }} className="text-[11px] font-semibold px-2.5 py-1.5 rounded" style={{ background: PANEL2, color: PRIMARY, border: `1px solid ${LINE}` }}>Generate season preview</button>
+                  <button onClick={() => { const draft = buildPlayerOfWeekDraft(season, teamsById); if (draft) { setTitle(draft.title); setBody(draft.body); } else alert('Not enough recent stats to suggest one yet.'); }} className="text-[11px] font-semibold px-2.5 py-1.5 rounded" style={{ background: PANEL2, color: GOLD, border: `1px solid ${LINE}` }}>Suggest Player of the Week</button>
+                </div>
+                <p className="text-[11px]" style={{ color: CHALK_DIM }}>Both fill in a draft below for you to edit before publishing — nothing posts automatically.</p>
+              </>
             )}
             <input value={author} onChange={e => setAuthor(e.target.value)} placeholder="Writer credit (optional)" className="w-full bg-[#242424] border rounded px-3 py-2 text-sm" style={{ borderColor: LINE, color: CHALK }} />
             <div className="flex items-center gap-2">
@@ -8633,6 +8812,91 @@ function LiveTicker({ season, teamsById, sport, onOpenTeam }) {
         </div>
         <button onClick={() => setDismissed(true)} className="p-1 rounded flex-shrink-0" style={{ color: CHALK_DIM }}><X size={14} /></button>
       </div>
+    </div>
+  );
+}
+
+// Header bell for logged-in admins — surfaces pending trade proposals and
+// suspensions that have run out their game count but haven't been lifted,
+// instead of making someone remember to check the Roster/Transactions tabs.
+function NotificationBell({ notifications }) {
+  const [open, setOpen] = useState(false);
+  if (!notifications || notifications.length === 0) return null;
+  return (
+    <div className="relative flex-shrink-0">
+      <button onClick={() => setOpen(o => !o)} title="Notifications" className="relative p-1.5 rounded" style={{ color: CHALK_DIM }}>
+        <Bell size={16} />
+        <span className="absolute -top-0.5 -right-0.5 flex items-center justify-center rounded-full text-[9px] font-bold" style={{ width: 14, height: 14, background: NEGATIVE, color: '#fff' }}>{notifications.length}</span>
+      </button>
+      {open && (
+        <div className="absolute right-0 top-full mt-2 z-50 rounded-xl border w-72 shadow-xl overflow-hidden" style={{ background: PANEL, borderColor: LINE }}>
+          <div className="flex items-center justify-between px-3 py-2" style={{ borderBottom: `1px solid ${LINE}` }}>
+            <span className="text-xs font-bold uppercase tracking-wide" style={{ color: CHALK }}>Needs attention</span>
+            <button onClick={() => setOpen(false)} style={{ color: CHALK_DIM }}><X size={14} /></button>
+          </div>
+          <div className="max-h-80 overflow-y-auto">
+            {notifications.map(n => (
+              <button key={n.id} onClick={() => { n.onClick(); setOpen(false); }} className="w-full text-left px-3 py-2 text-xs flex items-start gap-2" style={{ borderBottom: `1px solid ${LINE}`, color: CHALK }}>
+                {n.type === 'trade' ? <Users size={12} className="flex-shrink-0 mt-0.5" style={{ color: PRIMARY }} /> : <Ban size={12} className="flex-shrink-0 mt-0.5" style={{ color: NEGATIVE }} />}
+                <span>{n.label}</span>
+              </button>
+            ))}
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
+
+// One search bar for teams, players, and news instead of a separate search
+// box per page. Matches on substring, capped so the dropdown stays scannable.
+function GlobalSearch({ teamsIndex, league, onOpenTeam, onOpenPlayer, setTab }) {
+  const [open, setOpen] = useState(false);
+  const [q, setQ] = useState('');
+  const query = q.trim().toLowerCase();
+  const results = useMemo(() => {
+    if (!query) return { teams: [], players: [], news: [] };
+    const teams = teamsIndex.filter(t => t.name.toLowerCase().includes(query)).slice(0, 5);
+    const players = getAllPlayerNames(league).filter(n => n.toLowerCase().includes(query)).slice(0, 5);
+    const news = (league.news || []).filter(n => n.title && n.title.toLowerCase().includes(query)).slice(0, 5);
+    return { teams, players, news };
+  }, [query, teamsIndex, league]);
+  const hasResults = results.teams.length || results.players.length || results.news.length;
+
+  const pick = (fn) => { fn(); setOpen(false); setQ(''); };
+
+  return (
+    <div className="relative flex-shrink-0">
+      <button onClick={() => setOpen(o => !o)} title="Search" className="p-1.5 rounded" style={{ color: CHALK_DIM }}><Search size={16} /></button>
+      {open && (
+        <div className="absolute right-0 top-full mt-2 z-50 rounded-xl border w-80 shadow-xl overflow-hidden" style={{ background: PANEL, borderColor: LINE }}>
+          <div className="flex items-center gap-2 px-3 py-2" style={{ borderBottom: `1px solid ${LINE}` }}>
+            <Search size={14} style={{ color: CHALK_DIM }} />
+            <input autoFocus value={q} onChange={e => setQ(e.target.value)} placeholder="Search teams, players, news…" className="flex-1 bg-transparent text-sm outline-none" style={{ color: CHALK }} />
+            <button onClick={() => setOpen(false)} style={{ color: CHALK_DIM }}><X size={14} /></button>
+          </div>
+          {query && (
+            <div className="max-h-80 overflow-y-auto">
+              {!hasResults && <p className="px-3 py-3 text-xs" style={{ color: CHALK_DIM }}>No matches.</p>}
+              {results.teams.map(t => (
+                <button key={`t-${t.id}`} onClick={() => pick(() => onOpenTeam(t.id))} className="w-full text-left px-3 py-2 text-xs flex items-center gap-2" style={{ borderBottom: `1px solid ${LINE}`, color: CHALK }}>
+                  <Trophy size={12} style={{ color: PRIMARY }} /> {t.name}
+                </button>
+              ))}
+              {results.players.map(name => (
+                <button key={`p-${name}`} onClick={() => pick(() => onOpenPlayer(name))} className="w-full text-left px-3 py-2 text-xs flex items-center gap-2" style={{ borderBottom: `1px solid ${LINE}`, color: CHALK }}>
+                  <Users size={12} style={{ color: GOLD }} /> {name}
+                </button>
+              ))}
+              {results.news.map(n => (
+                <button key={`n-${n.id}`} onClick={() => pick(() => setTab('news'))} className="w-full text-left px-3 py-2 text-xs flex items-center gap-2" style={{ borderBottom: `1px solid ${LINE}`, color: CHALK }}>
+                  <Newspaper size={12} style={{ color: CHALK_DIM }} /> {n.title}
+                </button>
+              ))}
+            </div>
+          )}
+        </div>
+      )}
     </div>
   );
 }
@@ -10331,6 +10595,37 @@ function App() {
   const selectedStandingsRow = useMemo(() => standingsResult.all.find(t => t.id === selectedTeamId) || null, [standingsResult, selectedTeamId]);
   const historyTeam = historyTeamId ? teamsById[historyTeamId] : null;
 
+  // What needs an admin's attention right now — pending trades, and
+  // suspensions whose game count has run out but haven't been lifted yet.
+  const notifications = useMemo(() => {
+    if (!isLoggedIn || !activeSeason) return [];
+    const items = [];
+    (activeSeason.pendingTrades || []).forEach(t => {
+      const teamA = teamsById[t.teamAId], teamB = teamsById[t.teamBId];
+      items.push({
+        id: `trade-${t.id}`, type: 'trade', createdAt: t.createdAt,
+        label: `Trade proposal: ${(teamA && teamA.name) || '?'} ⇄ ${(teamB && teamB.name) || '?'}`,
+        onClick: () => setTab('roster'),
+      });
+    });
+    activeSeason.members.forEach(m => {
+      const team = teamsById[m.teamId];
+      const teamGamesPlayed = (activeSeason.games || []).filter(g => g.played && !g.isBye && (g.homeTeamId === m.teamId || g.awayTeamId === m.teamId)).length;
+      (m.roster || []).forEach(p => {
+        if (!p.suspended || !p.suspensionGames) return;
+        const remaining = Math.max(0, p.suspensionGames - (teamGamesPlayed - (p.suspensionStartGames || 0)));
+        if (remaining <= 0) {
+          items.push({
+            id: `susp-${p.id}`, type: 'suspension', createdAt: p.suspensionStartGames || 0,
+            label: `${p.name}'s suspension is served (${(team && team.name) || m.scheduleName})`,
+            onClick: () => onOpenPlayer(p.name),
+          });
+        }
+      });
+    });
+    return items;
+  }, [isLoggedIn, activeSeason, teamsById]);
+
   if (loading) return <div className="min-h-screen flex items-center justify-center" style={{ background: INK, color: CHALK_DIM }}>Loading…</div>;
 
   /* ---- render ---- */
@@ -10429,6 +10724,8 @@ function App() {
               </span>
             )
           )}
+          {screen === 'league' && league && <GlobalSearch teamsIndex={teamsIndex} league={league} onOpenTeam={onOpenTeam} onOpenPlayer={onOpenPlayer} setTab={setTab} />}
+          {isLoggedIn && <NotificationBell notifications={notifications} />}
           <button onClick={() => setLocalThemeMode((localThemeMode || 'dark') === 'dark' ? 'light' : 'dark')} title="Light / dark mode (just for you)" className="p-1.5 rounded flex-shrink-0" style={{ color: CHALK_DIM }}>
             {(localThemeMode || 'dark') === 'dark' ? <Moon size={16} /> : <Sun size={16} />}
           </button>
