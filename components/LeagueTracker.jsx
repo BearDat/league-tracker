@@ -3760,10 +3760,10 @@ function SettingsView({ settings, saveSettings, theme, saveTheme, sport, season,
       )}
       {canManageSettings && (
         <Panel style={{ borderColor: league && league.maintenanceBanner && league.maintenanceBanner.active ? GOLD : LINE }}>
-          <SectionTitle accent={GOLD}>Maintenance banner</SectionTitle>
+          <SectionTitle accent={GOLD}>Homepage banner</SectionTitle>
           <div className="px-4 pb-4 space-y-2">
-            <p className="text-xs" style={{ color: CHALK_DIM }}>A site-wide notice shown to every visitor while active — for a planned downtime window or anything else worth a heads-up.</p>
-            <input defaultValue={(league && league.maintenanceBanner && league.maintenanceBanner.message) || ''} onBlur={e => onSetMaintenanceBanner(e.target.value, !!(league && league.maintenanceBanner && league.maintenanceBanner.active))} placeholder="e.g. Site will be down for maintenance 8-9pm ET tonight" className="w-full bg-[#242424] border rounded px-3 py-2 text-sm" style={{ borderColor: LINE, color: CHALK }} />
+            <p className="text-xs" style={{ color: CHALK_DIM }}>A short message shown at the top of the Home tab to every visitor while active — a planned downtime window, a quick announcement, whatever's worth a heads-up.</p>
+            <input defaultValue={(league && league.maintenanceBanner && league.maintenanceBanner.message) || ''} onBlur={e => onSetMaintenanceBanner(e.target.value, !!(league && league.maintenanceBanner && league.maintenanceBanner.active))} placeholder="e.g. Playoffs start this Saturday — see the bracket on Home" className="w-full bg-[#242424] border rounded px-3 py-2 text-sm" style={{ borderColor: LINE, color: CHALK }} />
             <label className="flex items-center gap-2 text-sm" style={{ color: CHALK }}>
               <input type="checkbox" checked={!!(league && league.maintenanceBanner && league.maintenanceBanner.active)} onChange={e => onSetMaintenanceBanner((league && league.maintenanceBanner && league.maintenanceBanner.message) || '', e.target.checked)} />
               Show banner
@@ -9530,14 +9530,15 @@ function GlobalSearch({ teamsIndex, league, onOpenTeam, onOpenPlayer, setTab }) 
   );
 }
 
-// A site-wide notice, shown to every visitor while the admin has it active.
-// Dismissing it is per-visitor and per-message — a new message (or the same
-// one re-enabled) shows again even if an older one was dismissed.
+// A short notice at the top of the Home tab, shown to every visitor while
+// the admin has it active. Dismissing it is per-visitor and per-message —
+// a new message (or the same one re-enabled) shows again even if an older
+// one was dismissed.
 function MaintenanceBanner({ banner }) {
   const [dismissedKey, setDismissedKey] = useState(null);
   if (!banner || !banner.active || !banner.message || dismissedKey === banner.message) return null;
   return (
-    <div className="px-4 py-2 flex items-center gap-3" style={{ background: GOLD, color: INK }}>
+    <div className="mx-4 mt-4 px-4 py-2.5 flex items-center gap-3 rounded-xl" style={{ background: GOLD, color: INK }}>
       <AlertTriangle size={15} className="flex-shrink-0" />
       <span className="flex-1 text-sm font-semibold">{banner.message}</span>
       <button onClick={() => setDismissedKey(banner.message)} className="p-1 flex-shrink-0"><X size={15} /></button>
@@ -11240,8 +11241,9 @@ function App() {
     const history = prior ? [...(prior.history || []), { version: prior.version || 1, text: prior.text, updatedAt: prior.updatedAt }] : [];
     persistLeague(appendAuditEntry({ ...league, constitution: { text: trimmed, version, updatedAt: Date.now(), history } }, 'League constitution updated', `v${version}`));
   };
-  // A site-wide notice for planned downtime — shown as a dismissible banner
-  // to every visitor while active, independent of any one season.
+  // A short message the Site Owner can post at the top of the Home tab —
+  // shown as a dismissible banner to every visitor while active,
+  // independent of any one season.
   const setMaintenanceBanner = (message, active) => {
     if (!league) return;
     persistLeague({ ...league, maintenanceBanner: { message: (message || '').trim(), active: !!active } });
@@ -11433,7 +11435,6 @@ function App() {
 
   return (
     <div className="min-h-screen flex flex-col" style={{ background: INK, color: CHALK, fontFamily: 'ui-sans-serif, system-ui, sans-serif' }}>
-      {league && <MaintenanceBanner banner={league.maintenanceBanner} />}
       <header className="sticky top-0 z-20" style={{ background: `${PANEL}f2`, backdropFilter: 'blur(10px)', WebkitBackdropFilter: 'blur(10px)', borderBottom: `1px solid ${LINE}` }}>
         <div className="max-w-6xl mx-auto px-4 flex items-center gap-3" style={{ height: 60 }}>
           {screen === 'league' && !FIXED_LEAGUE_ID && <button onClick={backToLeagues} className="p-1 rounded flex-shrink-0" style={{ color: CHALK_DIM }}><ArrowLeft size={18} /></button>}
@@ -11491,7 +11492,10 @@ function App() {
       </header>
 
       <main className={`flex-1 ${inSeasonTabs && (activeSeason.games || []).length > 0 ? 'pb-20' : ''}`}>
-        <div className="max-w-6xl mx-auto w-full">{body}</div>
+        <div className="max-w-6xl mx-auto w-full">
+          {inSeasonTabs && tab === 'home' && league && <MaintenanceBanner banner={league.maintenanceBanner} />}
+          {body}
+        </div>
       </main>
 
       {inSeasonTabs && <LiveTicker season={activeSeason} teamsById={displayTeamsById} sport={sport} onOpenTeam={onOpenTeam} />}
