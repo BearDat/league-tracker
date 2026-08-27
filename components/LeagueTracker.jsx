@@ -9684,7 +9684,7 @@ function MaintenanceBanner({ banner }) {
 /* Main App                                                              */
 /* ==================================================================== */
 function App() {
-  const { isLoggedIn } = useAuth();
+  const { isLoggedIn, hasPermission } = useAuth();
   const [screen, setScreen] = useState(FIXED_LEAGUE_ID ? 'league' : 'leagues'); // leagues | registry | history | league
   const [leaguesIndex, setLeaguesIndex] = useState([]);
   const [teamsIndex, setTeamsIndex] = useState([]);
@@ -9692,7 +9692,9 @@ function App() {
   const [league, setLeague] = useState(null);
   const [tab, setTab] = useState('home');
   const [prevTab, setPrevTab] = useState('home');
-  useEffect(() => { if ((tab === 'teams' || tab === 'roster') && !isLoggedIn) setTab('home'); }, [tab, isLoggedIn]);
+  const canGM = hasPermission('manageRosters');
+  useEffect(() => { if (tab === 'teams' && !isLoggedIn) setTab('home'); }, [tab, isLoggedIn]);
+  useEffect(() => { if (tab === 'roster' && !canGM) setTab('home'); }, [tab, canGM]);
   const [selectedTeamId, setSelectedTeamId] = useState(null);
   const [compareInitialId, setCompareInitialId] = useState(null);
   const [compareSecondId, setCompareSecondId] = useState(null);
@@ -11466,14 +11468,16 @@ function App() {
   const notifications = useMemo(() => {
     if (!isLoggedIn || !activeSeason) return [];
     const items = [];
-    (activeSeason.pendingTrades || []).forEach(t => {
-      const teamA = teamsById[t.teamAId], teamB = teamsById[t.teamBId];
-      items.push({
-        id: `trade-${t.id}`, type: 'trade', createdAt: t.createdAt,
-        label: `Trade proposal: ${(teamA && teamA.name) || '?'} ⇄ ${(teamB && teamB.name) || '?'}`,
-        onClick: () => setTab('roster'),
+    if (canGM) {
+      (activeSeason.pendingTrades || []).forEach(t => {
+        const teamA = teamsById[t.teamAId], teamB = teamsById[t.teamBId];
+        items.push({
+          id: `trade-${t.id}`, type: 'trade', createdAt: t.createdAt,
+          label: `Trade proposal: ${(teamA && teamA.name) || '?'} ⇄ ${(teamB && teamB.name) || '?'}`,
+          onClick: () => setTab('roster'),
+        });
       });
-    });
+    }
     activeSeason.members.forEach(m => {
       const team = teamsById[m.teamId];
       const teamGamesPlayed = (activeSeason.games || []).filter(g => g.played && !g.isBye && (g.homeTeamId === m.teamId || g.awayTeamId === m.teamId)).length;
@@ -11497,7 +11501,7 @@ function App() {
       });
     });
     return items;
-  }, [isLoggedIn, activeSeason, teamsById]);
+  }, [isLoggedIn, canGM, activeSeason, teamsById]);
 
   if (loading) return <div className="min-h-screen flex items-center justify-center" style={{ background: INK, color: CHALK_DIM }}>Loading…</div>;
 
@@ -11530,7 +11534,7 @@ function App() {
       body = <StandingsView standings={standings} updateMemberField={updateMemberField} season={activeSeason} settings={activeSeason.settings} movementById={movementById} onOpenTeam={onOpenTeam} />;
     } else if (tab === 'teams' && isLoggedIn) {
       body = <TeamsView season={activeSeason} teamsById={teamsById} teamsIndex={teamsIndex} addExistingTeam={addExistingTeamToSeason} createAndAddTeam={createAndAddTeamToSeason} updateMemberField={updateMemberField} updateGlobalTeamField={updateGlobalTeamField} removeMember={removeMember} onOpenTeam={onOpenTeam} importRosterSheet={importRosterSheet} importDraftBoard={importDraftBoard} importStarsSheet={importStarsSheet} addDivision={addDivision} updateDivision={updateDivision} removeDivision={removeDivision} assignMemberDivision={assignMemberDivision} settings={activeSeason.settings} onAddLiveDraftPick={addLiveDraftPick} />;
-    } else if (tab === 'roster' && isLoggedIn) {
+    } else if (tab === 'roster' && canGM) {
       body = <RosterManagementView season={activeSeason} teamsById={displayTeamsById} updatePlayerField={updatePlayerField} removePlayer={removePlayer} addPlayer={addPlayer} addPlayersBulk={addPlayersBulk} tradePlayer={tradePlayer} tradePlayers={tradePlayers} proposeTrade={proposeTrade} executeTradeProposal={executeTradeProposal} discardTradeProposal={discardTradeProposal} setPlayerSuspended={setPlayerSuspended} setPlayerBanned={setPlayerBanned} onOpenPlayer={onOpenPlayer} signFreeAgent={signFreeAgent} deleteFreeAgent={deleteFreeAgent} />;
     } else if (tab === 'schedule') {
       body = <ScheduleView season={activeSeason} settings={activeSeason.settings} saveScore={saveScore} deleteGame={deleteGame} declareForfeit={declareForfeit} setWinnerOverride={setWinnerOverride} teamsById={displayTeamsById} sport={sport} updateGameNotes={updateGameNotes} updateGameStreamUrl={updateGameStreamUrl} saveGamePlayerStats={saveGamePlayerStats} setGameOngoing={setGameOngoing} swapHomeAway={swapHomeAway} onBulkSaveScores={bulkSaveScores} />;
@@ -11610,7 +11614,7 @@ function App() {
             <TabBtn active={tab === 'news'} onClick={() => setTab('news')} label="News" />
             <TabBtn active={tab === 'standings'} onClick={() => setTab('standings')} label="Standings" />
             {isLoggedIn && <TabBtn active={tab === 'teams'} onClick={() => setTab('teams')} label="Teams" />}
-            {isLoggedIn && <TabBtn active={tab === 'roster'} onClick={() => setTab('roster')} label="Roster" />}
+            {canGM && <TabBtn active={tab === 'roster'} onClick={() => setTab('roster')} label="GM" />}
             <TabBtn active={tab === 'schedule'} onClick={() => setTab('schedule')} label="Schedule" />
             <TabBtn active={tab === 'stats'} onClick={() => setTab('stats')} label="Stats" />
             <TabBtn active={tab === 'leaders'} onClick={() => setTab('leaders')} label="Leaders" />

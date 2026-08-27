@@ -18,6 +18,7 @@ export const ROLE_LABELS = {
   site_owner: 'Site Owner',
   commissioner: 'Commissioner',
   board: 'Board of Directors',
+  manager: 'Manager',
   stat_mod: 'Stat Mod',
   media: 'Media',
 };
@@ -28,10 +29,16 @@ const ALL_PERMS = ['manageAdmins', 'manageSettings', 'manageSeasons', 'manageRos
 // settings, appearance colors, and the external import tools stay a
 // Commissioner/Site Owner call, so Board can't quietly change how the
 // league itself is configured while still running everything on top of it.
+//
+// Manager (a team GM) sits between Stat Mod and Board: on top of Stat Mod's
+// schedule access, a Manager can also run their roster — signings, trades,
+// suspensions — through the GM tab, but doesn't reach Board's league-wide
+// levers (seasons, news, awards, league info).
 const ROLE_PERMISSIONS = {
   site_owner: ALL_PERMS,
   commissioner: ['manageSettings', 'manageSeasons', 'manageRosters', 'manageSchedule', 'manageNews', 'manageAwards', 'manageLeagueInfo'],
   board: ['manageSeasons', 'manageRosters', 'manageSchedule', 'manageNews', 'manageAwards', 'manageLeagueInfo'],
+  manager: ['manageRosters', 'manageSchedule'],
   stat_mod: ['manageSchedule'],
   media: ['manageNews'],
 };

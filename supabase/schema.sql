@@ -59,9 +59,16 @@ create policy "authenticated delete" on kv_store
 create table if not exists admin_roles (
   user_id uuid primary key references auth.users(id) on delete cascade,
   username text not null,
-  role text not null check (role in ('site_owner', 'commissioner', 'board', 'stat_mod', 'media')),
+  role text not null check (role in ('site_owner', 'commissioner', 'board', 'manager', 'stat_mod', 'media')),
   updated_at timestamptz default now()
 );
+
+-- The line above only applies to a brand-new table. If admin_roles already
+-- existed before the "manager" role was added, its CHECK constraint still
+-- has the old role list — widen it so 'manager' is accepted too.
+alter table admin_roles drop constraint if exists admin_roles_role_check;
+alter table admin_roles add constraint admin_roles_role_check
+  check (role in ('site_owner', 'commissioner', 'board', 'manager', 'stat_mod', 'media'));
 
 alter table admin_roles enable row level security;
 
