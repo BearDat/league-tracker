@@ -84,6 +84,13 @@ function formatLivePeriod(sport, period, half) {
 function uid(prefix = 'id') {
   return `${prefix}_${Date.now().toString(36)}_${Math.random().toString(36).slice(2, 8)}`;
 }
+// A lightweight admin audit trail, separate from the public Transactions
+// log — who changed a structural setting and when, not roster moves. Capped
+// so it doesn't grow forever; nobody needs more than the last ~100 entries.
+function appendAuditEntry(lg, action, detail) {
+  const entry = { id: uid('audit'), action, detail: detail || '', at: Date.now() };
+  return { ...lg, auditLog: [...(lg.auditLog || []).slice(-99), entry] };
+}
 // awardWinners[awardId] used to store a single winner object; it's now a list
 // so an award can have co-winners. Normalize old single-object saves to a
 // one-item list so both shapes render and edit the same way.
@@ -1369,6 +1376,97 @@ function computeExtras(season, teamsById) {
     totalGames: played.length,
     closest: closest.slice(0, 12),
   };
+}
+
+// A team's run-differential-per-game standard deviation this season — a
+// blowout-heavy team and a nail-biter-heavy team can post the same overall
+// record, this is what actually tells them apart. Needs at least 3 games
+// played to mean anything.
+function computeTeamConsistency(season, teamsById) {
+  const byTeam = new Map();
+  (season.games || []).filter(g => g.played && !g.isBye && !g.isForfeit && g.homeTeamId && g.awayTeamId).forEach(g => {
+    const hs = Number(g.homeScore), as = Number(g.awayScore);
+    if (Number.isNaN(hs) || Number.isNaN(as)) return;
+    (byTeam.get(g.homeTeamId) || byTeam.set(g.homeTeamId, []).get(g.homeTeamId)).push(hs - as);
+    (byTeam.get(g.awayTeamId) || byTeam.set(g.awayTeamId, []).get(g.awayTeamId)).push(as - hs);
+  });
+  const rows = [];
+  byTeam.forEach((diffs, teamId) => {
+    if (diffs.length < 3) return;
+    const mean = diffs.reduce((s, d) => s + d, 0) / diffs.length;
+    const variance = diffs.reduce((s, d) => s + (d - mean) ** 2, 0) / diffs.length;
+    const stdev = Math.sqrt(variance);
+    const t = teamsById[teamId];
+    rows.push({ teamId, teamName: t ? t.name : 'Unknown', gp: diffs.length, stdev, avgMargin: mean });
+  });
+  return rows.sort((a, b) => a.stdev - b.stdev);
+}
+
+// Cumulative innings/appearances per pitcher this season — a workload
+// tracker, not a rate-stat leaderboard (ERA/K-9 already cover that).
+function computePitcherWorkload(season, teamsById) {
+  const byPlayer = new Map();
+  (season.members || []).forEach(m => (m.roster || []).forEach(p => { if (!p.banned) byPlayer.set(p.id, { playerId: p.id, name: p.name, teamId: m.teamId, outs: 0, appearances: 0 }); }));
+  (season.games || []).forEach(g => {
+    if (g.isBye || g.isSpringTraining) return;
+    ['home', 'away'].forEach(side => {
+      ((g.playerStats && g.playerStats[side]) || []).forEach(row => {
+        const outs = ipDisplayToOuts(row.ip || '0.0');
+        if (outs <= 0) return;
+        const entry = byPlayer.get(row.playerId);
+        if (entry) { entry.outs += outs; entry.appearances += 1; }
+      });
+    });
+  });
+  return [...byPlayer.values()].filter(e => e.outs > 0)
+    .map(e => ({ ...e, ip: e.outs / 3, teamName: (teamsById[e.teamId] && teamsById[e.teamId].name) || 'Free Agent' }))
+    .sort((a, b) => b.outs - a.outs);
+}
+
+// Letter-graded draft classes: every drafted player's WAR this season,
+// summed per team and curved against the other teams' draft classes.
+// Standard-ish curve — top third A, middle third B/C, bottom third D/F —
+// simple enough to explain, not pretending to be more precise than the
+// underlying WAR figure already is.
+function gradeFromPercentile(pct) {
+  if (pct >= 0.85) return 'A';
+  if (pct >= 0.65) return 'B';
+  if (pct >= 0.4) return 'C';
+  if (pct >= 0.2) return 'D';
+  return 'F';
+}
+function computeDraftClassGrades(season, teamsById) {
+  const leaders = computeSeasonPlayerLeaders(season, teamsById, 'regular');
+  const warByPlayerId = new Map(leaders.map(p => [p.playerId, p.war]));
+  const byTeam = new Map();
+  (season.members || []).forEach(m => {
+    (m.roster || []).forEach(p => {
+      if (!p.draftPick) return;
+      const entry = byTeam.get(m.teamId) || { teamId: m.teamId, picks: [] };
+      entry.picks.push({ name: p.name, playerId: p.id, overall: p.draftPick.overall || null, war: warByPlayerId.get(p.id) || 0 });
+      byTeam.set(m.teamId, entry);
+    });
+  });
+  const rows = [...byTeam.values()].map(e => ({ ...e, teamName: (teamsById[e.teamId] && teamsById[e.teamId].name) || 'Unknown', totalWar: e.picks.reduce((s, p) => s + p.war, 0) }));
+  if (rows.length === 0) return [];
+  const sorted = [...rows].sort((a, b) => a.totalWar - b.totalWar);
+  rows.forEach(r => { r.grade = gradeFromPercentile(sorted.indexOf(sorted.find(s => s.teamId === r.teamId)) / Math.max(1, sorted.length - 1)); });
+  return rows.sort((a, b) => b.totalWar - a.totalWar);
+}
+
+// Draft "steals" — the biggest gap between where a player was actually
+// picked and what they went on to produce. valueScore rewards high WAR from
+// a late pick far more than the same WAR from an early one.
+function computeDraftValueBoard(season, teamsById) {
+  const leaders = computeSeasonPlayerLeaders(season, teamsById, 'regular');
+  const warByPlayerId = new Map(leaders.map(p => [p.playerId, p.war]));
+  const rows = [];
+  (season.members || []).forEach(m => (m.roster || []).forEach(p => {
+    if (!p.draftPick || !p.draftPick.overall) return;
+    const war = warByPlayerId.get(p.id) || 0;
+    rows.push({ playerId: p.id, name: p.name, teamId: m.teamId, teamName: (teamsById[m.teamId] && teamsById[m.teamId].name) || 'Unknown', overall: p.draftPick.overall, war, valueScore: war * p.draftPick.overall });
+  }));
+  return rows.sort((a, b) => b.valueScore - a.valueScore);
 }
 
 /* ---- simulation ---- */
@@ -3284,7 +3382,7 @@ function AppearanceSettings({ theme, saveTheme }) {
 // kv_store queue everything else in this app goes through) since role
 // assignment is the one thing that stays database-enforced rather than
 // UI-only — see supabase/schema.sql.
-function ManageAdminsPanel() {
+function ManageAdminsPanel({ onLogAudit }) {
   const { hasPermission, user } = useAuth();
   const [rows, setRows] = useState(null);
   const [error, setError] = useState(null);
@@ -3308,14 +3406,17 @@ function ManageAdminsPanel() {
     const { error: err } = await supabase.from('admin_roles').upsert({ user_id: newUserId.trim(), username: newUsername.trim(), role: newRole });
     setBusy(false);
     if (err) { setError(err.message); return; }
+    if (onLogAudit) onLogAudit('Role granted', `${newUsername.trim()} → ${ROLE_LABELS[newRole] || newRole}`);
     setNewUserId(''); setNewUsername(''); setNewRole('board');
     load();
   };
   const changeRole = async (userId, role) => {
     setBusy(true);
+    const target = (rows || []).find(r => r.user_id === userId);
     const { error: err } = await supabase.from('admin_roles').update({ role }).eq('user_id', userId);
     setBusy(false);
     if (err) { setError(err.message); return; }
+    if (onLogAudit) onLogAudit('Role changed', `${target ? target.username : userId} → ${ROLE_LABELS[role] || role}`);
     load();
   };
   const removeAdmin = async (userId, username) => {
@@ -3324,6 +3425,7 @@ function ManageAdminsPanel() {
     const { error: err } = await supabase.from('admin_roles').delete().eq('user_id', userId);
     setBusy(false);
     if (err) { setError(err.message); return; }
+    if (onLogAudit) onLogAudit('Role revoked', username);
     load();
   };
 
@@ -3510,7 +3612,7 @@ function BadgeManagerPanel({ league, onAddBadgeDef, onRemoveBadgeDef }) {
   );
 }
 
-function SettingsView({ settings, saveSettings, theme, saveTheme, sport, season, teamsById, importGames, addManualGame, generateSchedule, league, onRunKpbImport, onSyncPlayerIdentities, onAddBadgeDef, onRemoveBadgeDef, onOpenRegistry }) {
+function SettingsView({ settings, saveSettings, theme, saveTheme, sport, season, teamsById, importGames, addManualGame, generateSchedule, league, onRunKpbImport, onSyncPlayerIdentities, onAddBadgeDef, onRemoveBadgeDef, onOpenRegistry, onLogAudit, onSetMaintenanceBanner }) {
   const { hasPermission, role } = useAuth();
   const isSiteOwner = role === 'site_owner';
   const canManageSettings = hasPermission('manageSettings');
@@ -3640,7 +3742,7 @@ function SettingsView({ settings, saveSettings, theme, saveTheme, sport, season,
       {canManageSettings && (
         <Panel>
           <SectionTitle>Odds display</SectionTitle>
-          <div className="px-4 pb-4 text-sm">
+          <div className="px-4 pb-4 text-sm space-y-4">
             <div className="flex items-center justify-between gap-2" style={{ color: CHALK }}>
               <span>Default odds format<div className="text-[11px]" style={{ color: CHALK_DIM }}>Percent chance, or American moneyline ("+125") — visitors can override this for themselves from the Odds tab</div></span>
               <div className="flex rounded overflow-hidden border" style={{ borderColor: LINE }}>
@@ -3649,11 +3751,44 @@ function SettingsView({ settings, saveSettings, theme, saveTheme, sport, season,
                 ))}
               </div>
             </div>
+            <div className="flex items-center justify-between gap-2" style={{ color: CHALK }}>
+              <span>Roster limit<div className="text-[11px]" style={{ color: CHALK_DIM }}>Max players per team this season — flags any team over the limit on Roster/Teams. 0 = no limit</div></span>
+              <NumInput value={settings.rosterLimit || 0} min={0} max={99} onChange={v => saveSettings({ ...settings, rosterLimit: v })} w="w-16" />
+            </div>
+          </div>
+        </Panel>
+      )}
+      {canManageSettings && (
+        <Panel style={{ borderColor: league && league.maintenanceBanner && league.maintenanceBanner.active ? GOLD : LINE }}>
+          <SectionTitle accent={GOLD}>Maintenance banner</SectionTitle>
+          <div className="px-4 pb-4 space-y-2">
+            <p className="text-xs" style={{ color: CHALK_DIM }}>A site-wide notice shown to every visitor while active — for a planned downtime window or anything else worth a heads-up.</p>
+            <input defaultValue={(league && league.maintenanceBanner && league.maintenanceBanner.message) || ''} onBlur={e => onSetMaintenanceBanner(e.target.value, !!(league && league.maintenanceBanner && league.maintenanceBanner.active))} placeholder="e.g. Site will be down for maintenance 8-9pm ET tonight" className="w-full bg-[#242424] border rounded px-3 py-2 text-sm" style={{ borderColor: LINE, color: CHALK }} />
+            <label className="flex items-center gap-2 text-sm" style={{ color: CHALK }}>
+              <input type="checkbox" checked={!!(league && league.maintenanceBanner && league.maintenanceBanner.active)} onChange={e => onSetMaintenanceBanner((league && league.maintenanceBanner && league.maintenanceBanner.message) || '', e.target.checked)} />
+              Show banner
+            </label>
           </div>
         </Panel>
       )}
       <AppearanceSettings theme={theme} saveTheme={saveTheme} />
-      <ManageAdminsPanel />
+      <ManageAdminsPanel onLogAudit={onLogAudit} />
+      {isSiteOwner && league && league.auditLog && league.auditLog.length > 0 && (
+        <Panel className="overflow-hidden">
+          <SectionTitle>Audit log</SectionTitle>
+          <div className="px-2 pb-2 max-h-72 overflow-y-auto">
+            {league.auditLog.slice().reverse().slice(0, 50).map(a => (
+              <div key={a.id} className="px-2 py-2 text-xs" style={{ borderTop: `1px solid ${LINE}`, color: CHALK }}>
+                <div className="flex items-center justify-between gap-2">
+                  <span className="font-semibold">{a.action}</span>
+                  <span style={{ color: CHALK_DIM }}>{new Date(a.at).toLocaleString()}</span>
+                </div>
+                {a.detail && <div style={{ color: CHALK_DIM }}>{a.detail}</div>}
+              </div>
+            ))}
+          </div>
+        </Panel>
+      )}
     </div>
   );
 }
@@ -3738,7 +3873,59 @@ function SheetTextImportPanel({ title, placeholder, description, parseFn, render
   );
 }
 
-function TeamsView({ season, teamsById, teamsIndex, addExistingTeam, createAndAddTeam, updateMemberField, updateGlobalTeamField, removeMember, onOpenTeam, importRosterSheet, importDraftBoard, importStarsSheet, addDivision, updateDivision, removeDivision, assignMemberDivision }) {
+// A live, real-time draft-day board — add one pick at a time as the draft
+// actually happens, instead of pasting the whole finished board afterward
+// (SheetTextImportPanel above still covers that case). Every visitor sees
+// picks the moment an admin saves them, same as anything else on the site.
+function LiveDraftBoardPanel({ season, teamsById, isLoggedIn, onAddLiveDraftPick }) {
+  const picks = season.liveDraftPicks || [];
+  const [round, setRound] = useState(1);
+  const [pickInRound, setPickInRound] = useState(1);
+  const [teamId, setTeamId] = useState('');
+  const [playerName, setPlayerName] = useState('');
+  const submit = () => {
+    if (!teamId || !playerName.trim()) return;
+    onAddLiveDraftPick(round, pickInRound, teamId, playerName);
+    setPlayerName('');
+    setPickInRound(n => n + 1);
+  };
+  if (!isLoggedIn && picks.length === 0) return null;
+  return (
+    <Panel className="overflow-hidden" style={{ borderColor: GOLD }}>
+      <SectionTitle accent={GOLD}>Live draft board{picks.length > 0 ? ` (${picks.length} picks)` : ''}</SectionTitle>
+      {isLoggedIn && (
+        <div className="px-4 pb-3 flex flex-wrap items-end gap-2">
+          <label className="flex flex-col gap-1"><span className="text-[10px] uppercase" style={{ color: CHALK_DIM }}>Round</span><input type="number" min="1" value={round} onChange={e => setRound(Number(e.target.value) || 1)} className="w-16 bg-[#242424] border rounded px-2 py-1.5 text-sm" style={{ borderColor: LINE, color: CHALK }} /></label>
+          <label className="flex flex-col gap-1"><span className="text-[10px] uppercase" style={{ color: CHALK_DIM }}>Pick</span><input type="number" min="1" value={pickInRound} onChange={e => setPickInRound(Number(e.target.value) || 1)} className="w-16 bg-[#242424] border rounded px-2 py-1.5 text-sm" style={{ borderColor: LINE, color: CHALK }} /></label>
+          <label className="flex flex-col gap-1 flex-1 min-w-[140px]"><span className="text-[10px] uppercase" style={{ color: CHALK_DIM }}>Team</span>
+            <select value={teamId} onChange={e => setTeamId(e.target.value)} className="bg-[#242424] border rounded px-2 py-1.5 text-sm" style={{ borderColor: LINE, color: CHALK }}>
+              <option value="">Select team…</option>
+              {season.members.map(m => <option key={m.teamId} value={m.teamId} style={{ background: PANEL2, color: CHALK }}>{(teamsById[m.teamId] && teamsById[m.teamId].name) || m.scheduleName}</option>)}
+            </select>
+          </label>
+          <label className="flex flex-col gap-1 flex-1 min-w-[140px]"><span className="text-[10px] uppercase" style={{ color: CHALK_DIM }}>Player</span><input value={playerName} onChange={e => setPlayerName(e.target.value)} onKeyDown={e => e.key === 'Enter' && submit()} className="bg-[#242424] border rounded px-2 py-1.5 text-sm" style={{ borderColor: LINE, color: CHALK }} /></label>
+          <button onClick={submit} disabled={!teamId || !playerName.trim()} className="px-3 py-2 rounded font-bold text-sm disabled:opacity-40" style={{ background: GOLD, color: INK }}>Add pick</button>
+        </div>
+      )}
+      {picks.length > 0 && (
+        <div className="px-2 pb-2 max-h-64 overflow-y-auto">
+          {[...picks].reverse().map((p, i) => {
+            const t = teamsById[p.teamId];
+            return (
+              <div key={p.id} className="flex items-center gap-2 px-2 py-1.5 text-sm" style={{ borderTop: i > 0 ? `1px solid ${LINE}` : 'none' }}>
+                <span className="w-16 flex-shrink-0 font-mono text-xs" style={{ color: CHALK_DIM }}>R{p.round} P{p.pickInRound}</span>
+                {t && <TeamMark team={t} size={14} />}
+                <span className="flex-1 truncate" style={{ color: CHALK }}>{p.playerName}</span>
+                <span className="text-xs" style={{ color: CHALK_DIM }}>{t ? t.name : ''}</span>
+              </div>
+            );
+          })}
+        </div>
+      )}
+    </Panel>
+  );
+}
+function TeamsView({ season, teamsById, teamsIndex, addExistingTeam, createAndAddTeam, updateMemberField, updateGlobalTeamField, removeMember, onOpenTeam, importRosterSheet, importDraftBoard, importStarsSheet, addDivision, updateDivision, removeDivision, assignMemberDivision, settings, onAddLiveDraftPick }) {
   const { hasPermission } = useAuth();
   const isLoggedIn = hasPermission('manageRosters');
   const [name, setName] = useState('');
@@ -3887,6 +4074,7 @@ function TeamsView({ season, teamsById, teamsIndex, addExistingTeam, createAndAd
           onImport={(items, resolutions) => importStarsSheet(items, resolutions)}
         />
       )}
+      {onAddLiveDraftPick && <LiveDraftBoardPanel season={season} teamsById={teamsById} isLoggedIn={isLoggedIn} onAddLiveDraftPick={onAddLiveDraftPick} />}
       <Panel className="overflow-hidden" style={{ borderColor: PRIMARY }}>
         <SectionTitle accent={PRIMARY}>Roster, colors &amp; logos</SectionTitle>
         <fieldset disabled={!isLoggedIn} className="contents">
@@ -3894,10 +4082,13 @@ function TeamsView({ season, teamsById, teamsIndex, addExistingTeam, createAndAd
           {season.members.length === 0 && <p className="px-1 py-4 text-sm" style={{ color: CHALK_DIM }}>No teams yet.</p>}
           {season.members.map(m => {
             const gt = teamsById[m.teamId] || { id: m.teamId, name: m.scheduleName, color: null, logoUrl: null, wordmarkUrl: null };
+            const rosterLimit = settings && settings.rosterLimit;
+            const overLimit = rosterLimit > 0 && (m.roster || []).length > rosterLimit;
             return (
               <div key={m.teamId} className="rounded-lg p-3" style={{ background: PANEL2, border: `1px solid ${LINE}`, borderLeft: `4px solid ${teamColor(gt)}`, opacity: m.active === false ? 0.55 : 1 }}>
                 <div className="flex items-center gap-2 mb-2">
                   <button onClick={() => onOpenTeam(m.teamId)} className="flex-1 min-w-0 text-left text-sm font-semibold truncate" style={{ color: CHALK }}>{gt.name}</button>
+                  {overLimit && <span title={`Over the ${rosterLimit}-player roster limit`} className="text-[10px] font-bold px-1.5 py-0.5 rounded flex-shrink-0" style={{ background: `${NEGATIVE}22`, color: NEGATIVE }}>{(m.roster || []).length}/{rosterLimit}</span>}
                   <button onClick={() => updateMemberField(m.teamId, 'active', m.active === false ? true : false)} className="text-[10px] px-2 py-1 rounded font-semibold flex-shrink-0" style={{ background: PANEL, color: m.active === false ? GOLD : CHALK_DIM, border: `1px solid ${LINE}` }}>
                     {m.active === false ? 'Inactive' : 'Active'}
                   </button>
@@ -4191,12 +4382,14 @@ function getPlayerCareerData(league, playerName) {
         // a player traded mid-season keeps the team they actually played
         // for on each individual game, so a trade doesn't retroactively
         // repaint earlier games as having been played for the new team.
+        const hs = Number(g.homeScore), as = Number(g.awayScore);
         gameLog.push(normalizeStatRow(row, {
           seasonId: info.season.id, seasonName: info.season.name,
           teamId: side === 'home' ? g.homeTeamId : g.awayTeamId,
           oppTeamId: side === 'home' ? g.awayTeamId : g.homeTeamId, side,
           gameId: g.id, date: g.date, isPlayoff: !!g.isPlayoff, isPlayIn: !!g.isPlayIn,
           isTournament: isTournamentSeason,
+          oneRunGame: !Number.isNaN(hs) && !Number.isNaN(as) && Math.abs(hs - as) === 1,
         }));
       });
     });
@@ -4265,6 +4458,22 @@ function computePlayerWAR(t, leagueERA) {
   return (battingRuns + pitchingRuns) / 10;
 }
 
+// League-average OPS/ERA for one season, regular season only — the baseline
+// an OPS+/ERA+ index (100 = league average, standard sabermetric convention)
+// is measured against.
+function computeSeasonLeagueAverages(season, teamsById) {
+  const players = computeSeasonPlayerLeaders(season, teamsById, 'regular');
+  const batters = players.filter(p => p.totals.ab >= 3);
+  const totalOuts = players.reduce((s, p) => s + p.totals.outs, 0);
+  const totalER = players.reduce((s, p) => s + p.totals.er, 0);
+  const totalAB = batters.reduce((s, p) => s + p.totals.ab, 0);
+  const totalOPSWeighted = batters.reduce((s, p) => s + p.batting.ops * p.totals.ab, 0);
+  return {
+    leagueERA: totalOuts > 0 ? (totalER * 27) / totalOuts : null,
+    leagueOPS: totalAB > 0 ? totalOPSWeighted / totalAB : null,
+  };
+}
+
 // Every roster player in this season with at least one imported game line,
 // with career-style totals/advanced stats scoped to just this season — the
 // pool the Leaders page ranks. WAR needs a league-average ERA baseline, so
@@ -4272,9 +4481,9 @@ function computePlayerWAR(t, leagueERA) {
 function computeSeasonPlayerLeaders(season, teamsById, mode = 'regular') {
   const byPlayer = new Map();
   (season.members || []).forEach(member => {
-    (member.roster || []).forEach(p => { if (!p.banned) byPlayer.set(p.id, { playerId: p.id, name: p.name, teamId: member.teamId, rows: [] }); });
+    (member.roster || []).forEach(p => { if (!p.banned) byPlayer.set(p.id, { playerId: p.id, name: p.name, teamId: member.teamId, position: p.position || null, rows: [] }); });
   });
-  (season.freeAgents || []).forEach(p => { if (!p.banned) byPlayer.set(p.id, { playerId: p.id, name: p.name, teamId: null, rows: [] }); });
+  (season.freeAgents || []).forEach(p => { if (!p.banned) byPlayer.set(p.id, { playerId: p.id, name: p.name, teamId: null, position: p.position || null, rows: [] }); });
   (season.games || []).forEach(g => {
     if (g.isBye || g.isSpringTraining) return;
     if (!!g.isPlayoff !== (mode === 'playoffs')) return;
@@ -4295,7 +4504,7 @@ function computeSeasonPlayerLeaders(season, teamsById, mode = 'regular') {
   });
   const players = [...byPlayer.values()].filter(e => e.rows.length > 0).map(e => {
     const totals = sumPlayerTotals(e.rows);
-    return { playerId: e.playerId, name: e.name, teamId: e.teamId, totals, batting: computeBattingAdvanced(totals), pitching: computePitchingAdvanced(totals) };
+    return { playerId: e.playerId, name: e.name, teamId: e.teamId, position: e.position, totals, batting: computeBattingAdvanced(totals), pitching: computePitchingAdvanced(totals) };
   });
   const leagueOuts = players.reduce((s, p) => s + p.totals.outs, 0);
   const leagueER = players.reduce((s, p) => s + p.totals.er, 0);
@@ -4365,7 +4574,7 @@ function computeCareerLeaders(league, mode = 'regular') {
     const latest = [...entries].sort((a, b) => (a.season.createdAt || 0) - (b.season.createdAt || 0)).pop();
     const totals = sumPlayerTotals(rows);
     players.push({
-      playerId: latest.playerId, name: latest.player.name, teamId: latest.teamId,
+      playerId: latest.playerId, name: latest.player.name, teamId: latest.teamId, position: latest.player.position || null,
       totals, batting: computeBattingAdvanced(totals), pitching: computePitchingAdvanced(totals),
     });
   });
@@ -4411,18 +4620,50 @@ const CUSTOM_STAT_OPTIONS = [
 // names to show, instead of only the fixed set of cards above — shares
 // whatever season/all-time and regular/playoffs scope the page is already
 // showing, since that's the same "which games count" choice either way.
-function CustomLeaderboardBuilder({ players, teamsById, onOpenPlayer, leagueLogoUrl }) {
+function CustomLeaderboardBuilder({ players, teamsById, onOpenPlayer, leagueLogoUrl, scope, standings }) {
   const [statKey, setStatKey] = useState('ops');
   const [minQualifier, setMinQualifier] = useState(3);
   const [limit, setLimit] = useState(25);
+  const [position, setPosition] = useState('');
+  const [sosAdjusted, setSosAdjusted] = useState(false);
+  const positions = useMemo(() => [...new Set(players.map(p => p.position).filter(Boolean))].sort(), [players]);
   const stat = CUSTOM_STAT_OPTIONS.find(s => s.key === statKey) || CUSTOM_STAT_OPTIONS[0];
-  const pool = stat.qualifier === 'ab' ? players.filter(p => p.totals.ab >= minQualifier)
-    : stat.qualifier === 'ip' ? players.filter(p => p.totals.outs >= minQualifier * 3)
-    : players;
+  const byPosition = position ? players.filter(p => p.position === position) : players;
+  const pool = stat.qualifier === 'ab' ? byPosition.filter(p => p.totals.ab >= minQualifier)
+    : stat.qualifier === 'ip' ? byPosition.filter(p => p.totals.outs >= minQualifier * 3)
+    : byPosition;
+  // Career rows can span teams/seasons a single season's SOS figure can't
+  // speak to, so the adjustment only makes sense for "This Season" scope.
+  const sosByTeamId = useMemo(() => {
+    const m = {};
+    (standings || []).forEach(t => { if (t.sos != null) m[t.id] = t.sos; });
+    return m;
+  }, [standings]);
+  const canSosAdjust = scope !== 'career' && Object.keys(sosByTeamId).length > 0;
+  // A mild multiplier off strength of schedule (win% of opponents faced) —
+  // a tougher slate nudges the stat up, an easier one nudges it down, same
+  // direction the stat already sorts in.
+  const adjustedValueFn = (p) => {
+    const raw = stat.valueFn(p);
+    if (!canSosAdjust || !sosAdjusted) return raw;
+    const sos = sosByTeamId[p.teamId];
+    if (sos == null) return raw;
+    const factor = 1 + (sos - 0.5) * 0.4;
+    return stat.sortDesc ? raw * factor : raw / factor;
+  };
   return (
     <Panel className="overflow-hidden" style={{ borderColor: PRIMARY }}>
       <SectionTitle accent={PRIMARY}>Build a leaderboard</SectionTitle>
       <div className="px-4 pb-3 flex flex-wrap items-end gap-3">
+        {positions.length > 0 && (
+          <label className="flex flex-col gap-1">
+            <span className="text-[10px] uppercase" style={{ color: CHALK_DIM }}>Position</span>
+            <select value={position} onChange={e => setPosition(e.target.value)} className="bg-[#242424] border rounded px-2 py-1.5 text-sm" style={{ borderColor: LINE, color: CHALK }}>
+              <option value="" style={{ background: PANEL2, color: CHALK }}>All positions</option>
+              {positions.map(pos => <option key={pos} value={pos} style={{ background: PANEL2, color: CHALK }}>{pos}</option>)}
+            </select>
+          </label>
+        )}
         <label className="flex flex-col gap-1">
           <span className="text-[10px] uppercase" style={{ color: CHALK_DIM }}>Stat</span>
           <select value={statKey} onChange={e => setStatKey(e.target.value)} className="bg-[#242424] border rounded px-2 py-1.5 text-sm" style={{ borderColor: LINE, color: CHALK }}>
@@ -4443,9 +4684,15 @@ function CustomLeaderboardBuilder({ players, teamsById, onOpenPlayer, leagueLogo
             {[10, 25, 50, 100].map(n => <option key={n} value={n} style={{ background: PANEL2, color: CHALK }}>{n}</option>)}
           </select>
         </label>
+        {canSosAdjust && (
+          <label className="flex items-center gap-1.5 pb-1.5" title="Nudges the stat by strength of schedule — a tougher slate counts for a bit more, an easier one a bit less">
+            <input type="checkbox" checked={sosAdjusted} onChange={e => setSosAdjusted(e.target.checked)} />
+            <span className="text-xs" style={{ color: CHALK_DIM }}>SOS-adjusted</span>
+          </label>
+        )}
       </div>
       <div className="px-4 pb-4">
-        <LeaderBoardCard title={stat.label} players={pool} valueFn={stat.valueFn} formatFn={stat.formatFn} sortDesc={stat.sortDesc} limit={limit} teamsById={teamsById} onOpenPlayer={onOpenPlayer} leagueLogoUrl={leagueLogoUrl} />
+        <LeaderBoardCard title={stat.label + (canSosAdjust && sosAdjusted ? ' (SOS-adj.)' : '')} players={pool} valueFn={adjustedValueFn} formatFn={stat.formatFn} sortDesc={stat.sortDesc} limit={limit} teamsById={teamsById} onOpenPlayer={onOpenPlayer} leagueLogoUrl={leagueLogoUrl} scope={scope} />
       </div>
     </Panel>
   );
@@ -4784,7 +5031,56 @@ function StatImportModal({ game, side, team, roster, existingRows, onSave, onClo
   );
 }
 
-function ScheduleView({ season, settings, saveScore, deleteGame, declareForfeit, setWinnerOverride, teamsById, sport, updateGameNotes, updateGameStreamUrl, saveGamePlayerStats, setGameOngoing, swapHomeAway }) {
+// A spreadsheet-style score entry table for catching up a whole day (or
+// round) of results at once, instead of opening one game at a time.
+// Collapsed by default since it's a batch tool, not something anyone needs
+// open on every visit.
+function BulkScoreEntryPanel({ games, teamsById, onBulkSaveScores }) {
+  const [open, setOpen] = useState(false);
+  const [rows, setRows] = useState({});
+  const unplayed = games.filter(g => !g.played && !g.isPlayoff && !g.isPlayIn && g.homeTeamId && g.awayTeamId);
+  if (unplayed.length === 0) return null;
+  const setRow = (gameId, field, value) => setRows(r => ({ ...r, [gameId]: { ...(r[gameId] || {}), [field]: value } }));
+  const filledCount = Object.values(rows).filter(r => r && r.away !== undefined && r.away !== '' && r.home !== undefined && r.home !== '').length;
+  const saveAll = () => {
+    const updates = unplayed.map(g => {
+      const r = rows[g.id];
+      if (!r || r.away === '' || r.away === undefined || r.home === '' || r.home === undefined) return null;
+      return { gameId: g.id, awayScore: Number(r.away), homeScore: Number(r.home), innings: Number(r.innings) || 7 };
+    }).filter(Boolean);
+    if (updates.length === 0) return;
+    onBulkSaveScores(updates);
+    setRows({});
+  };
+  return (
+    <Panel className="overflow-hidden" style={{ borderColor: GOLD }}>
+      <SectionTitle accent={GOLD} right={<button onClick={() => setOpen(v => !v)} className="text-[11px] font-bold" style={{ color: GOLD }}>{open ? 'Close' : 'Open'}</button>}>Bulk score entry</SectionTitle>
+      {open && (
+        <div className="px-2 pb-4">
+          <p className="px-2 pb-2 text-xs" style={{ color: CHALK_DIM }}>Fill in as many as you've got, then save them all at once.</p>
+          <div className="space-y-1.5 px-2">
+            {unplayed.map(g => {
+              const away = teamsById[g.awayTeamId], home = teamsById[g.homeTeamId];
+              const r = rows[g.id] || {};
+              return (
+                <div key={g.id} className="flex items-center gap-2 text-xs">
+                  <span className="w-20 flex-shrink-0 truncate" style={{ color: CHALK_DIM }}>{g.date || ''}</span>
+                  <span className="flex-1 min-w-0 truncate" style={{ color: CHALK }}>{away ? away.name : g.awayScheduleName}</span>
+                  <input type="number" value={r.away ?? ''} onChange={e => setRow(g.id, 'away', e.target.value)} className="w-14 bg-[#242424] border rounded px-1.5 py-1 text-center" style={{ borderColor: LINE, color: CHALK }} />
+                  <span style={{ color: CHALK_DIM }}>@</span>
+                  <input type="number" value={r.home ?? ''} onChange={e => setRow(g.id, 'home', e.target.value)} className="w-14 bg-[#242424] border rounded px-1.5 py-1 text-center" style={{ borderColor: LINE, color: CHALK }} />
+                  <span className="flex-1 min-w-0 truncate" style={{ color: CHALK }}>{home ? home.name : g.homeScheduleName}</span>
+                </div>
+              );
+            })}
+          </div>
+          <button onClick={saveAll} disabled={filledCount === 0} className="mt-3 mx-2 px-3 py-2 rounded font-bold text-xs disabled:opacity-40" style={{ background: GOLD, color: INK }}>Save {filledCount || ''} score{filledCount === 1 ? '' : 's'}</button>
+        </div>
+      )}
+    </Panel>
+  );
+}
+function ScheduleView({ season, settings, saveScore, deleteGame, declareForfeit, setWinnerOverride, teamsById, sport, updateGameNotes, updateGameStreamUrl, saveGamePlayerStats, setGameOngoing, swapHomeAway, onBulkSaveScores }) {
   const { hasPermission } = useAuth();
   const isLoggedIn = hasPermission('manageSchedule');
   const scheduleMode = settings.scheduleMode || 'date';
@@ -4899,6 +5195,7 @@ function ScheduleView({ season, settings, saveScore, deleteGame, declareForfeit,
           </Panel>
         );
       })()}
+      {isLoggedIn && onBulkSaveScores && <BulkScoreEntryPanel games={games} teamsById={teamsById} onBulkSaveScores={onBulkSaveScores} />}
       <Panel className="overflow-hidden" style={{ borderColor: PRIMARY }}>
         <SectionTitle accent={PRIMARY} right={
           <div className="flex items-center gap-2">
@@ -6273,6 +6570,32 @@ function PlayerStatLineForm({ initial, onSave, onCancel }) {
 // data doesn't cover), and add or correct a season's stat line directly.
 // Collapsed by default so it doesn't dominate the page for the common case
 // of just viewing stats.
+// A suspension/ban appeal is the one write action open to a logged-out
+// visitor — no admin approval loop, just a message parked for an admin to
+// see and act on (via the normal suspend/ban tools) rather than anything
+// automatic.
+function AppealPanel({ seasonId, playerId, playerName, teamId, onSubmitAppeal }) {
+  const [open, setOpen] = useState(false);
+  const [message, setMessage] = useState('');
+  const [sent, setSent] = useState(false);
+  if (sent) {
+    return <Panel style={{ borderColor: WIN }}><p className="px-4 py-4 text-sm" style={{ color: CHALK }}>Appeal submitted — a league admin will review it.</p></Panel>;
+  }
+  return (
+    <Panel style={{ borderColor: NEGATIVE }}>
+      <SectionTitle accent={NEGATIVE} right={!open ? <button onClick={() => setOpen(true)} className="text-[11px] font-bold" style={{ color: NEGATIVE }}>Submit an appeal</button> : null}>Currently suspended or banned</SectionTitle>
+      {open && (
+        <div className="px-4 pb-4 space-y-2">
+          <textarea value={message} onChange={e => setMessage(e.target.value)} placeholder="Explain why this suspension/ban should be reconsidered…" rows={3} className="w-full bg-[#242424] border rounded px-3 py-2 text-sm" style={{ borderColor: LINE, color: CHALK }} />
+          <div className="flex gap-2">
+            <button onClick={() => { if (!message.trim()) return; onSubmitAppeal(seasonId, playerId, playerName, teamId, message); setSent(true); }} disabled={!message.trim()} className="px-3 py-1.5 rounded font-bold text-xs disabled:opacity-40" style={{ background: NEGATIVE, color: '#fff' }}>Send appeal</button>
+            <button onClick={() => setOpen(false)} className="text-xs" style={{ color: CHALK_DIM }}>Cancel</button>
+          </div>
+        </div>
+      )}
+    </Panel>
+  );
+}
 function PlayerEditPanel({ league, seasonsInfo, teamsById, displayName, playerBadges, playerAccolades, playerTeamCredits, primaryIdentityKey, onSetPlayerBadges, onAddPlayerAccolade, onRemovePlayerAccolade, onAddPlayerTeamCredit, onRemovePlayerTeamCredit, onUpsertManualStatLine, onDeleteManualStatLine, onRenamePlayer }) {
   const [open, setOpen] = useState(false);
   const [accName, setAccName] = useState('');
@@ -6303,7 +6626,7 @@ function PlayerEditPanel({ league, seasonsInfo, teamsById, displayName, playerBa
       <div className="px-4 pb-4 space-y-4 text-sm">
         <div>
           <div className="text-xs font-semibold mb-1.5" style={{ color: CHALK }}>Player name</div>
-          <p className="text-[10px] mb-1.5" style={{ color: CHALK_DIM }}>Fixes a misspelled import (e.g. a sheet typo that created a separate player) — renaming here merges it back into the correctly-spelled player's page automatically. The old name is kept on record so nothing that still uses it breaks.</p>
+          <p className="text-[10px] mb-1.5" style={{ color: CHALK_DIM }}>Fixes a misspelled import (e.g. a sheet typo that created a separate player) — renaming here merges it back into the correctly-spelled player's page automatically. The old name is kept on record so nothing that still uses it breaks. This also locks the name in place — it won't get overwritten if the player's Roblox account is renamed later.</p>
           <div className="flex gap-1.5">
             <input value={nameDraft} onChange={e => setNameDraft(e.target.value)} className="flex-1 bg-[#242424] border rounded px-2 py-1.5 text-xs" style={{ borderColor: LINE, color: CHALK }} />
             <button onClick={saveRename} disabled={!nameChanged} className="px-2.5 py-1.5 rounded font-bold text-xs disabled:opacity-40" style={{ background: PRIMARY, color: INK }}>Save</button>
@@ -6411,7 +6734,7 @@ function PlayerEditPanel({ league, seasonsInfo, teamsById, displayName, playerBa
   );
 }
 
-function PlayerPage({ league, teamsById, playerName, onBack, onOpenTeam, onOpenPlayerCompare, activeSeasonId, onRemoveActivity, onClearAllActivity, onBackfillRobloxId, onSyncRobloxRename, onPlayerRenamed, onRenamePlayer, onSetPlayerBadges, onAddPlayerAccolade, onRemovePlayerAccolade, onAddPlayerTeamCredit, onRemovePlayerTeamCredit, onUpsertManualStatLine, onDeleteManualStatLine, onRemoveTeamPlayed }) {
+function PlayerPage({ league, teamsById, playerName, onBack, onOpenTeam, onOpenPlayerCompare, activeSeasonId, onRemoveActivity, onClearAllActivity, onBackfillRobloxId, onSyncRobloxRename, onPlayerRenamed, onRenamePlayer, onSetPlayerBadges, onAddPlayerAccolade, onRemovePlayerAccolade, onAddPlayerTeamCredit, onRemovePlayerTeamCredit, onUpsertManualStatLine, onDeleteManualStatLine, onRemoveTeamPlayed, onSubmitAppeal }) {
   const { hasPermission, role } = useAuth();
   const canManage = hasPermission('manageRosters');
   const isSiteOwner = role === 'site_owner';
@@ -6440,11 +6763,15 @@ function PlayerPage({ league, teamsById, playerName, onBack, onOpenTeam, onOpenP
   // against itself and mistaken for a fresh rename.
   const latestName = currentSeasonEntry ? currentSeasonEntry.player.name : playerName;
   const avatar = useRobloxAvatar(latestName, latestRobloxUserId);
+  // A site owner's manual rename (nameOverride) is a deliberate choice —
+  // skip the auto-sync entirely for it, otherwise it gets silently renamed
+  // right back to the live Roblox username on the very next admin visit.
+  const nameIsOverridden = !!(currentSeasonEntry && currentSeasonEntry.player.nameOverride);
   useEffect(() => {
     // Only an admin's visit actually writes anything (kv_store only accepts
     // authenticated writes anyway) — a logged-out viewer just keeps seeing
     // the name as currently stored until an admin's visit syncs it.
-    if (avatar.loading || !canManage) return;
+    if (avatar.loading || !canManage || nameIsOverridden) return;
     if (!latestRobloxUserId && avatar.userId) {
       if (onBackfillRobloxId) onBackfillRobloxId(latestName, avatar.userId);
     } else if (latestRobloxUserId && avatar.resolvedUsername && avatar.resolvedUsername !== latestName) {
@@ -6452,7 +6779,7 @@ function PlayerPage({ league, teamsById, playerName, onBack, onOpenTeam, onOpenP
       if (onPlayerRenamed) onPlayerRenamed(avatar.resolvedUsername);
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [avatar.loading, avatar.userId, avatar.resolvedUsername, latestRobloxUserId, latestName, canManage]);
+  }, [avatar.loading, avatar.userId, avatar.resolvedUsername, latestRobloxUserId, latestName, canManage, nameIsOverridden]);
   // Activity log entries don't carry a playerId (they're free-text), so a
   // name match is the only way to find "this player's" transactions —
   // consistent with how the rest of the page threads career history
@@ -6537,6 +6864,61 @@ function PlayerPage({ league, teamsById, playerName, onBack, onOpenTeam, onOpenP
   const pitching = computePitchingAdvanced(regTotals);
   const hasBatting = regTotals.ab > 0;
   const hasPitching = regTotals.outs > 0;
+
+  // OPS+/ERA+ — indexed to this season's league average (100 = average),
+  // regular season only, same convention as the raw advanced stats above.
+  const seasonLeagueAvg = currentSeasonEntry ? computeSeasonLeagueAverages(currentSeasonEntry.season, teamsById) : null;
+  const opsPlus = seasonLeagueAvg && seasonLeagueAvg.leagueOPS ? Math.round((batting.ops / seasonLeagueAvg.leagueOPS) * 100) : null;
+  const eraPlus = seasonLeagueAvg && seasonLeagueAvg.leagueERA && pitching.era > 0 ? Math.round((seasonLeagueAvg.leagueERA / pitching.era) * 100) : null;
+
+  // One-run-game splits — batting/pitching lines for games decided by
+  // exactly one run vs. everything else, regular season only.
+  const oneRunRows = gameLog.filter(r => r.oneRunGame && !r.isPlayoff && !r.isTournament);
+  const otherRunRows = gameLog.filter(r => !r.oneRunGame && !r.isPlayoff && !r.isTournament);
+  const oneRunBatting = computeBattingAdvanced(sumPlayerTotals(oneRunRows));
+  const otherBatting = computeBattingAdvanced(sumPlayerTotals(otherRunRows));
+  const oneRunPitching = computePitchingAdvanced(sumPlayerTotals(oneRunRows));
+  const otherPitching = computePitchingAdvanced(sumPlayerTotals(otherRunRows));
+  const hasOneRunSplit = oneRunRows.length > 0 && otherRunRows.length > 0;
+
+  // Rest-of-season pace — this player's current per-game rate on their
+  // current team, projected across that team's remaining scheduled games.
+  const paceSeason = currentSeasonEntry ? currentSeasonEntry.season : null;
+  const paceTeamId = currentSeasonEntry ? currentSeasonEntry.teamId : null;
+  const paceRows = paceSeason ? gameLog.filter(r => r.seasonId === paceSeason.id && !r.isPlayoff && !r.isImport) : [];
+  const paceGamesPlayed = new Set(paceRows.map(r => r.gameId)).size;
+  const paceTeamGames = paceSeason && paceTeamId ? (paceSeason.games || []).filter(g => !g.isBye && !g.isSpringTraining && !g.isPlayoff && (g.homeTeamId === paceTeamId || g.awayTeamId === paceTeamId)) : [];
+  const paceGamesRemaining = paceTeamGames.filter(g => !g.played).length;
+  const paceTotals = sumPlayerTotals(paceRows);
+  const showPace = paceGamesRemaining > 0 && paceGamesPlayed >= 3 && (paceTotals.ab > 0 || paceTotals.outs > 0);
+  const paceStats = paceTotals.ab > 0
+    ? [{ label: 'Hits', v: paceTotals.h }, { label: 'HR', v: paceTotals.hr }, { label: 'RBI', v: paceTotals.rbi }]
+    : [{ label: 'Strikeouts', v: paceTotals.k }];
+
+  // Milestone countdown — flags a career round-number threshold only once
+  // it's genuinely close, not the whole list of thresholds still ahead.
+  const careerTotalsForMilestones = sumPlayerTotals(gameLog.filter(r => !r.isTournament));
+  const milestoneDefs = [
+    { label: 'career hits', total: careerTotalsForMilestones.h, thresholds: [50, 100, 250, 500, 1000] },
+    { label: 'career home runs', total: careerTotalsForMilestones.hr, thresholds: [10, 25, 50, 100] },
+    { label: 'career RBI', total: careerTotalsForMilestones.rbi, thresholds: [50, 100, 250, 500] },
+    { label: 'career strikeouts (pitching)', total: careerTotalsForMilestones.k, thresholds: [50, 100, 250, 500] },
+  ];
+  const upcomingMilestones = milestoneDefs.map(d => {
+    const next = d.thresholds.find(t => t > d.total);
+    if (!next) return null;
+    const remaining = next - d.total;
+    if (remaining > Math.max(10, next * 0.08)) return null;
+    return { label: d.label, next, remaining };
+  }).filter(Boolean);
+
+  // Season-over-season trend — one point per season this identity has a
+  // regular-season batting or pitching line, not per game (the AVG/ERA
+  // trend chart above already covers the game-by-game view).
+  const seasonTrendData = seasonSplits.filter(s => !s.isTournament && (s.reg.ab > 0 || s.reg.outs > 0)).map(s => {
+    const b = computeBattingAdvanced(s.reg), p = computePitchingAdvanced(s.reg);
+    return { season: s.seasonName, value: hasBatting ? b.ops : p.era };
+  });
 
   // "Teams played on" needs every team a player suited up for, not just
   // where they ended up — a mid-season trade means seasonsInfo (one entry
@@ -6661,6 +7043,10 @@ function PlayerPage({ league, teamsById, playerName, onBack, onOpenTeam, onOpenP
         </div>
       </div>
 
+      {(latest.player.suspended || latest.player.banned) && onSubmitAppeal && (
+        <AppealPanel seasonId={latest.season.id} playerId={latest.playerId} playerName={displayName} teamId={latest.teamId} onSubmitAppeal={onSubmitAppeal} />
+      )}
+
       {isSiteOwner && (
         <PlayerEditPanel
           league={league} seasonsInfo={seasonsInfo} teamsById={teamsById} displayName={displayName}
@@ -6758,14 +7144,17 @@ function PlayerPage({ league, teamsById, playerName, onBack, onOpenTeam, onOpenP
                 <StatBox label="SLG" value={batting.slg.toFixed(3).replace(/^0/, '')} />
                 <StatBox label="OPS" value={batting.ops.toFixed(3).replace(/^0/, '')} color={GOLD} />
                 <StatBox label="ISO" value={batting.iso.toFixed(3).replace(/^0/, '')} />
+                {opsPlus != null && <StatBox label="OPS+" value={opsPlus} color={opsPlus >= 100 ? WIN : NEGATIVE} />}
               </>}
               {hasPitching && <>
                 <StatBox label="WHIP" value={pitching.whip.toFixed(2)} />
                 <StatBox label="K/9" value={pitching.k9.toFixed(1)} />
                 <StatBox label="BB/9" value={pitching.bb9.toFixed(1)} />
                 <StatBox label="K/BB" value={pitching.kbb === Infinity ? '∞' : pitching.kbb.toFixed(2)} />
+                {eraPlus != null && <StatBox label="ERA+" value={eraPlus} color={eraPlus >= 100 ? WIN : NEGATIVE} />}
               </>}
             </div>
+            {(opsPlus != null || eraPlus != null) && <p className="px-4 pb-3 text-[10px]" style={{ color: CHALK_DIM }}>OPS+/ERA+ are indexed to this season's league average — 100 is exactly average, higher is better either way.</p>}
           </Panel>
 
           {trendData.length >= 3 && (
@@ -6781,6 +7170,50 @@ function PlayerPage({ league, teamsById, playerName, onBack, onOpenTeam, onOpenP
                     <Line type="monotone" dataKey="value" stroke={PRIMARY} dot={false} strokeWidth={2} />
                   </LineChart>
                 </ResponsiveContainer>
+              </div>
+            </Panel>
+          )}
+
+          {seasonTrendData.length >= 2 && (
+            <Panel>
+              <SectionTitle>{hasBatting ? 'OPS by season' : 'ERA by season'}</SectionTitle>
+              <div className="px-2 pb-4" style={{ height: 180 }}>
+                <ResponsiveContainer width="100%" height="100%">
+                  <LineChart data={seasonTrendData}>
+                    <CartesianGrid stroke={LINE} strokeDasharray="3 3" />
+                    <XAxis dataKey="season" stroke={CHALK_DIM} tick={{ fontSize: 10 }} />
+                    <YAxis stroke={CHALK_DIM} tick={{ fontSize: 10 }} domain={['auto', 'auto']} />
+                    <Tooltip contentStyle={{ background: PANEL2, border: `1px solid ${LINE}`, fontSize: 12 }} formatter={(v) => hasBatting ? v.toFixed(3) : v.toFixed(2)} />
+                    <Line type="monotone" dataKey="value" stroke={GOLD} dot strokeWidth={2} />
+                  </LineChart>
+                </ResponsiveContainer>
+              </div>
+            </Panel>
+          )}
+
+          {hasOneRunSplit && (
+            <Panel>
+              <SectionTitle>One-run game splits</SectionTitle>
+              <div className="px-4 pb-4 grid grid-cols-2 gap-3">
+                {hasBatting ? <>
+                  <StatBox label="OPS · 1-run games" value={oneRunBatting.ops.toFixed(3).replace(/^0/, '')} color={GOLD} />
+                  <StatBox label="OPS · other games" value={otherBatting.ops.toFixed(3).replace(/^0/, '')} />
+                </> : <>
+                  <StatBox label="ERA · 1-run games" value={oneRunPitching.era.toFixed(2)} color={GOLD} />
+                  <StatBox label="ERA · other games" value={otherPitching.era.toFixed(2)} />
+                </>}
+              </div>
+            </Panel>
+          )}
+
+          {showPace && (
+            <Panel>
+              <SectionTitle accent={PRIMARY}>Rest-of-season pace</SectionTitle>
+              <p className="px-4 pb-2 text-xs" style={{ color: CHALK_DIM }}>Current per-game rate projected across {paceGamesRemaining} remaining game{paceGamesRemaining === 1 ? '' : 's'} this season.</p>
+              <div className="px-4 pb-4 grid grid-cols-3 gap-3">
+                {paceStats.map(s => (
+                  <StatBox key={s.label} label={s.label} value={Math.round((s.v / paceGamesPlayed) * (paceGamesPlayed + paceGamesRemaining))} color={PRIMARY} />
+                ))}
               </div>
             </Panel>
           )}
@@ -6816,6 +7249,18 @@ function PlayerPage({ league, teamsById, playerName, onBack, onOpenTeam, onOpenP
         </div>
 
         <div className="space-y-4">
+          {upcomingMilestones.length > 0 && (
+            <Panel className="overflow-hidden" style={{ borderColor: GOLD }}>
+              <SectionTitle accent={GOLD}>Milestone watch</SectionTitle>
+              <div className="px-2 pb-2">
+                {upcomingMilestones.map((m, i) => (
+                  <div key={m.label} className="px-2 py-2 text-sm" style={{ borderTop: i > 0 ? `1px solid ${LINE}` : 'none', color: CHALK }}>
+                    <span className="font-bold" style={{ color: GOLD }}>{m.remaining}</span> away from {m.next.toLocaleString()} {m.label}
+                  </div>
+                ))}
+              </div>
+            </Panel>
+          )}
           <Panel>
             <SectionTitle>Teams played on</SectionTitle>
             <div className="px-2 pb-2">
@@ -7025,21 +7470,27 @@ function PlayerComparePage({ league, teamsById, initialNameA, initialNameB, onBa
 /* ==================================================================== */
 /* Stat leaders                                                          */
 /* ==================================================================== */
-function LeaderBoardCard({ title, accent = PRIMARY, players, valueFn, formatFn, teamsById, onOpenPlayer, sortDesc = true, limit = 5, leagueLogoUrl }) {
+function LeaderBoardCard({ title, accent = PRIMARY, players, valueFn, formatFn, teamsById, onOpenPlayer, sortDesc = true, limit = 5, leagueLogoUrl, scope = 'season' }) {
   const ranked = [...players].sort((a, b) => sortDesc ? valueFn(b) - valueFn(a) : valueFn(a) - valueFn(b)).slice(0, limit);
+  // A career/all-time row can span several teams over several seasons —
+  // there's no single "current team" that's actually correct for it, so
+  // rather than pick one (arbitrarily, and sometimes misleadingly) via
+  // whichever season happened to be created last, this scope just doesn't
+  // claim a team at all. "This Season" rows are unambiguous and keep it.
+  const showTeam = scope !== 'career';
   return (
     <Panel>
       <SectionTitle accent={accent}>{title}</SectionTitle>
       <div className="px-2 pb-3">
         {ranked.length === 0 && <p className="px-2 py-3 text-sm" style={{ color: CHALK_DIM }}>Not enough data yet.</p>}
         {ranked.map((p, i) => {
-          const t = teamsById[p.teamId];
+          const t = showTeam ? teamsById[p.teamId] : null;
           return (
             <button key={p.playerId} onClick={() => onOpenPlayer(p.name)} className="w-full flex items-center gap-2 px-2 py-1.5 text-left" style={{ borderTop: i > 0 ? `1px solid ${LINE}` : 'none' }}>
               <span className="w-4 text-xs font-mono flex-shrink-0" style={{ color: CHALK_DIM }}>{i + 1}</span>
-              {t ? <TeamMark team={t} size={14} /> : leagueLogoUrl ? <img src={leagueLogoUrl} alt="" style={{ width: 14, height: 14, objectFit: 'contain', borderRadius: 4, flexShrink: 0 }} /> : <span className="inline-block rounded-full flex-shrink-0" style={{ width: 8, height: 8, background: CHALK_DIM }} />}
+              {showTeam && (t ? <TeamMark team={t} size={14} /> : leagueLogoUrl ? <img src={leagueLogoUrl} alt="" style={{ width: 14, height: 14, objectFit: 'contain', borderRadius: 4, flexShrink: 0 }} /> : <span className="inline-block rounded-full flex-shrink-0" style={{ width: 8, height: 8, background: CHALK_DIM }} />)}
               <span className="flex-1 text-sm font-semibold truncate" style={{ color: CHALK }}>{p.name}</span>
-              <span className="text-[10px] font-mono font-bold flex-shrink-0" style={{ color: CHALK_DIM }}>{t ? teamAbbr(t) : 'FA'}</span>
+              {showTeam && <span className="text-[10px] font-mono font-bold flex-shrink-0" style={{ color: CHALK_DIM }}>{t ? teamAbbr(t) : 'FA'}</span>}
               <span className="text-sm font-mono font-bold flex-shrink-0" style={{ color: accent }}>{formatFn(valueFn(p))}</span>
             </button>
           );
@@ -7049,7 +7500,7 @@ function LeaderBoardCard({ title, accent = PRIMARY, players, valueFn, formatFn, 
   );
 }
 
-function StatLeadersView({ league, season, teamsById, onOpenPlayer, leagueLogoUrl }) {
+function StatLeadersView({ league, season, teamsById, onOpenPlayer, leagueLogoUrl, standings }) {
   const [mode, setMode] = useState('regular');
   const [scope, setScope] = useState('season'); // 'season' | 'career'
   const hasPlayoffGames = useMemo(() => (season.games || []).some(g => g.isPlayoff && !g.isBye), [season]);
@@ -7093,31 +7544,31 @@ function StatLeadersView({ league, season, teamsById, onOpenPlayer, leagueLogoUr
         <Panel><p className="px-4 py-8 text-sm text-center" style={{ color: CHALK_DIM }}>{scope === 'career' ? 'No career stats recorded yet.' : mode === 'playoffs' ? 'No playoff stats imported yet this season.' : "No stats imported yet this season — import a game's box score from the Schedule tab."}</p></Panel>
       ) : (
         <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3">
-          <LeaderBoardCard title="Batting Average" players={batters} valueFn={p => p.batting.avg} formatFn={fmtRate} teamsById={teamsById} onOpenPlayer={onOpenPlayer} leagueLogoUrl={leagueLogoUrl} />
-          <LeaderBoardCard title="OPS" accent={GOLD} players={batters} valueFn={p => p.batting.ops} formatFn={fmtRate} teamsById={teamsById} onOpenPlayer={onOpenPlayer} leagueLogoUrl={leagueLogoUrl} />
-          <LeaderBoardCard title="On-Base %" players={batters} valueFn={p => p.batting.obp} formatFn={fmtRate} teamsById={teamsById} onOpenPlayer={onOpenPlayer} leagueLogoUrl={leagueLogoUrl} />
-          <LeaderBoardCard title="Slugging %" players={batters} valueFn={p => p.batting.slg} formatFn={fmtRate} teamsById={teamsById} onOpenPlayer={onOpenPlayer} leagueLogoUrl={leagueLogoUrl} />
-          <LeaderBoardCard title="Isolated Power" players={batters} valueFn={p => p.batting.iso} formatFn={fmtRate} teamsById={teamsById} onOpenPlayer={onOpenPlayer} leagueLogoUrl={leagueLogoUrl} />
-          <LeaderBoardCard title="Home Runs" players={players} valueFn={p => p.totals.hr} formatFn={fmtInt} teamsById={teamsById} onOpenPlayer={onOpenPlayer} leagueLogoUrl={leagueLogoUrl} />
-          <LeaderBoardCard title="RBI" players={players} valueFn={p => p.totals.rbi} formatFn={fmtInt} teamsById={teamsById} onOpenPlayer={onOpenPlayer} leagueLogoUrl={leagueLogoUrl} />
-          <LeaderBoardCard title="Hits" players={players} valueFn={p => p.totals.h} formatFn={fmtInt} teamsById={teamsById} onOpenPlayer={onOpenPlayer} leagueLogoUrl={leagueLogoUrl} />
-          <LeaderBoardCard title="Runs" players={players} valueFn={p => p.totals.r} formatFn={fmtInt} teamsById={teamsById} onOpenPlayer={onOpenPlayer} leagueLogoUrl={leagueLogoUrl} />
-          <LeaderBoardCard title="Doubles" players={players} valueFn={p => p.totals.doubles} formatFn={fmtInt} teamsById={teamsById} onOpenPlayer={onOpenPlayer} leagueLogoUrl={leagueLogoUrl} />
-          <LeaderBoardCard title="Triples" players={players} valueFn={p => p.totals.triples} formatFn={fmtInt} teamsById={teamsById} onOpenPlayer={onOpenPlayer} leagueLogoUrl={leagueLogoUrl} />
-          <LeaderBoardCard title="Walks (Batting)" players={players} valueFn={p => p.totals.bb} formatFn={fmtInt} teamsById={teamsById} onOpenPlayer={onOpenPlayer} leagueLogoUrl={leagueLogoUrl} />
-          <LeaderBoardCard title="Strikeouts (Batting)" accent={NEGATIVE} players={players} valueFn={p => p.totals.so} formatFn={fmtInt} teamsById={teamsById} onOpenPlayer={onOpenPlayer} leagueLogoUrl={leagueLogoUrl} sortDesc={false} />
-          <LeaderBoardCard title="ERA" accent={NEGATIVE} players={pitchers} valueFn={p => p.pitching.era} formatFn={fmt2} teamsById={teamsById} onOpenPlayer={onOpenPlayer} leagueLogoUrl={leagueLogoUrl} sortDesc={false} />
-          <LeaderBoardCard title="WHIP" accent={NEGATIVE} players={pitchers} valueFn={p => p.pitching.whip} formatFn={fmt2} teamsById={teamsById} onOpenPlayer={onOpenPlayer} leagueLogoUrl={leagueLogoUrl} sortDesc={false} />
-          <LeaderBoardCard title="Innings Pitched" players={pitchers} valueFn={p => p.pitching.ip} formatFn={fmtIp} teamsById={teamsById} onOpenPlayer={onOpenPlayer} leagueLogoUrl={leagueLogoUrl} />
-          <LeaderBoardCard title="Strikeouts (Pitching)" players={pitchers} valueFn={p => p.totals.k} formatFn={fmtInt} teamsById={teamsById} onOpenPlayer={onOpenPlayer} leagueLogoUrl={leagueLogoUrl} />
-          <LeaderBoardCard title="K/9" players={pitchers} valueFn={p => p.pitching.k9} formatFn={fmt2} teamsById={teamsById} onOpenPlayer={onOpenPlayer} leagueLogoUrl={leagueLogoUrl} />
-          <LeaderBoardCard title="BB/9" accent={NEGATIVE} players={pitchers} valueFn={p => p.pitching.bb9} formatFn={fmt2} teamsById={teamsById} onOpenPlayer={onOpenPlayer} leagueLogoUrl={leagueLogoUrl} sortDesc={false} />
-          <LeaderBoardCard title="K/BB" players={pitchers} valueFn={p => (p.pitching.kbb === Infinity ? 999 : p.pitching.kbb)} formatFn={(v) => v === 999 ? '∞' : fmt2(v)} teamsById={teamsById} onOpenPlayer={onOpenPlayer} leagueLogoUrl={leagueLogoUrl} />
-          <LeaderBoardCard title="WAR" accent={GOLD} players={players} valueFn={p => p.war} formatFn={fmt1} teamsById={teamsById} onOpenPlayer={onOpenPlayer} leagueLogoUrl={leagueLogoUrl} />
+          <LeaderBoardCard title="Batting Average" players={batters} valueFn={p => p.batting.avg} formatFn={fmtRate} teamsById={teamsById} onOpenPlayer={onOpenPlayer} leagueLogoUrl={leagueLogoUrl} scope={scope} />
+          <LeaderBoardCard title="OPS" accent={GOLD} players={batters} valueFn={p => p.batting.ops} formatFn={fmtRate} teamsById={teamsById} onOpenPlayer={onOpenPlayer} leagueLogoUrl={leagueLogoUrl} scope={scope} />
+          <LeaderBoardCard title="On-Base %" players={batters} valueFn={p => p.batting.obp} formatFn={fmtRate} teamsById={teamsById} onOpenPlayer={onOpenPlayer} leagueLogoUrl={leagueLogoUrl} scope={scope} />
+          <LeaderBoardCard title="Slugging %" players={batters} valueFn={p => p.batting.slg} formatFn={fmtRate} teamsById={teamsById} onOpenPlayer={onOpenPlayer} leagueLogoUrl={leagueLogoUrl} scope={scope} />
+          <LeaderBoardCard title="Isolated Power" players={batters} valueFn={p => p.batting.iso} formatFn={fmtRate} teamsById={teamsById} onOpenPlayer={onOpenPlayer} leagueLogoUrl={leagueLogoUrl} scope={scope} />
+          <LeaderBoardCard title="Home Runs" players={players} valueFn={p => p.totals.hr} formatFn={fmtInt} teamsById={teamsById} onOpenPlayer={onOpenPlayer} leagueLogoUrl={leagueLogoUrl} scope={scope} />
+          <LeaderBoardCard title="RBI" players={players} valueFn={p => p.totals.rbi} formatFn={fmtInt} teamsById={teamsById} onOpenPlayer={onOpenPlayer} leagueLogoUrl={leagueLogoUrl} scope={scope} />
+          <LeaderBoardCard title="Hits" players={players} valueFn={p => p.totals.h} formatFn={fmtInt} teamsById={teamsById} onOpenPlayer={onOpenPlayer} leagueLogoUrl={leagueLogoUrl} scope={scope} />
+          <LeaderBoardCard title="Runs" players={players} valueFn={p => p.totals.r} formatFn={fmtInt} teamsById={teamsById} onOpenPlayer={onOpenPlayer} leagueLogoUrl={leagueLogoUrl} scope={scope} />
+          <LeaderBoardCard title="Doubles" players={players} valueFn={p => p.totals.doubles} formatFn={fmtInt} teamsById={teamsById} onOpenPlayer={onOpenPlayer} leagueLogoUrl={leagueLogoUrl} scope={scope} />
+          <LeaderBoardCard title="Triples" players={players} valueFn={p => p.totals.triples} formatFn={fmtInt} teamsById={teamsById} onOpenPlayer={onOpenPlayer} leagueLogoUrl={leagueLogoUrl} scope={scope} />
+          <LeaderBoardCard title="Walks (Batting)" players={players} valueFn={p => p.totals.bb} formatFn={fmtInt} teamsById={teamsById} onOpenPlayer={onOpenPlayer} leagueLogoUrl={leagueLogoUrl} scope={scope} />
+          <LeaderBoardCard title="Strikeouts (Batting)" accent={NEGATIVE} players={players} valueFn={p => p.totals.so} formatFn={fmtInt} teamsById={teamsById} onOpenPlayer={onOpenPlayer} leagueLogoUrl={leagueLogoUrl} scope={scope} sortDesc={false} />
+          <LeaderBoardCard title="ERA" accent={NEGATIVE} players={pitchers} valueFn={p => p.pitching.era} formatFn={fmt2} teamsById={teamsById} onOpenPlayer={onOpenPlayer} leagueLogoUrl={leagueLogoUrl} scope={scope} sortDesc={false} />
+          <LeaderBoardCard title="WHIP" accent={NEGATIVE} players={pitchers} valueFn={p => p.pitching.whip} formatFn={fmt2} teamsById={teamsById} onOpenPlayer={onOpenPlayer} leagueLogoUrl={leagueLogoUrl} scope={scope} sortDesc={false} />
+          <LeaderBoardCard title="Innings Pitched" players={pitchers} valueFn={p => p.pitching.ip} formatFn={fmtIp} teamsById={teamsById} onOpenPlayer={onOpenPlayer} leagueLogoUrl={leagueLogoUrl} scope={scope} />
+          <LeaderBoardCard title="Strikeouts (Pitching)" players={pitchers} valueFn={p => p.totals.k} formatFn={fmtInt} teamsById={teamsById} onOpenPlayer={onOpenPlayer} leagueLogoUrl={leagueLogoUrl} scope={scope} />
+          <LeaderBoardCard title="K/9" players={pitchers} valueFn={p => p.pitching.k9} formatFn={fmt2} teamsById={teamsById} onOpenPlayer={onOpenPlayer} leagueLogoUrl={leagueLogoUrl} scope={scope} />
+          <LeaderBoardCard title="BB/9" accent={NEGATIVE} players={pitchers} valueFn={p => p.pitching.bb9} formatFn={fmt2} teamsById={teamsById} onOpenPlayer={onOpenPlayer} leagueLogoUrl={leagueLogoUrl} scope={scope} sortDesc={false} />
+          <LeaderBoardCard title="K/BB" players={pitchers} valueFn={p => (p.pitching.kbb === Infinity ? 999 : p.pitching.kbb)} formatFn={(v) => v === 999 ? '∞' : fmt2(v)} teamsById={teamsById} onOpenPlayer={onOpenPlayer} leagueLogoUrl={leagueLogoUrl} scope={scope} />
+          <LeaderBoardCard title="WAR" accent={GOLD} players={players} valueFn={p => p.war} formatFn={fmt1} teamsById={teamsById} onOpenPlayer={onOpenPlayer} leagueLogoUrl={leagueLogoUrl} scope={scope} />
         </div>
       )}
 
-      {players.length > 0 && <CustomLeaderboardBuilder players={players} teamsById={teamsById} onOpenPlayer={onOpenPlayer} leagueLogoUrl={leagueLogoUrl} />}
+      {players.length > 0 && <CustomLeaderboardBuilder players={players} teamsById={teamsById} onOpenPlayer={onOpenPlayer} leagueLogoUrl={leagueLogoUrl} scope={scope} standings={standings} />}
     </div>
   );
 }
@@ -7519,7 +7970,7 @@ function AwardsView({ league, season, standings, teamsById, addAwardDef, updateA
   );
 }
 
-function LeagueInfoView({ league, updateLeagueInfo, addStaffMember, updateStaffMember, removeStaffMember, addLeagueLink, updateLeagueLink, removeLeagueLink }) {
+function LeagueInfoView({ league, updateLeagueInfo, addStaffMember, updateStaffMember, removeStaffMember, addLeagueLink, updateLeagueLink, removeLeagueLink, onUpdateConstitution }) {
   const { hasPermission } = useAuth();
   const isLoggedIn = hasPermission('manageLeagueInfo');
   const info = league.info || {};
@@ -7535,6 +7986,11 @@ function LeagueInfoView({ league, updateLeagueInfo, addStaffMember, updateStaffM
   const [staffRole, setStaffRole] = useState('');
   const [linkLabel, setLinkLabel] = useState('');
   const [linkUrl, setLinkUrl] = useState('');
+  const constitution = league.constitution || null;
+  const [showConstitution, setShowConstitution] = useState(false);
+  const [showConstitutionHistory, setShowConstitutionHistory] = useState(false);
+  const [constitutionDraft, setConstitutionDraft] = useState((constitution && constitution.text) || '');
+  useEffect(() => { setConstitutionDraft((constitution && constitution.text) || ''); }, [constitution && constitution.version]);
 
   return (
     <div className="p-4 space-y-4">
@@ -7547,6 +8003,37 @@ function LeagueInfoView({ league, updateLeagueInfo, addStaffMember, updateStaffM
             <p className="text-sm whitespace-pre-wrap" style={{ color: CHALK }}>{info.description}</p>
           ) : (
             <p className="text-sm" style={{ color: CHALK_DIM }}>No description yet.</p>
+          )}
+        </div>
+      </Panel>
+
+      <Panel className="overflow-hidden" style={{ borderColor: PRIMARY }}>
+        <SectionTitle accent={PRIMARY} right={
+          <div className="flex items-center gap-2">
+            {constitution && <button onClick={() => setShowConstitutionHistory(v => !v)} className="text-[11px] font-semibold" style={{ color: CHALK_DIM }}>{showConstitutionHistory ? 'Hide history' : `History (v${constitution.version})`}</button>}
+            {isLoggedIn && <button onClick={() => setShowConstitution(v => !v)} className="text-[11px] font-semibold" style={{ color: PRIMARY }}>{showConstitution ? 'Close' : 'Edit'}</button>}
+          </div>
+        }>League constitution</SectionTitle>
+        <div className="px-4 pb-4">
+          {showConstitution && isLoggedIn ? (
+            <div className="space-y-2">
+              <textarea value={constitutionDraft} onChange={e => setConstitutionDraft(e.target.value)} placeholder="Rules, format, conduct policy — whatever the league's actual constitution covers…" rows={10} className="w-full bg-[#242424] border rounded px-3 py-2 text-sm" style={{ borderColor: LINE, color: CHALK }} />
+              <button onClick={() => { onUpdateConstitution(constitutionDraft); setShowConstitution(false); }} className="px-3 py-2 rounded font-bold text-sm" style={{ background: PRIMARY, color: INK }}>Save new version</button>
+            </div>
+          ) : constitution && constitution.text ? (
+            <p className="text-sm whitespace-pre-wrap" style={{ color: CHALK }}>{constitution.text}</p>
+          ) : (
+            <p className="text-sm" style={{ color: CHALK_DIM }}>No constitution on file yet.</p>
+          )}
+          {showConstitutionHistory && constitution && constitution.history && constitution.history.length > 0 && (
+            <div className="mt-3 pt-3 space-y-3" style={{ borderTop: `1px solid ${LINE}` }}>
+              {[...constitution.history].reverse().map(h => (
+                <div key={h.version}>
+                  <div className="text-[10px] uppercase font-bold mb-1" style={{ color: CHALK_DIM }}>v{h.version} · {h.updatedAt ? new Date(h.updatedAt).toLocaleString() : ''}</div>
+                  <p className="text-xs whitespace-pre-wrap" style={{ color: CHALK_DIM }}>{h.text}</p>
+                </div>
+              ))}
+            </div>
           )}
         </div>
       </Panel>
@@ -7958,9 +8445,13 @@ function NewsView({ league, season, teamsById, addNewsPost, updateNewsPost, remo
   );
 }
 
-function ExtrasView({ extras, teamsById, leagueRecords, activityLog, season, standings, onRemoveActivity }) {
+function ExtrasView({ extras, teamsById, leagueRecords, activityLog, season, standings, onRemoveActivity, onOpenTeam, onOpenPlayer }) {
   const { hasPermission } = useAuth();
   const isLoggedIn = hasPermission('manageSeasons');
+  const consistency = useMemo(() => season ? computeTeamConsistency(season, teamsById) : [], [season, teamsById]);
+  const workload = useMemo(() => season ? computePitcherWorkload(season, teamsById) : [], [season, teamsById]);
+  const draftGrades = useMemo(() => season ? computeDraftClassGrades(season, teamsById) : [], [season, teamsById]);
+  const draftValue = useMemo(() => season ? computeDraftValueBoard(season, teamsById) : [], [season, teamsById]);
   if (!extras) return <div className="p-4 space-y-4"><Panel><p className="px-4 py-8 text-sm text-center" style={{ color: CHALK_DIM }}>Enter some scores to unlock fun stats here.</p></Panel></div>;
   const GameCard = ({ label, g, note }) => {
     if (!g) return null;
@@ -8105,6 +8596,81 @@ function ExtrasView({ extras, teamsById, leagueRecords, activityLog, season, sta
           <p className="px-4 pb-4 text-[11px]" style={{ color: CHALK_DIM }}>Scanned across every season in this league.</p>
         </Panel>
       )}
+      {consistency.length > 0 && (
+        <Panel className="overflow-hidden" style={{ borderColor: GOLD }}>
+          <SectionTitle accent={GOLD}>Team consistency</SectionTitle>
+          <p className="px-4 pb-2 text-[11px]" style={{ color: CHALK_DIM }}>Standard deviation of run differential per game — same record, different ride. Steadiest teams first.</p>
+          <div className="px-2 pb-2">
+            {consistency.map((c, i) => {
+              const t = teamsById[c.teamId];
+              return (
+                <button key={c.teamId} onClick={() => onOpenTeam && onOpenTeam(c.teamId)} className="w-full flex items-center gap-2 px-2 py-1.5 text-left" style={{ borderTop: i > 0 ? `1px solid ${LINE}` : 'none' }}>
+                  <span className="w-4 text-xs font-mono flex-shrink-0" style={{ color: CHALK_DIM }}>{i + 1}</span>
+                  {t && <TeamMark team={t} size={14} />}
+                  <span className="flex-1 text-sm font-semibold truncate" style={{ color: CHALK }}>{c.teamName}</span>
+                  <span className="text-[10px] uppercase font-bold flex-shrink-0" style={{ color: i === 0 ? WIN : i === consistency.length - 1 ? NEGATIVE : CHALK_DIM }}>{i === 0 ? 'Steadiest' : i === consistency.length - 1 ? 'Rollercoaster' : ''}</span>
+                  <span className="text-sm font-mono font-bold flex-shrink-0" style={{ color: GOLD }}>±{c.stdev.toFixed(1)}</span>
+                </button>
+              );
+            })}
+          </div>
+        </Panel>
+      )}
+      {(draftGrades.length > 0 || draftValue.length > 0) && (
+        <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+          {draftGrades.length > 0 && (
+            <Panel className="overflow-hidden" style={{ borderColor: GOLD }}>
+              <SectionTitle accent={GOLD}>Draft class grades</SectionTitle>
+              <p className="px-4 pb-2 text-[11px]" style={{ color: CHALK_DIM }}>Drafted players' WAR this season, curved against every other team's class.</p>
+              <div className="px-2 pb-2">
+                {draftGrades.map((r, i) => {
+                  const t = teamsById[r.teamId];
+                  return (
+                    <button key={r.teamId} onClick={() => onOpenTeam && onOpenTeam(r.teamId)} className="w-full flex items-center gap-2 px-2 py-1.5 text-left" style={{ borderTop: i > 0 ? `1px solid ${LINE}` : 'none' }}>
+                      {t && <TeamMark team={t} size={14} />}
+                      <span className="flex-1 text-sm font-semibold truncate" style={{ color: CHALK }}>{r.teamName}</span>
+                      <span className="text-[10px] font-mono flex-shrink-0" style={{ color: CHALK_DIM }}>{r.picks.length} pick{r.picks.length === 1 ? '' : 's'}</span>
+                      <span className="text-sm font-mono font-bold flex-shrink-0 w-6 text-center rounded" style={{ color: INK, background: GOLD }}>{r.grade}</span>
+                    </button>
+                  );
+                })}
+              </div>
+            </Panel>
+          )}
+          {draftValue.length > 0 && (
+            <Panel className="overflow-hidden" style={{ borderColor: GOLD }}>
+              <SectionTitle accent={GOLD}>Draft steals</SectionTitle>
+              <p className="px-4 pb-2 text-[11px]" style={{ color: CHALK_DIM }}>Biggest gap between draft slot and what they've actually produced.</p>
+              <div className="px-2 pb-2">
+                {draftValue.slice(0, 8).map((p, i) => (
+                  <button key={p.playerId} onClick={() => onOpenPlayer && onOpenPlayer(p.name)} className="w-full flex items-center gap-2 px-2 py-1.5 text-left" style={{ borderTop: i > 0 ? `1px solid ${LINE}` : 'none' }}>
+                    <span className="w-4 text-xs font-mono flex-shrink-0" style={{ color: CHALK_DIM }}>{i + 1}</span>
+                    <span className="flex-1 text-sm font-semibold truncate" style={{ color: CHALK }}>{p.name}</span>
+                    <span className="text-[10px] font-mono flex-shrink-0" style={{ color: CHALK_DIM }}>Pick #{p.overall}</span>
+                    <span className="text-sm font-mono font-bold flex-shrink-0" style={{ color: GOLD }}>{p.war.toFixed(1)} WAR</span>
+                  </button>
+                ))}
+              </div>
+            </Panel>
+          )}
+        </div>
+      )}
+      {workload.length > 0 && (
+        <Panel className="overflow-hidden" style={{ borderColor: GOLD }}>
+          <SectionTitle accent={GOLD}>Pitcher workload</SectionTitle>
+          <div className="px-2 pb-2">
+            {workload.slice(0, 10).map((p, i) => (
+              <button key={p.playerId} onClick={() => onOpenPlayer && onOpenPlayer(p.name)} className="w-full flex items-center gap-2 px-2 py-1.5 text-left" style={{ borderTop: i > 0 ? `1px solid ${LINE}` : 'none' }}>
+                <span className="w-4 text-xs font-mono flex-shrink-0" style={{ color: CHALK_DIM }}>{i + 1}</span>
+                <span className="flex-1 text-sm font-semibold truncate" style={{ color: CHALK }}>{p.name}</span>
+                <span className="text-[10px] font-mono flex-shrink-0" style={{ color: CHALK_DIM }}>{p.teamName}</span>
+                <span className="text-[10px] font-mono flex-shrink-0" style={{ color: CHALK_DIM }}>{p.appearances} app</span>
+                <span className="text-sm font-mono font-bold flex-shrink-0" style={{ color: GOLD }}>{p.ip.toFixed(1)} IP</span>
+              </button>
+            ))}
+          </div>
+        </Panel>
+      )}
       {activityLog && activityLog.length > 0 && (
         <Panel className="overflow-hidden" style={{ borderColor: GOLD }}>
           <SectionTitle accent={GOLD}>Recent activity</SectionTitle>
@@ -8131,9 +8697,10 @@ const TRANSACTION_TYPES = [
   { value: 'ban', label: 'Bans' },
   { value: 'rebrand', label: 'Rebrands' },
 ];
-function TransactionsView({ season, teamsById, onOpenPlayer, onRemoveActivity }) {
+function TransactionsView({ season, teamsById, onOpenPlayer, onRemoveActivity, onDismissAppeal }) {
   const { hasPermission } = useAuth();
   const isLoggedIn = hasPermission('manageRosters');
+  const appeals = season.appeals || [];
   const [filter, setFilter] = useState('all');
   const activityLog = season.activityLog || [];
 
@@ -8173,6 +8740,30 @@ function TransactionsView({ season, teamsById, onOpenPlayer, onRemoveActivity })
         <SectionTitle accent={PRIMARY}>Transactions</SectionTitle>
         <p className="px-4 pb-4 text-xs" style={{ color: CHALK_DIM }}>Every signing, trade, release, suspension, and ban recorded this season.</p>
       </Panel>
+
+      {isLoggedIn && appeals.length > 0 && (
+        <Panel className="overflow-hidden" style={{ borderColor: NEGATIVE }}>
+          <SectionTitle accent={NEGATIVE}>Pending appeals ({appeals.length})</SectionTitle>
+          <div className="px-2 pb-2">
+            {appeals.map((a, i) => {
+              const t = teamsById[a.teamId];
+              return (
+                <div key={a.id} className="px-2 py-2" style={{ borderTop: i > 0 ? `1px solid ${LINE}` : 'none' }}>
+                  <div className="flex items-center gap-2">
+                    <button onClick={() => onOpenPlayer(a.playerName)} className="flex-1 min-w-0 flex items-center gap-2 text-left">
+                      {t && <TeamMark team={t} size={14} />}
+                      <span className="text-sm font-semibold truncate" style={{ color: CHALK }}>{a.playerName}</span>
+                    </button>
+                    <span className="text-[10px] flex-shrink-0" style={{ color: CHALK_DIM }}>{new Date(a.createdAt).toLocaleDateString()}</span>
+                    <button onClick={() => onDismissAppeal(season.id, a.id)} className="text-[10px] font-bold flex-shrink-0 px-2 py-1 rounded" style={{ background: PANEL2, color: CHALK_DIM }}>Dismiss</button>
+                  </div>
+                  <p className="text-xs mt-1" style={{ color: CHALK_DIM }}>{a.message}</p>
+                </div>
+              );
+            })}
+          </div>
+        </Panel>
+      )}
 
       {(suspendedPlayers.length > 0 || bannedPlayers.length > 0) && (
         <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
@@ -8293,6 +8884,7 @@ function GraphsView({ league, roundHistory, standings, scoringTrend, season, h2h
   const [cat, setCat] = useState('trends');
   const [spotA, setSpotA] = useState(null);
   const [spotB, setSpotB] = useState(null);
+  const [expTeamId, setExpTeamId] = useState(null);
   if (roundHistory.length === 0) return <div className="p-4"><Panel><p className="px-4 py-8 text-sm text-center" style={{ color: CHALK_DIM }}>Enter some scores in the Schedule tab to see trend graphs.</p></Panel></div>;
 
   const chartData = roundHistory.map(snap => {
@@ -8354,6 +8946,19 @@ function GraphsView({ league, roundHistory, standings, scoringTrend, season, h2h
     const rf2 = t.rf * t.rf, ra2 = t.ra * t.ra;
     return { x: rf2 / (rf2 + ra2), y: t.pct, name: t.displayName, id: t.id, color: teamColor(t) };
   });
+
+  // Same Pythagorean expectation as the scatter above, but tracked round by
+  // round for one team — actual wins vs. what the run differential up to
+  // that point predicted, so a hot/cold streak (or genuine improvement)
+  // shows up as the two lines actually diverging or converging over time.
+  const expWinsTeamId = expTeamId || (standings[0] && standings[0].id) || null;
+  const expWinsData = expWinsTeamId ? roundHistory.map(snap => {
+    const t = snap.standings.find(s => s.id === expWinsTeamId);
+    if (!t) return null;
+    const rf2 = t.rf * t.rf, ra2 = t.ra * t.ra;
+    const pythPct = (rf2 + ra2) > 0 ? rf2 / (rf2 + ra2) : 0.5;
+    return { label: snap.label, actual: t.w, expected: Math.round(pythPct * t.gp * 10) / 10 };
+  }).filter(Boolean) : [];
 
   // Player leaders (this season, regular season) for the Players category —
   // reuses the same aggregation Stat Leaders runs, just charted instead of
@@ -8490,6 +9095,30 @@ function GraphsView({ league, roundHistory, standings, scoringTrend, season, h2h
           <p className="text-[11px] px-2 pb-2" style={{ color: CHALK_DIM }}>Above the diagonal = winning more than run differential predicts (often not sustainable). Below it = a better team than the record shows. Tap a dot to open that team.</p>
         </div>
       </Panel>
+
+      {expWinsData.length >= 2 && (
+        <Panel>
+          <SectionTitle right={
+            <select value={expWinsTeamId || ''} onChange={e => setExpTeamId(e.target.value)} className="bg-[#242424] border rounded px-2 py-1 text-xs" style={{ borderColor: LINE, color: CHALK }}>
+              {standings.map(t => <option key={t.id} value={t.id} style={{ background: PANEL2, color: CHALK }}>{t.displayName}</option>)}
+            </select>
+          }>Expected wins by round</SectionTitle>
+          <div className="px-2 pb-2">
+            <ResponsiveContainer width="100%" height={240}>
+              <LineChart data={expWinsData} margin={{ left: -10, right: 12, top: 8 }}>
+                <CartesianGrid stroke={LINE} strokeDasharray="3 3" />
+                <XAxis dataKey="label" tick={{ fill: CHALK_DIM, fontSize: 10 }} interval="preserveStartEnd" />
+                <YAxis tick={{ fill: CHALK_DIM, fontSize: 10 }} allowDecimals={false} />
+                <Tooltip contentStyle={{ background: PANEL2, border: `1px solid ${LINE}`, color: CHALK }} />
+                <Legend wrapperStyle={{ fontSize: 11, color: CHALK_DIM }} />
+                <Line type="monotone" dataKey="actual" name="Actual wins" stroke={PRIMARY} dot={false} strokeWidth={2} />
+                <Line type="monotone" dataKey="expected" name="Expected (Pythagorean)" stroke={GOLD} dot={false} strokeWidth={2} strokeDasharray="4 4" />
+              </LineChart>
+            </ResponsiveContainer>
+            <p className="text-[11px] px-2 pb-2" style={{ color: CHALK_DIM }}>Actual wins pulling ahead of expected = winning the close ones. Falling behind = the run differential says this team is better than its record.</p>
+          </div>
+        </Panel>
+      )}
 
       {season.oddsCache && season.oddsCache.sim && (
         <Panel>
@@ -8897,6 +9526,21 @@ function GlobalSearch({ teamsIndex, league, onOpenTeam, onOpenPlayer, setTab }) 
           )}
         </div>
       )}
+    </div>
+  );
+}
+
+// A site-wide notice, shown to every visitor while the admin has it active.
+// Dismissing it is per-visitor and per-message — a new message (or the same
+// one re-enabled) shows again even if an older one was dismissed.
+function MaintenanceBanner({ banner }) {
+  const [dismissedKey, setDismissedKey] = useState(null);
+  if (!banner || !banner.active || !banner.message || dismissedKey === banner.message) return null;
+  return (
+    <div className="px-4 py-2 flex items-center gap-3" style={{ background: GOLD, color: INK }}>
+      <AlertTriangle size={15} className="flex-shrink-0" />
+      <span className="flex-1 text-sm font-semibold">{banner.message}</span>
+      <button onClick={() => setDismissedKey(banner.message)} className="p-1 flex-shrink-0"><X size={15} /></button>
     </div>
   );
 }
@@ -9493,6 +10137,22 @@ function App() {
       }];
       return { ...s, members, freeAgents, activityLog };
     });
+    persistLeague({ ...league, seasons });
+  };
+  // Anyone can submit an appeal from a suspended/banned player's page — no
+  // login required, this is the one write action a logged-out visitor can
+  // trigger — it just parks a message for an admin to review and act on
+  // (lift the suspension/ban themselves) rather than doing anything
+  // automatically.
+  const submitAppeal = (seasonId, playerId, playerName, teamId, message) => {
+    if (!league || !message.trim()) return;
+    const appeal = { id: uid('appeal'), playerId, playerName, teamId, message: message.trim(), createdAt: Date.now() };
+    const seasons = league.seasons.map(s => s.id === seasonId ? { ...s, appeals: [...(s.appeals || []), appeal] } : s);
+    persistLeague({ ...league, seasons });
+  };
+  const dismissAppeal = (seasonId, appealId) => {
+    if (!league) return;
+    const seasons = league.seasons.map(s => s.id === seasonId ? { ...s, appeals: (s.appeals || []).filter(a => a.id !== appealId) } : s);
     persistLeague({ ...league, seasons });
   };
   const tradePlayer = (fromTeamId, toTeamId, playerId) => {
@@ -10117,15 +10777,20 @@ function App() {
   // name in usernameHistory so anything still referencing it — an old
   // activity log line, an unresolved robloxUserId — still resolves here
   // rather than forking a second identity again.
+  // Also stamps nameOverride so the Roblox auto-sync effect (below) leaves
+  // this name alone from now on — without it, a player whose robloxUserId
+  // is already known would get silently renamed right back to their live
+  // Roblox username on the very next admin visit, undoing this edit.
   const renamePlayer = (entries, newName) => {
     if (!league || !entries || entries.length === 0) return;
     const trimmed = (newName || '').trim();
     if (!trimmed) return;
     const targets = new Set(entries.map(e => `${e.seasonId}:${e.playerId}`));
     const renameIfTarget = (seasonId) => (p) => {
-      if (!targets.has(`${seasonId}:${p.id}`) || p.name === trimmed) return p;
+      if (!targets.has(`${seasonId}:${p.id}`)) return p;
+      if (p.name === trimmed) return p.nameOverride ? p : { ...p, nameOverride: true };
       const history = [...new Set([...(p.usernameHistory || []), p.name])];
-      return { ...p, name: trimmed, usernameHistory: history };
+      return { ...p, name: trimmed, usernameHistory: history, nameOverride: true };
     };
     const seasons = league.seasons.map(s => ({
       ...s,
@@ -10161,11 +10826,14 @@ function App() {
   // name to every roster/free-agent entry sharing that id, across every
   // season, so the whole career (not just the current season) follows the
   // rename instead of splitting into two identities under two names.
+  // Skips any entry a site owner has manually renamed (nameOverride) —
+  // otherwise a manual rename would just get silently overwritten back to
+  // the live Roblox username on the admin's very next visit to the page.
   const syncRobloxRename = (robloxUserId, newName) => {
     if (!league || !robloxUserId || !newName) return;
     let changed = false;
     const renameIfMatch = (p) => {
-      if (p.robloxUserId === robloxUserId && p.name !== newName) {
+      if (p.robloxUserId === robloxUserId && p.name !== newName && !p.nameOverride) {
         changed = true;
         // Keep every past name this identity has shown up under — a roster
         // import (or an old activity log entry) using an old username still
@@ -10267,8 +10935,14 @@ function App() {
   /* ---- league info & staff ---- */
   const updateLeagueInfo = (patch) => {
     if (!league) return;
-    persistLeague({ ...league, info: { ...(league.info || {}), ...patch } });
+    const next = { ...league, info: { ...(league.info || {}), ...patch } };
+    persistLeague(appendAuditEntry(next, 'League info updated', Object.keys(patch).join(', ')));
   };
+  // Standalone audit entry for actions that don't already go through
+  // persistLeague on their own — currently just role grants/changes/revokes,
+  // which write straight to Supabase's admin_roles table (see
+  // ManageAdminsPanel) rather than through the league kv_store.
+  const logAudit = (action, detail) => { if (league) persistLeague(appendAuditEntry(league, action, detail)); };
   const addStaffMember = (name, role) => {
     if (!league) return;
     const member = { id: uid('staff'), name, role };
@@ -10423,6 +11097,22 @@ function App() {
     const seasons = league.seasons.map(s => s.id === activeSeason.id ? withOddsCache({ ...s, games, championTeamId: championTeamId !== undefined ? championTeamId : s.championTeamId }) : s);
     persistLeague({ ...league, seasons });
   };
+  // Bulk score entry: applies every filled-in row from the spreadsheet-style
+  // panel in one pass/one save, instead of one saveScore call (and one
+  // persistLeague race) per game.
+  const bulkSaveScores = (updates) => {
+    if (!league || !activeSeason || !updates || updates.length === 0) return;
+    const byGameId = new Map(updates.map(u => [u.gameId, u]));
+    const updatedGames = activeSeason.games.map(g => {
+      const u = byGameId.get(g.id);
+      if (!u) return g;
+      return { ...g, awayScore: u.awayScore, homeScore: u.homeScore, innings: u.innings, played: true, isForfeit: false, forfeitBy: null, isOngoing: false };
+    });
+    const { games: afterPlayIn } = advancePlayIn(updatedGames);
+    const { games, championTeamId } = advancePlayoffs(afterPlayIn, activeSeason.settings, seedById);
+    const seasons = league.seasons.map(s => s.id === activeSeason.id ? withOddsCache({ ...s, games, championTeamId: championTeamId !== undefined ? championTeamId : s.championTeamId }) : s);
+    persistLeague({ ...league, seasons });
+  };
   const declareForfeit = (gameId, forfeitBy) => {
     if (!league || !activeSeason) return;
     const homeScore = forfeitBy === 'home' ? 0 : 9;
@@ -10537,6 +11227,46 @@ function App() {
   const saveSettings = (settings) => {
     if (!league || !activeSeason) return;
     const seasons = league.seasons.map(s => s.id === activeSeason.id ? { ...s, settings } : s);
+    persistLeague(appendAuditEntry({ ...league, seasons }, 'Season settings updated', activeSeason.name));
+  };
+  // A single, versioned rulebook document — separate from the free-text
+  // League Info description — with a read-only history of past versions so
+  // a change to the rules is traceable, not just silently overwritten.
+  const updateConstitution = (text) => {
+    if (!league) return;
+    const trimmed = (text || '').trim();
+    const prior = league.constitution;
+    const version = prior ? (prior.version || 1) + 1 : 1;
+    const history = prior ? [...(prior.history || []), { version: prior.version || 1, text: prior.text, updatedAt: prior.updatedAt }] : [];
+    persistLeague(appendAuditEntry({ ...league, constitution: { text: trimmed, version, updatedAt: Date.now(), history } }, 'League constitution updated', `v${version}`));
+  };
+  // A site-wide notice for planned downtime — shown as a dismissible banner
+  // to every visitor while active, independent of any one season.
+  const setMaintenanceBanner = (message, active) => {
+    if (!league) return;
+    persistLeague({ ...league, maintenanceBanner: { message: (message || '').trim(), active: !!active } });
+  };
+  // Live draft-day entry: appends one pick at a time to the running board
+  // and, same as the bulk draft-board importer, stamps draftPick straight
+  // onto the matching roster/free-agent entry (or signs them fresh) so it
+  // shows up immediately everywhere draftPick already renders.
+  const addLiveDraftPick = (round, pickInRound, teamId, playerName) => {
+    if (!league || !activeSeason || !teamId || !playerName.trim()) return;
+    const overall = ((activeSeason.liveDraftPicks || []).length) + 1;
+    const draftPick = { round, pickInRound, overall };
+    const pick = { id: uid('pick'), round, pickInRound, overall, teamId, playerName: playerName.trim(), at: Date.now() };
+    const member = activeSeason.members.find(m => m.teamId === teamId);
+    const norm = (s) => (s || '').trim().toLowerCase();
+    const existingIdx = member ? (member.roster || []).findIndex(p => norm(p.name) === norm(playerName)) : -1;
+    const seasons = league.seasons.map(s => {
+      if (s.id !== activeSeason.id) return s;
+      const members = s.members.map(m => {
+        if (m.teamId !== teamId) return m;
+        if (existingIdx >= 0) return { ...m, roster: m.roster.map((p, i) => i === existingIdx ? { ...p, draftPick } : p) };
+        return { ...m, roster: [...(m.roster || []), { ...newPlayer(playerName.trim(), null), draftPick }] };
+      });
+      return { ...s, members, liveDraftPicks: [...(s.liveDraftPicks || []), pick] };
+    });
     persistLeague({ ...league, seasons });
   };
 
@@ -10623,6 +11353,13 @@ function App() {
         }
       });
     });
+    (activeSeason.appeals || []).forEach(a => {
+      items.push({
+        id: `appeal-${a.id}`, type: 'appeal', createdAt: a.createdAt,
+        label: `Appeal from ${a.playerName}`,
+        onClick: () => setTab('transactions'),
+      });
+    });
     return items;
   }, [isLoggedIn, activeSeason, teamsById]);
 
@@ -10656,37 +11393,37 @@ function App() {
     } else if (tab === 'standings') {
       body = <StandingsView standings={standings} updateMemberField={updateMemberField} season={activeSeason} settings={activeSeason.settings} movementById={movementById} onOpenTeam={onOpenTeam} />;
     } else if (tab === 'teams' && isLoggedIn) {
-      body = <TeamsView season={activeSeason} teamsById={teamsById} teamsIndex={teamsIndex} addExistingTeam={addExistingTeamToSeason} createAndAddTeam={createAndAddTeamToSeason} updateMemberField={updateMemberField} updateGlobalTeamField={updateGlobalTeamField} removeMember={removeMember} onOpenTeam={onOpenTeam} importRosterSheet={importRosterSheet} importDraftBoard={importDraftBoard} importStarsSheet={importStarsSheet} addDivision={addDivision} updateDivision={updateDivision} removeDivision={removeDivision} assignMemberDivision={assignMemberDivision} />;
+      body = <TeamsView season={activeSeason} teamsById={teamsById} teamsIndex={teamsIndex} addExistingTeam={addExistingTeamToSeason} createAndAddTeam={createAndAddTeamToSeason} updateMemberField={updateMemberField} updateGlobalTeamField={updateGlobalTeamField} removeMember={removeMember} onOpenTeam={onOpenTeam} importRosterSheet={importRosterSheet} importDraftBoard={importDraftBoard} importStarsSheet={importStarsSheet} addDivision={addDivision} updateDivision={updateDivision} removeDivision={removeDivision} assignMemberDivision={assignMemberDivision} settings={activeSeason.settings} onAddLiveDraftPick={addLiveDraftPick} />;
     } else if (tab === 'roster' && isLoggedIn) {
       body = <RosterManagementView season={activeSeason} teamsById={displayTeamsById} updatePlayerField={updatePlayerField} removePlayer={removePlayer} addPlayer={addPlayer} addPlayersBulk={addPlayersBulk} tradePlayer={tradePlayer} tradePlayers={tradePlayers} proposeTrade={proposeTrade} executeTradeProposal={executeTradeProposal} discardTradeProposal={discardTradeProposal} setPlayerSuspended={setPlayerSuspended} setPlayerBanned={setPlayerBanned} onOpenPlayer={onOpenPlayer} signFreeAgent={signFreeAgent} deleteFreeAgent={deleteFreeAgent} />;
     } else if (tab === 'schedule') {
-      body = <ScheduleView season={activeSeason} settings={activeSeason.settings} saveScore={saveScore} deleteGame={deleteGame} declareForfeit={declareForfeit} setWinnerOverride={setWinnerOverride} teamsById={displayTeamsById} sport={sport} updateGameNotes={updateGameNotes} updateGameStreamUrl={updateGameStreamUrl} saveGamePlayerStats={saveGamePlayerStats} setGameOngoing={setGameOngoing} swapHomeAway={swapHomeAway} />;
+      body = <ScheduleView season={activeSeason} settings={activeSeason.settings} saveScore={saveScore} deleteGame={deleteGame} declareForfeit={declareForfeit} setWinnerOverride={setWinnerOverride} teamsById={displayTeamsById} sport={sport} updateGameNotes={updateGameNotes} updateGameStreamUrl={updateGameStreamUrl} saveGamePlayerStats={saveGamePlayerStats} setGameOngoing={setGameOngoing} swapHomeAway={swapHomeAway} onBulkSaveScores={bulkSaveScores} />;
     } else if (tab === 'stats') {
       body = <StatsView standings={standings} onOpenTeam={onOpenTeam} season={activeSeason} />;
     } else if (tab === 'leaders') {
-      body = <StatLeadersView league={league} season={activeSeason} teamsById={displayTeamsById} onOpenPlayer={onOpenPlayer} leagueLogoUrl={league && league.logoUrl} />;
+      body = <StatLeadersView league={league} season={activeSeason} teamsById={displayTeamsById} onOpenPlayer={onOpenPlayer} leagueLogoUrl={league && league.logoUrl} standings={standings} />;
     } else if (tab === 'awards') {
       body = <AwardsView league={league} season={activeSeason} standings={standings} teamsById={displayTeamsById} addAwardDef={addAwardDef} updateAwardDef={updateAwardDef} removeAwardDef={removeAwardDef} addAwardWinner={addAwardWinner} removeAwardWinnerAt={removeAwardWinnerAt} />;
     } else if (tab === 'transactions') {
-      body = <TransactionsView season={activeSeason} teamsById={displayTeamsById} onOpenPlayer={onOpenPlayer} onRemoveActivity={removeActivityItem} />;
+      body = <TransactionsView season={activeSeason} teamsById={displayTeamsById} onOpenPlayer={onOpenPlayer} onRemoveActivity={removeActivityItem} onDismissAppeal={dismissAppeal} />;
     } else if (tab === 'odds') {
       body = <OddsView season={activeSeason} teamsById={displayTeamsById} standings={standings} settings={activeSeason.settings} onOpenTeam={onOpenTeam} h2hMatrix={h2hMatrix} onStartPlayoffs={startPlayoffs} onClearPlayoffs={clearPlayoffs} onStartPlayIn={startPlayIn} onClearPlayIn={clearPlayIn} onOpenCompare={onOpenCompare} onBackfillOdds={backfillOddsCache} />;
     } else if (tab === 'extras') {
-      body = <ExtrasView extras={extras} teamsById={displayTeamsById} leagueRecords={leagueRecords} activityLog={activeSeason.activityLog || []} season={activeSeason} standings={standings} onRemoveActivity={removeActivityItem} />;
+      body = <ExtrasView extras={extras} teamsById={displayTeamsById} leagueRecords={leagueRecords} activityLog={activeSeason.activityLog || []} season={activeSeason} standings={standings} onRemoveActivity={removeActivityItem} onOpenTeam={onOpenTeam} onOpenPlayer={onOpenPlayer} />;
     } else if (tab === 'graphs') {
       body = <GraphsView league={Object.values(teamsById).filter(t => activeSeason.members.some(m => m.teamId === t.id))} roundHistory={roundHistory} standings={standings} scoringTrend={scoringTrend} season={activeSeason} h2hMatrix={h2hMatrix} onOpenTeam={onOpenTeam} onOpenPlayer={onOpenPlayer} sport={sport} />;
     } else if (tab === 'news') {
       body = <NewsView league={league} season={activeSeason} teamsById={displayTeamsById} addNewsPost={addNewsPost} updateNewsPost={updateNewsPost} removeNewsPost={removeNewsPost} onOpenTeam={onOpenTeam} />;
     } else if (tab === 'info') {
-      body = <LeagueInfoView league={league} updateLeagueInfo={updateLeagueInfo} addStaffMember={addStaffMember} updateStaffMember={updateStaffMember} removeStaffMember={removeStaffMember} addLeagueLink={addLeagueLink} updateLeagueLink={updateLeagueLink} removeLeagueLink={removeLeagueLink} />;
+      body = <LeagueInfoView league={league} updateLeagueInfo={updateLeagueInfo} addStaffMember={addStaffMember} updateStaffMember={updateStaffMember} removeStaffMember={removeStaffMember} addLeagueLink={addLeagueLink} updateLeagueLink={updateLeagueLink} removeLeagueLink={removeLeagueLink} onUpdateConstitution={updateConstitution} />;
     } else if (tab === 'settings') {
-      body = <SettingsView settings={activeSeason.settings} saveSettings={saveSettings} theme={theme} saveTheme={saveTheme} sport={sport} season={activeSeason} teamsById={teamsById} importGames={importGames} addManualGame={addManualGame} generateSchedule={generateSchedule} league={league} onRunKpbImport={runKpbImport} onSyncPlayerIdentities={syncPlayerIdentities} onAddBadgeDef={addBadgeDef} onRemoveBadgeDef={removeBadgeDef} onOpenRegistry={openRegistry} />;
+      body = <SettingsView settings={activeSeason.settings} saveSettings={saveSettings} theme={theme} saveTheme={saveTheme} sport={sport} season={activeSeason} teamsById={teamsById} importGames={importGames} addManualGame={addManualGame} generateSchedule={generateSchedule} league={league} onRunKpbImport={runKpbImport} onSyncPlayerIdentities={syncPlayerIdentities} onAddBadgeDef={addBadgeDef} onRemoveBadgeDef={removeBadgeDef} onOpenRegistry={openRegistry} onLogAudit={logAudit} onSetMaintenanceBanner={setMaintenanceBanner} />;
     } else if (tab === 'team') {
       body = <TeamPage season={activeSeason} settings={activeSeason.settings} team={selectedTeamMerged} standingsRow={selectedStandingsRow} teamsById={displayTeamsById} h2hMatrix={h2hMatrix} championshipCount={selectedTeamId ? (teamChampionshipCounts[selectedTeamId] || 0) : 0} onBack={backFromTeam} onOpenGlobalHistory={(id) => openTeamHistory(id, 'league')} onOpenCompare={onOpenCompare} updatePlayerField={updatePlayerField} removePlayer={removePlayer} addPlayer={addPlayer} addPlayersBulk={addPlayersBulk} tradePlayer={tradePlayer} updateMemberField={updateMemberField} setPlayerSuspended={setPlayerSuspended} setPlayerBanned={setPlayerBanned} onOpenPlayer={onOpenPlayer} onRebrand={rebrandTeam} onClearRebrand={clearRebrand} />;
     } else if (tab === 'compare') {
       body = <ComparePage season={activeSeason} standingsAll={standingsResult.all} teamsById={displayTeamsById} h2hMatrix={h2hMatrix} initialTeamId={compareInitialId} initialTeamBId={compareSecondId} onBack={backFromCompare} onOpenTeam={onOpenTeam} />;
     } else if (tab === 'player') {
-      body = <PlayerPage league={league} teamsById={displayTeamsById} playerName={selectedPlayerName} onBack={backFromPlayer} onOpenTeam={onOpenTeam} onOpenPlayerCompare={onOpenPlayerCompare} activeSeasonId={activeSeason && activeSeason.id} onRemoveActivity={removeActivityItem} onClearAllActivity={removeActivityItems} onBackfillRobloxId={backfillRobloxId} onSyncRobloxRename={syncRobloxRename} onPlayerRenamed={setSelectedPlayerName} onRenamePlayer={renamePlayer} onSetPlayerBadges={setPlayerBadges} onAddPlayerAccolade={addPlayerAccolade} onRemovePlayerAccolade={removePlayerAccolade} onAddPlayerTeamCredit={addPlayerTeamCredit} onRemovePlayerTeamCredit={removePlayerTeamCredit} onUpsertManualStatLine={upsertManualStatLine} onDeleteManualStatLine={deleteManualStatLine} onRemoveTeamPlayed={removeTeamPlayed} />;
+      body = <PlayerPage league={league} teamsById={displayTeamsById} playerName={selectedPlayerName} onBack={backFromPlayer} onOpenTeam={onOpenTeam} onOpenPlayerCompare={onOpenPlayerCompare} activeSeasonId={activeSeason && activeSeason.id} onRemoveActivity={removeActivityItem} onClearAllActivity={removeActivityItems} onBackfillRobloxId={backfillRobloxId} onSyncRobloxRename={syncRobloxRename} onPlayerRenamed={setSelectedPlayerName} onRenamePlayer={renamePlayer} onSetPlayerBadges={setPlayerBadges} onAddPlayerAccolade={addPlayerAccolade} onRemovePlayerAccolade={removePlayerAccolade} onAddPlayerTeamCredit={addPlayerTeamCredit} onRemovePlayerTeamCredit={removePlayerTeamCredit} onUpsertManualStatLine={upsertManualStatLine} onDeleteManualStatLine={deleteManualStatLine} onRemoveTeamPlayed={removeTeamPlayed} onSubmitAppeal={submitAppeal} />;
     } else if (tab === 'playerCompare') {
       body = <PlayerComparePage league={league} teamsById={displayTeamsById} initialNameA={comparePlayerAName} initialNameB={comparePlayerBName} onBack={backFromPlayerCompare} onOpenPlayer={onOpenPlayer} activeSeasonId={activeSeason && activeSeason.id} />;
     }
@@ -10696,6 +11433,7 @@ function App() {
 
   return (
     <div className="min-h-screen flex flex-col" style={{ background: INK, color: CHALK, fontFamily: 'ui-sans-serif, system-ui, sans-serif' }}>
+      {league && <MaintenanceBanner banner={league.maintenanceBanner} />}
       <header className="sticky top-0 z-20" style={{ background: `${PANEL}f2`, backdropFilter: 'blur(10px)', WebkitBackdropFilter: 'blur(10px)', borderBottom: `1px solid ${LINE}` }}>
         <div className="max-w-6xl mx-auto px-4 flex items-center gap-3" style={{ height: 60 }}>
           {screen === 'league' && !FIXED_LEAGUE_ID && <button onClick={backToLeagues} className="p-1 rounded flex-shrink-0" style={{ color: CHALK_DIM }}><ArrowLeft size={18} /></button>}

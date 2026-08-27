@@ -22,13 +22,16 @@ export const ROLE_LABELS = {
   media: 'Media',
 };
 const ALL_PERMS = ['manageAdmins', 'manageSettings', 'manageSeasons', 'manageRosters', 'manageSchedule', 'manageNews', 'manageAwards', 'manageLeagueInfo'];
-// Board of Directors is Commissioner-equivalent — every permission except
-// manageAdmins, which stays Site Owner-exclusive so role-granting can't be
-// handed out any further than that.
+// Board of Directors runs day-to-day league operations at Commissioner
+// scope, minus manageAdmins (Site Owner-exclusive, so role-granting can't be
+// handed out any further than that) and minus manageSettings — season
+// settings, appearance colors, and the external import tools stay a
+// Commissioner/Site Owner call, so Board can't quietly change how the
+// league itself is configured while still running everything on top of it.
 const ROLE_PERMISSIONS = {
   site_owner: ALL_PERMS,
   commissioner: ['manageSettings', 'manageSeasons', 'manageRosters', 'manageSchedule', 'manageNews', 'manageAwards', 'manageLeagueInfo'],
-  board: ['manageSettings', 'manageSeasons', 'manageRosters', 'manageSchedule', 'manageNews', 'manageAwards', 'manageLeagueInfo'],
+  board: ['manageSeasons', 'manageRosters', 'manageSchedule', 'manageNews', 'manageAwards', 'manageLeagueInfo'],
   stat_mod: ['manageSchedule'],
   media: ['manageNews'],
 };
