@@ -3,7 +3,8 @@
 import React, { useState, useEffect, useMemo, useCallback, useRef } from 'react';
 import {
   LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, Legend,
-  ResponsiveContainer, BarChart, Bar, Cell, ScatterChart, Scatter, ReferenceLine, ZAxis
+  ResponsiveContainer, BarChart, Bar, Cell, ScatterChart, Scatter, ReferenceLine, ZAxis,
+  RadarChart, PolarGrid, PolarAngleAxis, PolarRadiusAxis, Radar, PieChart, Pie
 } from 'recharts';
 import {
   Trophy, Calendar, Users, BarChart3, Percent, Plus, Trash2, Upload,
@@ -6359,6 +6360,18 @@ function CompareStatRow({ label, aVal, bVal, aBetter, bBetter, aColor, bColor })
   );
 }
 
+// Scales a pair of same-direction (higher-is-better) values onto a 30-100
+// radar axis — the better of the two lands on 100, not on whatever its raw
+// units happen to be, so wildly different stats (win% vs. runs/game vs. a
+// signed run differential) can share one chart. A tie parks both at 70 so
+// it doesn't read as "both terrible."
+function normPair(a, b) {
+  if (a === b) return [70, 70];
+  const lo = Math.min(a, b), hi = Math.max(a, b);
+  const scale = (v) => 30 + ((v - lo) / (hi - lo)) * 70;
+  return [scale(a), scale(b)];
+}
+
 function ComparePage({ season, standingsAll, teamsById, h2hMatrix, initialTeamId, initialTeamBId, onBack, onOpenTeam }) {
   const [aId, setAId] = useState(initialTeamId || (season.members[0] && season.members[0].teamId) || '');
   const [bId, setBId] = useState(initialTeamBId || (season.members.find(m => m.teamId !== initialTeamId) || {}).teamId || '');
@@ -6366,6 +6379,27 @@ function ComparePage({ season, standingsAll, teamsById, h2hMatrix, initialTeamId
   const teamB = standingsAll.find(t => t.id === bId);
   const colorA = teamA ? teamColor(teamA) : PRIMARY, colorB = teamB ? teamColor(teamB) : NEGATIVE;
   const h2h = aId && bId ? (h2hMatrix[aId] && h2hMatrix[aId][bId]) : null;
+  // Every previous meeting between these two — regular season and playoffs
+  // both, unlike h2hMatrix (which the season-series sentence below reads
+  // from, and which deliberately excludes playoffs to keep that "season
+  // series" framing accurate).
+  const matchups = (aId && bId) ? (season.games || [])
+    .filter(g => g.played && ((g.homeTeamId === aId && g.awayTeamId === bId) || (g.homeTeamId === bId && g.awayTeamId === aId)))
+    .sort((x, y) => (y.date || '').localeCompare(x.date || '')) : [];
+  const radarData = (teamA && teamB) ? (() => {
+    const [winA, winB] = normPair(teamA.pct, teamB.pct);
+    const [offA, offB] = normPair(teamA.rsPerG, teamB.rsPerG);
+    const [defA, defB] = normPair(-teamA.raPerG, -teamB.raPerG);
+    const [diffA, diffB] = normPair(teamA.diff, teamB.diff);
+    const [sosA, sosB] = normPair(teamA.sos ?? 0.5, teamB.sos ?? 0.5);
+    return [
+      { metric: 'Win %', a: winA, b: winB },
+      { metric: 'Offense', a: offA, b: offB },
+      { metric: 'Defense', a: defA, b: defB },
+      { metric: 'Run Diff', a: diffA, b: diffB },
+      { metric: 'Sched.', a: sosA, b: sosB },
+    ];
+  })() : [];
 
   return (
     <div className="p-4 space-y-4">
@@ -6393,6 +6427,23 @@ function ComparePage({ season, standingsAll, teamsById, h2hMatrix, initialTeamId
             </button>
           </div>
           <Panel>
+            <SectionTitle>At a glance</SectionTitle>
+            <div className="px-2 pb-3" style={{ height: 260 }}>
+              <ResponsiveContainer width="100%" height="100%">
+                <RadarChart data={radarData}>
+                  <PolarGrid stroke={LINE} />
+                  <PolarAngleAxis dataKey="metric" tick={{ fill: CHALK_DIM, fontSize: 11 }} />
+                  <PolarRadiusAxis domain={[0, 100]} tick={false} axisLine={false} />
+                  <Radar name={teamA.displayName} dataKey="a" stroke={colorA} fill={colorA} fillOpacity={0.35} />
+                  <Radar name={teamB.displayName} dataKey="b" stroke={colorB} fill={colorB} fillOpacity={0.35} />
+                  <Legend wrapperStyle={{ fontSize: 11, color: CHALK_DIM }} />
+                  <Tooltip contentStyle={{ background: PANEL2, border: `1px solid ${LINE}`, color: CHALK }} formatter={(v) => v.toFixed(0)} />
+                </RadarChart>
+              </ResponsiveContainer>
+            </div>
+            <p className="px-4 pb-3 text-[11px]" style={{ color: CHALK_DIM }}>Each axis is scaled between these two teams only — 100 means better of the two on that measure, not a league-wide max.</p>
+          </Panel>
+          <Panel>
             <div className="py-2">
               <CompareStatRow label="Record" aVal={`${teamA.w}-${teamA.l}`} bVal={`${teamB.w}-${teamB.l}`} aBetter={teamA.pct > teamB.pct} bBetter={teamB.pct > teamA.pct} aColor={colorA} bColor={colorB} />
               <CompareStatRow label="Win %" aVal={teamA.pct.toFixed(3).replace(/^0/, '')} bVal={teamB.pct.toFixed(3).replace(/^0/, '')} aBetter={teamA.pct > teamB.pct} bBetter={teamB.pct > teamA.pct} aColor={colorA} bColor={colorB} />
@@ -6415,6 +6466,29 @@ function ComparePage({ season, standingsAll, teamsById, h2hMatrix, initialTeamId
               <p className="px-4 pb-4 text-sm" style={{ color: CHALK_DIM }}>These teams haven't played each other yet this season.</p>
             )}
           </Panel>
+          {matchups.length > 0 && (
+            <Panel className="overflow-hidden">
+              <SectionTitle>Previous matchups ({matchups.length})</SectionTitle>
+              <div className="px-2 pb-2">
+                {matchups.map((g, i) => {
+                  const aIsHome = g.homeTeamId === aId;
+                  const aScore = aIsHome ? g.homeScore : g.awayScore;
+                  const bScore = aIsHome ? g.awayScore : g.homeScore;
+                  const aWon = Number(aScore) > Number(bScore);
+                  return (
+                    <div key={g.id} className="flex items-center justify-between gap-2 px-2 py-2 text-sm" style={{ borderTop: i > 0 ? `1px solid ${LINE}` : 'none' }}>
+                      <span className="text-xs" style={{ color: CHALK_DIM }}>{g.date || '—'}{g.isPlayoff ? <span style={{ color: GOLD }}> · Playoffs</span> : ''}{g.isForfeit ? <span style={{ color: NEGATIVE }}> · Forfeit</span> : ''}</span>
+                      <span className="font-mono font-bold">
+                        <span style={{ color: aWon ? colorA : CHALK_DIM }}>{teamA.displayName} {aScore}</span>
+                        {' – '}
+                        <span style={{ color: !aWon ? colorB : CHALK_DIM }}>{bScore} {teamB.displayName}</span>
+                      </span>
+                    </div>
+                  );
+                })}
+              </div>
+            </Panel>
+          )}
         </>
       )}
     </div>
@@ -6920,6 +6994,24 @@ function PlayerPage({ league, teamsById, playerName, onBack, onOpenTeam, onOpenP
     return { season: s.seasonName, value: hasBatting ? b.ops : p.era };
   });
 
+  // Counting-stat bars, one group per season — the trend charts above cover
+  // rate stats; this is the "how much" complement to their "how good."
+  const seasonCountingData = seasonSplits.filter(s => !s.isTournament && (s.reg.ab > 0 || s.reg.outs > 0)).map(s => ({
+    season: s.seasonName,
+    h: s.reg.h, hr: s.reg.hr, rbi: s.reg.rbi,
+    k: s.reg.k, bb: s.reg.bbAllowed,
+  }));
+
+  // Career hit-type mix (regular season) — singles are derived the same way
+  // the rest of the site treats them, never entered directly.
+  const hitTypeData = hasBatting ? [
+    { name: 'Singles', value: playerSingles(regTotals) },
+    { name: 'Doubles', value: regTotals.doubles },
+    { name: 'Triples', value: regTotals.triples },
+    { name: 'Home Runs', value: regTotals.hr },
+  ].filter(d => d.value > 0) : [];
+  const HIT_TYPE_COLORS = [PRIMARY, GOLD, WIN, NEGATIVE];
+
   // "Teams played on" needs every team a player suited up for, not just
   // where they ended up — a mid-season trade means seasonsInfo (one entry
   // per season, wherever they currently sit) alone would miss whichever
@@ -7186,6 +7278,48 @@ function PlayerPage({ league, teamsById, playerName, onBack, onOpenTeam, onOpenP
                     <Tooltip contentStyle={{ background: PANEL2, border: `1px solid ${LINE}`, fontSize: 12 }} formatter={(v) => hasBatting ? v.toFixed(3) : v.toFixed(2)} />
                     <Line type="monotone" dataKey="value" stroke={GOLD} dot strokeWidth={2} />
                   </LineChart>
+                </ResponsiveContainer>
+              </div>
+            </Panel>
+          )}
+
+          {seasonCountingData.length >= 2 && (
+            <Panel>
+              <SectionTitle>{hasBatting ? 'Hits, HR & RBI by season' : 'Strikeouts & walks by season'}</SectionTitle>
+              <div className="px-2 pb-4" style={{ height: 200 }}>
+                <ResponsiveContainer width="100%" height="100%">
+                  <BarChart data={seasonCountingData}>
+                    <CartesianGrid stroke={LINE} strokeDasharray="3 3" />
+                    <XAxis dataKey="season" stroke={CHALK_DIM} tick={{ fontSize: 10 }} />
+                    <YAxis stroke={CHALK_DIM} tick={{ fontSize: 10 }} allowDecimals={false} />
+                    <Tooltip contentStyle={{ background: PANEL2, border: `1px solid ${LINE}`, fontSize: 12 }} />
+                    <Legend wrapperStyle={{ fontSize: 11, color: CHALK_DIM }} />
+                    {hasBatting ? [
+                      <Bar key="h" dataKey="h" name="Hits" fill={PRIMARY} radius={[3, 3, 0, 0]} />,
+                      <Bar key="hr" dataKey="hr" name="HR" fill={GOLD} radius={[3, 3, 0, 0]} />,
+                      <Bar key="rbi" dataKey="rbi" name="RBI" fill={WIN} radius={[3, 3, 0, 0]} />,
+                    ] : [
+                      <Bar key="k" dataKey="k" name="Strikeouts" fill={PRIMARY} radius={[3, 3, 0, 0]} />,
+                      <Bar key="bb" dataKey="bb" name="Walks allowed" fill={NEGATIVE} radius={[3, 3, 0, 0]} />,
+                    ]}
+                  </BarChart>
+                </ResponsiveContainer>
+              </div>
+            </Panel>
+          )}
+
+          {hitTypeData.length > 0 && (
+            <Panel>
+              <SectionTitle>Career hit mix</SectionTitle>
+              <div className="px-2 pb-4" style={{ height: 200 }}>
+                <ResponsiveContainer width="100%" height="100%">
+                  <PieChart>
+                    <Pie data={hitTypeData} dataKey="value" nameKey="name" cx="50%" cy="50%" outerRadius={70} label={({ name, value }) => `${name}: ${value}`}>
+                      {hitTypeData.map((d, i) => <Cell key={d.name} fill={HIT_TYPE_COLORS[i % HIT_TYPE_COLORS.length]} />)}
+                    </Pie>
+                    <Tooltip contentStyle={{ background: PANEL2, border: `1px solid ${LINE}`, fontSize: 12 }} />
+                    <Legend wrapperStyle={{ fontSize: 11, color: CHALK_DIM }} />
+                  </PieChart>
                 </ResponsiveContainer>
               </div>
             </Panel>
