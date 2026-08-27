@@ -22,7 +22,7 @@ export const ROLE_LABELS = {
   stat_mod: 'Stat Mod',
   media: 'Media',
 };
-const ALL_PERMS = ['manageAdmins', 'manageSettings', 'manageSeasons', 'manageRosters', 'manageSchedule', 'manageNews', 'manageAwards', 'manageLeagueInfo'];
+const ALL_PERMS = ['manageAdmins', 'manageSettings', 'manageSeasons', 'manageRosters', 'manageRosterMoves', 'manageSchedule', 'manageNews', 'manageAwards', 'manageLeagueInfo'];
 // Board of Directors runs day-to-day league operations at Commissioner
 // scope, minus manageAdmins (Site Owner-exclusive, so role-granting can't be
 // handed out any further than that) and minus manageSettings — season
@@ -31,13 +31,16 @@ const ALL_PERMS = ['manageAdmins', 'manageSettings', 'manageSeasons', 'manageRos
 // league itself is configured while still running everything on top of it.
 //
 // Manager (a team GM) sits between Stat Mod and Board: on top of Stat Mod's
-// schedule access, a Manager can also run their roster — signings, trades,
-// suspensions — through the GM tab, but doesn't reach Board's league-wide
-// levers (seasons, news, awards, league info).
+// schedule access, a Manager can open the GM tab and browse rosters, edit
+// minor player fields, and park a trade as a proposal for review — but
+// manageRosterMoves (signing, releasing, banning, suspending, and executing
+// a trade instantly or out of the pending-proposals queue) stays a
+// Board-and-up call, so a Manager can't move a player without someone at
+// that level confirming it.
 const ROLE_PERMISSIONS = {
   site_owner: ALL_PERMS,
-  commissioner: ['manageSettings', 'manageSeasons', 'manageRosters', 'manageSchedule', 'manageNews', 'manageAwards', 'manageLeagueInfo'],
-  board: ['manageSeasons', 'manageRosters', 'manageSchedule', 'manageNews', 'manageAwards', 'manageLeagueInfo'],
+  commissioner: ['manageSettings', 'manageSeasons', 'manageRosters', 'manageRosterMoves', 'manageSchedule', 'manageNews', 'manageAwards', 'manageLeagueInfo'],
+  board: ['manageSeasons', 'manageRosters', 'manageRosterMoves', 'manageSchedule', 'manageNews', 'manageAwards', 'manageLeagueInfo'],
   manager: ['manageRosters', 'manageSchedule'],
   stat_mod: ['manageSchedule'],
   media: ['manageNews'],

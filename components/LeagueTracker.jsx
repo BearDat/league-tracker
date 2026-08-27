@@ -5669,6 +5669,10 @@ function StarLevelEditor({ value, onChange, disabled = false }) {
 function RosterPanel({ member, color, updatePlayerField, removePlayer, addPlayer, addPlayersBulk, teamOptions, onTrade, onSuspend, onBan, onOpenPlayer, teamGamesPlayed }) {
   const { hasPermission } = useAuth();
   const isLoggedIn = hasPermission('manageRosters');
+  // Signing, releasing, banning, suspending, and moving a player by trade
+  // are all Board-and-up moves — a Manager can still browse rosters and
+  // tweak role/number/position/star level, just not transact players.
+  const canManageMoves = hasPermission('manageRosterMoves');
   const [name, setName] = useState('');
   const [starLevel, setStarLevel] = useState(null);
   const [showBulk, setShowBulk] = useState(false);
@@ -5682,14 +5686,14 @@ function RosterPanel({ member, color, updatePlayerField, removePlayer, addPlayer
 
   return (
     <Panel className="overflow-hidden" style={{ borderColor: color }}>
-      <SectionTitle accent={color} right={isLoggedIn && <button onClick={() => setShowBulk(v => !v)} className="text-[11px] font-semibold" style={{ color }}>{showBulk ? 'Hide import' : 'Import roster'}</button>}>Roster</SectionTitle>
+      <SectionTitle accent={color} right={canManageMoves && <button onClick={() => setShowBulk(v => !v)} className="text-[11px] font-semibold" style={{ color }}>{showBulk ? 'Hide import' : 'Import roster'}</button>}>Roster</SectionTitle>
       {roster.length > 0 && (
         <p className="px-4 -mt-1 pb-2 text-xs flex items-center gap-1" style={{ color: CHALK_DIM }}>
           <Star size={12} style={{ color: GOLD }} /> Team rating: <span className="font-mono font-bold" style={{ color: GOLD }}>{starTotal}★</span> total{starAvg != null ? ` (${starAvg.toFixed(1)}★ avg)` : ''}
         </p>
       )}
 
-      {showBulk && isLoggedIn && (
+      {showBulk && canManageMoves && (
         <div className="px-4 pb-4 space-y-2">
           <p className="text-xs" style={{ color: CHALK_DIM }}>One player per line: <code>Name, Stars, Number, Position</code> — only name is required. Use "R" for unrated.</p>
           <textarea value={bulkText} onChange={e => setBulkText(e.target.value)} rows={4} placeholder={'Jordan Lee, 5.5, 24, SS\nSam Rivera, R, 8, OF'}
@@ -5737,15 +5741,15 @@ function RosterPanel({ member, color, updatePlayerField, removePlayer, addPlayer
               </div>
               {isOpen && (
                 <div className="px-3 pb-3 space-y-2" style={{ borderTop: `1px solid ${LINE}` }}>
-                  <fieldset disabled={!isLoggedIn} className="contents">
                   <div className="flex flex-wrap gap-2 pt-2">
-                    <div><div className="text-[10px] uppercase mb-1" style={{ color: CHALK_DIM }}>Role/slot</div><input value={p.role || ''} onChange={e => updatePlayerField(p.id, 'role', e.target.value)} className="w-16 bg-[#242424] border rounded px-2 py-1 text-xs" style={{ borderColor: LINE, color: CHALK }} /></div>
-                    <div><div className="text-[10px] uppercase mb-1" style={{ color: CHALK_DIM }}>#</div><input value={p.number} onChange={e => updatePlayerField(p.id, 'number', e.target.value)} className="w-14 bg-[#242424] border rounded px-2 py-1 text-xs" style={{ borderColor: LINE, color: CHALK }} /></div>
-                    <div><div className="text-[10px] uppercase mb-1" style={{ color: CHALK_DIM }}>Position</div><input value={p.position} onChange={e => updatePlayerField(p.id, 'position', e.target.value)} className="w-20 bg-[#242424] border rounded px-2 py-1 text-xs" style={{ borderColor: LINE, color: CHALK }} /></div>
+                    <div><div className="text-[10px] uppercase mb-1" style={{ color: CHALK_DIM }}>Role/slot</div><input value={p.role || ''} onChange={e => updatePlayerField(p.id, 'role', e.target.value)} disabled={!isLoggedIn} className="w-16 bg-[#242424] border rounded px-2 py-1 text-xs disabled:opacity-50" style={{ borderColor: LINE, color: CHALK }} /></div>
+                    <div><div className="text-[10px] uppercase mb-1" style={{ color: CHALK_DIM }}>#</div><input value={p.number} onChange={e => updatePlayerField(p.id, 'number', e.target.value)} disabled={!isLoggedIn} className="w-14 bg-[#242424] border rounded px-2 py-1 text-xs disabled:opacity-50" style={{ borderColor: LINE, color: CHALK }} /></div>
+                    <div><div className="text-[10px] uppercase mb-1" style={{ color: CHALK_DIM }}>Position</div><input value={p.position} onChange={e => updatePlayerField(p.id, 'position', e.target.value)} disabled={!isLoggedIn} className="w-20 bg-[#242424] border rounded px-2 py-1 text-xs disabled:opacity-50" style={{ borderColor: LINE, color: CHALK }} /></div>
                   </div>
                   {p.suspended && p.suspensionReason && <p className="text-xs italic" style={{ color: NEGATIVE }}>Suspension reason: {p.suspensionReason}</p>}
                   {p.suspended && p.suspensionGames && <p className="text-xs" style={{ color: CHALK_DIM }}>Length: {p.suspensionGames} game{p.suspensionGames === 1 ? '' : 's'}</p>}
                   {p.banned && p.banReason && <p className="text-xs italic" style={{ color: NEGATIVE }}>Ban reason: {p.banReason}</p>}
+                  {canManageMoves && (
                   <div className="flex items-center justify-between gap-2 flex-wrap">
                     {teamOptions && teamOptions.length > 0 && (
                       <button onClick={() => setTradingId(tradingId === p.id ? null : p.id)} className="text-xs flex items-center gap-1" style={{ color: PRIMARY }}><RefreshCw size={13} /> Trade</button>
@@ -5767,8 +5771,8 @@ function RosterPanel({ member, color, updatePlayerField, removePlayer, addPlayer
                     )}
                     <button onClick={() => { if (confirm(`Release ${p.name} to free agency? Their stats stay intact, and they can be re-signed later.`)) removePlayer(p.id); }} className="text-xs flex items-center gap-1" style={{ color: NEGATIVE }}><Trash2 size={13} /> Release</button>
                   </div>
-                  </fieldset>
-                  {tradingId === p.id && teamOptions && (
+                  )}
+                  {canManageMoves && tradingId === p.id && teamOptions && (
                     <div className="pt-1" style={{ borderTop: `1px solid ${LINE}` }}>
                       <div className="text-[10px] uppercase mb-1.5 mt-2" style={{ color: CHALK_DIM }}>Trade {p.name} to:</div>
                       <div className="flex flex-wrap gap-1.5">
@@ -5785,7 +5789,7 @@ function RosterPanel({ member, color, updatePlayerField, removePlayer, addPlayer
         })}
       </div>
 
-      {isLoggedIn && (
+      {canManageMoves && (
       <div className="px-4 pb-4 flex items-center gap-2">
         <input value={name} onChange={e => setName(e.target.value)} placeholder="Player name" className="flex-1 bg-[#242424] border rounded px-3 py-2 text-sm" style={{ borderColor: LINE, color: CHALK }} />
         <StarLevelEditor value={starLevel} onChange={setStarLevel} />
@@ -5802,6 +5806,8 @@ function RosterPanel({ member, color, updatePlayerField, removePlayer, addPlayer
 // Two-team trade builder: pick both sides, check off whoever's moving from
 // each roster, execute as one atomic multi-player trade.
 function TradeCenter({ season, teamsById, onExecuteTrade, onProposeTrade }) {
+  const { hasPermission } = useAuth();
+  const canManageMoves = hasPermission('manageRosterMoves');
   const [teamAId, setTeamAId] = useState('');
   const [teamBId, setTeamBId] = useState('');
   const [selectedA, setSelectedA] = useState([]);
@@ -5853,11 +5859,11 @@ function TradeCenter({ season, teamsById, onExecuteTrade, onProposeTrade }) {
         )}
         {bothPicked && (
           <div className="flex flex-wrap gap-2">
-            <button onClick={() => { onExecuteTrade(teamAId, teamBId, selectedA, selectedB); setSelectedA([]); setSelectedB([]); }} disabled={!canTrade} className="px-3 py-2 rounded font-bold text-sm flex items-center gap-1 disabled:opacity-40" style={{ background: PRIMARY, color: INK }}><RefreshCw size={14} /> Execute now{canTrade ? ` (${selectedA.length + selectedB.length} players)` : ''}</button>
+            {canManageMoves && <button onClick={() => { onExecuteTrade(teamAId, teamBId, selectedA, selectedB); setSelectedA([]); setSelectedB([]); }} disabled={!canTrade} className="px-3 py-2 rounded font-bold text-sm flex items-center gap-1 disabled:opacity-40" style={{ background: PRIMARY, color: INK }}><RefreshCw size={14} /> Execute now{canTrade ? ` (${selectedA.length + selectedB.length} players)` : ''}</button>}
             <button onClick={() => { onProposeTrade(teamAId, teamBId, selectedA, selectedB); setSelectedA([]); setSelectedB([]); }} disabled={!canTrade} className="px-3 py-2 rounded font-bold text-sm flex items-center gap-1 disabled:opacity-40" style={{ background: 'transparent', color: PRIMARY, border: `1px solid ${PRIMARY}` }}>Save as proposal</button>
           </div>
         )}
-        <p className="text-[11px]" style={{ color: CHALK_DIM }}>&ldquo;Save as proposal&rdquo; parks the trade for review below instead of moving anyone right away.</p>
+        <p className="text-[11px]" style={{ color: CHALK_DIM }}>{canManageMoves ? <>&ldquo;Save as proposal&rdquo; parks the trade for review below instead of moving anyone right away.</> : 'Trades are parked as a proposal for a Board member or above to review and execute.'}</p>
       </div>
     </Panel>
   );
@@ -5869,6 +5875,8 @@ function TradeCenter({ season, teamsById, onExecuteTrade, onProposeTrade }) {
 // proposal was made, not a live roster lookup, so it still reads sensibly
 // even if a listed player has since been moved or renamed elsewhere.
 function PendingTradesPanel({ pendingTrades, teamsById, onExecute, onDiscard }) {
+  const { hasPermission } = useAuth();
+  const canManageMoves = hasPermission('manageRosterMoves');
   if (!pendingTrades || pendingTrades.length === 0) return null;
   return (
     <Panel className="overflow-hidden" style={{ borderColor: GOLD }}>
@@ -5885,7 +5893,7 @@ function PendingTradesPanel({ pendingTrades, teamsById, onExecute, onDiscard }) 
                   {teamB ? <TeamMark team={teamB} size={14} /> : null} {teamB ? teamB.name : 'Unknown team'}
                 </span>
                 <div className="flex items-center gap-2 flex-shrink-0">
-                  <button onClick={() => onExecute(t.id)} className="text-[11px] font-bold px-2.5 py-1 rounded flex items-center gap-1" style={{ background: PRIMARY, color: INK }}><Check size={12} /> Execute</button>
+                  {canManageMoves && <button onClick={() => onExecute(t.id)} className="text-[11px] font-bold px-2.5 py-1 rounded flex items-center gap-1" style={{ background: PRIMARY, color: INK }}><Check size={12} /> Execute</button>}
                   <button onClick={() => { if (confirm('Discard this trade proposal? This does not undo anything since nothing was moved yet.')) onDiscard(t.id); }} className="text-[11px] font-bold px-2.5 py-1 rounded" style={{ color: NEGATIVE, border: `1px solid ${NEGATIVE}` }}>Discard</button>
                 </div>
               </div>
@@ -5902,6 +5910,8 @@ function PendingTradesPanel({ pendingTrades, teamsById, onExecute, onDiscard }) 
 }
 
 function FreeAgentsPanel({ season, teamsById, signFreeAgent, deleteFreeAgent, setPlayerBanned }) {
+  const { hasPermission } = useAuth();
+  const canManageMoves = hasPermission('manageRosterMoves');
   const [signingId, setSigningId] = useState(null);
   const freeAgents = season.freeAgents || [];
   if (freeAgents.length === 0) return null;
@@ -5914,19 +5924,19 @@ function FreeAgentsPanel({ season, teamsById, signFreeAgent, deleteFreeAgent, se
           <div key={p.id} className="flex items-center gap-2 px-2 py-2" style={{ borderTop: i > 0 ? `1px solid ${LINE}` : 'none' }}>
             <span className="flex-1 text-sm font-semibold truncate" style={{ color: p.banned ? NEGATIVE : CHALK }}>{p.name}</span>
             {p.banned && <span className="text-[9px] uppercase font-bold px-1.5 py-0.5 rounded flex-shrink-0" style={{ background: `${NEGATIVE}22`, color: NEGATIVE }}>Banned</span>}
-            {setPlayerBanned && (
+            {setPlayerBanned && canManageMoves && (
               p.banned
                 ? <button onClick={() => setPlayerBanned(p.id, false)} className="text-xs flex items-center gap-1 flex-shrink-0" style={{ color: WIN }}><Check size={13} /> Lift ban</button>
                 : <button onClick={() => { if (confirm(`Ban ${p.name}? They'll disappear from stat leaders until unbanned.`)) { const reason = prompt(`Reason for banning ${p.name}? (optional)`) || ''; setPlayerBanned(p.id, true, reason); } }} className="text-xs flex items-center gap-1 flex-shrink-0" style={{ color: NEGATIVE }}><Ban size={13} /> Ban</button>
             )}
-            {signingId === p.id ? (
+            {canManageMoves && (signingId === p.id ? (
               <select autoFocus defaultValue="" onChange={e => { if (e.target.value) { signFreeAgent(e.target.value, p.id); setSigningId(null); } }} onBlur={() => setSigningId(null)} className="text-xs px-2 py-1.5 rounded" style={{ background: PANEL2, color: CHALK, border: `1px solid ${LINE}` }}>
                 <option value="" disabled>Sign to…</option>
                 {season.members.map(m => <option key={m.teamId} value={m.teamId}>{(teamsById[m.teamId] && teamsById[m.teamId].name) || m.scheduleName}</option>)}
               </select>
             ) : (
               <button onClick={() => setSigningId(p.id)} className="text-[11px] font-bold px-2 py-1.5 rounded flex-shrink-0" style={{ background: `${GOLD}22`, color: GOLD }}>Sign…</button>
-            )}
+            ))}
             <button onClick={() => { if (confirm(`Permanently delete ${p.name} from the free agent pool? This does not affect their existing stats.`)) deleteFreeAgent(p.id); }} className="text-xs flex-shrink-0" style={{ color: CHALK_DIM }} title="Delete permanently"><Trash2 size={13} /></button>
           </div>
         ))}
@@ -5935,6 +5945,7 @@ function FreeAgentsPanel({ season, teamsById, signFreeAgent, deleteFreeAgent, se
   );
 }
 function NewSigningPanel({ season, teamsById, addPlayer, signFreeAgent }) {
+  const { hasPermission } = useAuth();
   const [open, setOpen] = useState(false);
   const [teamId, setTeamId] = useState('');
   const [mode, setMode] = useState('new');
@@ -5942,6 +5953,7 @@ function NewSigningPanel({ season, teamsById, addPlayer, signFreeAgent }) {
   const [starLevel, setStarLevel] = useState(null);
   const [faId, setFaId] = useState('');
   const freeAgents = season.freeAgents || [];
+  if (!hasPermission('manageRosterMoves')) return null;
   const reset = () => { setOpen(false); setTeamId(''); setMode('new'); setName(''); setStarLevel(null); setFaId(''); };
   const submit = () => {
     if (!teamId) return;
