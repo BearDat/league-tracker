@@ -651,7 +651,7 @@ function mergeTeam(globalTeam, member) {
 // starLevel is a plain number (supports 0.5 increments, and can exceed 5 — real
 // sheets go up to ~5.5+) or null, meaning "R" (unrated/reserve).
 function newPlayer(name, starLevel) {
-  return { id: uid('p'), name, starLevel: starLevel === undefined ? null : starLevel, role: '', number: '', position: '' };
+  return { id: uid('p'), name, starLevel: starLevel === undefined ? null : starLevel, role: '' };
 }
 function formatStarLevel(v) { return (v == null || v === 'R') ? 'R' : `${v}★`; }
 // Average roster star level for a team, used as a small strength signal in odds
@@ -676,9 +676,7 @@ function parseRosterText(text) {
     const parts = line.split(',').map(p => p.trim());
     const name = parts[0] || '';
     const starLevel = parseStarValue(parts[1]);
-    const number = parts[2] || '';
-    const position = parts[3] || '';
-    return { name, starLevel, number, position, matched: !!name };
+    return { name, starLevel, matched: !!name };
   });
 }
 // Normalizes a team name for matching purposes: case-insensitive, collapses
@@ -2845,9 +2843,63 @@ function ChampionBanner({ team }) {
   );
 }
 
-function HomeView({ season, teamsById, settings, onOpenTeam, h2hMatrix, sport, onStartPlayoffs, onClearPlayoffs, onStartPlayIn, onClearPlayIn, onOpenCompare, news, onViewNews, onOpenPlayer, onViewLeaders, onViewTransactions }) {
+// Board of Directors get this on Home once they're logged in — Site Owner
+// gets the same panel plus a couple of owner-only rows, rather than two
+// separate screens duplicating most of the same "what needs attention"
+// content. Reuses the notifications the header bell already computes
+// (pending trades, suspensions served, open appeals) instead of
+// re-deriving them here.
+function AdminDashboard({ notifications, staleFreeAgentCount, auditLog, settings, season, onViewGM, onViewTransactions, onViewSettings }) {
+  const { hasPermission, role } = useAuth();
+  if (!hasPermission('manageRosterMoves')) return null;
+  const isSiteOwner = role === 'site_owner';
+  const tradeCount = notifications.filter(n => n.type === 'trade').length;
+  const suspensionCount = notifications.filter(n => n.type === 'suspension').length;
+  const appealCount = notifications.filter(n => n.type === 'appeal').length;
+  const rosterLimit = settings.rosterLimit || 0;
+  const overLimitTeams = rosterLimit > 0 ? (season.members || []).filter(m => (m.roster || []).length > rosterLimit) : [];
+  const hasAnyFlag = tradeCount + suspensionCount + appealCount + overLimitTeams.length + staleFreeAgentCount > 0;
+  const Tile = ({ label, value, color, onClick }) => (
+    <button onClick={onClick} disabled={!onClick} className="text-left w-full rounded disabled:cursor-default">
+      <StatBox label={label} value={value} color={color} />
+    </button>
+  );
+  return (
+    <Panel className="overflow-hidden" style={{ borderColor: GOLD }}>
+      <SectionTitle accent={GOLD}>{isSiteOwner ? 'Site owner dashboard' : 'Board dashboard'}</SectionTitle>
+      <div className="px-4 pb-4 space-y-3">
+        {!hasAnyFlag && <p className="text-sm" style={{ color: CHALK_DIM }}>Nothing needs your attention right now.</p>}
+        <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
+          {tradeCount > 0 && <Tile label="Pending trades" value={tradeCount} color={GOLD} onClick={onViewGM} />}
+          {suspensionCount > 0 && <Tile label="Suspensions to lift" value={suspensionCount} color={NEGATIVE} onClick={onViewGM} />}
+          {appealCount > 0 && <Tile label="Open appeals" value={appealCount} color={NEGATIVE} onClick={onViewTransactions} />}
+          {staleFreeAgentCount > 0 && <Tile label="Free agents in old seasons" value={staleFreeAgentCount} color={CHALK_DIM} onClick={onViewGM} />}
+        </div>
+        {overLimitTeams.length > 0 && (
+          <p className="text-xs" style={{ color: NEGATIVE }}>Over the {rosterLimit}-player roster limit: {overLimitTeams.map(m => m.scheduleName).join(', ')}</p>
+        )}
+        {isSiteOwner && (
+          <div className="pt-2 space-y-2" style={{ borderTop: `1px solid ${LINE}` }}>
+            <button onClick={onViewSettings} className="text-xs font-bold" style={{ color: PRIMARY }}>Manage admins & site settings →</button>
+            {auditLog && auditLog.length > 0 && (
+              <div className="text-xs space-y-1" style={{ color: CHALK_DIM }}>
+                <div className="font-bold uppercase tracking-wide text-[10px]">Recent admin activity</div>
+                {auditLog.slice().reverse().slice(0, 3).map(a => (
+                  <div key={a.id}>{a.action}{a.detail ? ` — ${a.detail}` : ''}</div>
+                ))}
+              </div>
+            )}
+          </div>
+        )}
+      </div>
+    </Panel>
+  );
+}
+
+function HomeView({ season, teamsById, settings, onOpenTeam, h2hMatrix, sport, onStartPlayoffs, onClearPlayoffs, onStartPlayIn, onClearPlayIn, onOpenCompare, news, onViewNews, onOpenPlayer, onViewLeaders, onViewTransactions, notifications, staleFreeAgentCount, auditLog, onViewGM, onViewSettings }) {
+  const dashboard = <AdminDashboard notifications={notifications} staleFreeAgentCount={staleFreeAgentCount} auditLog={auditLog} settings={settings} season={season} onViewGM={onViewGM} onViewTransactions={onViewTransactions} onViewSettings={onViewSettings} />;
   if ((season.games || []).length === 0) {
-    return <div className="p-4"><Panel><p className="px-4 py-8 text-sm text-center" style={{ color: CHALK_DIM }}>Import a schedule to see standings and scores here.</p></Panel></div>;
+    return <div className="p-4 space-y-4">{dashboard}<Panel><p className="px-4 py-8 text-sm text-center" style={{ color: CHALK_DIM }}>Import a schedule to see standings and scores here.</p></Panel></div>;
   }
   const liveStandings = computeStandings(season, teamsById).active;
   const remaining = computeRemaining(season);
@@ -2927,6 +2979,7 @@ function HomeView({ season, teamsById, settings, onOpenTeam, h2hMatrix, sport, o
   return (
     <div className="p-4 space-y-4">
       <style>{`@keyframes lt-live-pulse { 0%, 100% { opacity: 1; } 50% { opacity: 0.3; } }`}</style>
+      {dashboard}
       {season.championTeamId && <ChampionBanner team={teamsById[season.championTeamId]} />}
       {playInGames.length > 0 && (
         <PlayInBracket standings={liveStandings} settings={settings} playInGames={playInGames} teamsById={teamsById} onStart={onStartPlayIn} onClear={onClearPlayIn} onOpenTeam={onOpenTeam} onOpenCompare={onOpenCompare} />
@@ -3613,17 +3666,30 @@ function BadgeManagerPanel({ league, onAddBadgeDef, onRemoveBadgeDef }) {
   );
 }
 
+// A settings group's heading — sits a level above SectionTitle to separate
+// "League Rules" from "Admin Access" etc. without turning every group into
+// its own collapsible (which would cost a click just to see what's there).
+function SettingsGroupHeader({ label }) {
+  return (
+    <div className="pt-2 pb-1 px-1 text-xs font-bold uppercase tracking-widest" style={{ color: CHALK_DIM, borderBottom: `1px solid ${LINE}` }}>{label}</div>
+  );
+}
+
 function SettingsView({ settings, saveSettings, theme, saveTheme, sport, season, teamsById, importGames, addManualGame, generateSchedule, league, onRunKpbImport, onSyncPlayerIdentities, onAddBadgeDef, onRemoveBadgeDef, onOpenRegistry, onLogAudit, onSetMaintenanceBanner }) {
   const { hasPermission, role } = useAuth();
   const isSiteOwner = role === 'site_owner';
   const canManageSettings = hasPermission('manageSettings');
   const canManageSchedule = hasPermission('manageSchedule');
+  const canManageAdmins = hasPermission('manageAdmins');
+  const showImportGroup = canManageSchedule || canManageSettings;
+  const showAdminGroup = isSiteOwner || canManageAdmins;
   return (
     <div className="p-4 space-y-4">
+      {canManageSettings && <SettingsGroupHeader label="League rules & format" />}
       {canManageSettings && (
       <Panel>
         <SectionTitle>Season settings</SectionTitle>
-        <div className="px-4 pb-4 space-y-4 text-sm">
+        <div className="px-4 pb-4 space-y-3 text-sm">
           <label className="flex items-center justify-between gap-2" style={{ color: CHALK }}>
             <span>Playoff spots<div className="text-[11px]" style={{ color: CHALK_DIM }}>How many teams make the postseason</div></span>
             <NumInput value={settings.playoffSpots} min={1} max={64} onChange={v => saveSettings({ ...settings, playoffSpots: v })} w="w-16" />
@@ -3725,21 +3791,6 @@ function SettingsView({ settings, saveSettings, theme, saveTheme, sport, season,
         </div>
       </Panel>
       )}
-      {canManageSchedule && (
-        <ScheduleManagementPanel season={season} settings={settings} importGames={importGames} addManualGame={addManualGame} generateSchedule={generateSchedule} teamsById={teamsById} />
-      )}
-      {canManageSettings && <KpbImportPanel league={league} onRunImport={onRunKpbImport} />}
-      {canManageSettings && <PlayerIdentitySyncPanel onRunSync={onSyncPlayerIdentities} />}
-      <BadgeManagerPanel league={league} onAddBadgeDef={onAddBadgeDef} onRemoveBadgeDef={onRemoveBadgeDef} />
-      {isSiteOwner && (
-        <Panel>
-          <SectionTitle>Team registry</SectionTitle>
-          <div className="px-4 pb-4 space-y-2">
-            <p className="text-xs" style={{ color: CHALK_DIM }}>Create brand-new teams for the site-wide registry, or edit any existing team's colors/logo from one place. Site Owner only.</p>
-            <button onClick={onOpenRegistry} className="px-3 py-2 rounded font-bold text-sm" style={{ background: PRIMARY, color: INK }}>Open team registry</button>
-          </div>
-        </Panel>
-      )}
       {canManageSettings && (
         <Panel>
           <SectionTitle>Odds display</SectionTitle>
@@ -3759,6 +3810,13 @@ function SettingsView({ settings, saveSettings, theme, saveTheme, sport, season,
           </div>
         </Panel>
       )}
+      {showImportGroup && <SettingsGroupHeader label="Data import & sync" />}
+      {canManageSchedule && (
+        <ScheduleManagementPanel season={season} settings={settings} importGames={importGames} addManualGame={addManualGame} generateSchedule={generateSchedule} teamsById={teamsById} />
+      )}
+      {canManageSettings && <KpbImportPanel league={league} onRunImport={onRunKpbImport} />}
+      {canManageSettings && <PlayerIdentitySyncPanel onRunSync={onSyncPlayerIdentities} />}
+      {canManageSettings && <SettingsGroupHeader label="Content" />}
       {canManageSettings && (
         <Panel style={{ borderColor: league && league.maintenanceBanner && league.maintenanceBanner.active ? GOLD : LINE }}>
           <SectionTitle accent={GOLD}>Homepage banner</SectionTitle>
@@ -3772,7 +3830,19 @@ function SettingsView({ settings, saveSettings, theme, saveTheme, sport, season,
           </div>
         </Panel>
       )}
+      <BadgeManagerPanel league={league} onAddBadgeDef={onAddBadgeDef} onRemoveBadgeDef={onRemoveBadgeDef} />
+      {canManageSettings && <SettingsGroupHeader label="Appearance" />}
       <AppearanceSettings theme={theme} saveTheme={saveTheme} />
+      {showAdminGroup && <SettingsGroupHeader label="Admin access" />}
+      {isSiteOwner && (
+        <Panel>
+          <SectionTitle>Team registry</SectionTitle>
+          <div className="px-4 pb-4 space-y-2">
+            <p className="text-xs" style={{ color: CHALK_DIM }}>Create brand-new teams for the site-wide registry, or edit any existing team's colors/logo from one place. Site Owner only.</p>
+            <button onClick={onOpenRegistry} className="px-3 py-2 rounded font-bold text-sm" style={{ background: PRIMARY, color: INK }}>Open team registry</button>
+          </div>
+        </Panel>
+      )}
       <ManageAdminsPanel onLogAudit={onLogAudit} />
       {isSiteOwner && league && league.auditLog && league.auditLog.length > 0 && (
         <Panel className="overflow-hidden">
@@ -4482,9 +4552,9 @@ function computeSeasonLeagueAverages(season, teamsById) {
 function computeSeasonPlayerLeaders(season, teamsById, mode = 'regular') {
   const byPlayer = new Map();
   (season.members || []).forEach(member => {
-    (member.roster || []).forEach(p => { if (!p.banned) byPlayer.set(p.id, { playerId: p.id, name: p.name, teamId: member.teamId, position: p.position || null, rows: [] }); });
+    (member.roster || []).forEach(p => { if (!p.banned) byPlayer.set(p.id, { playerId: p.id, name: p.name, teamId: member.teamId, rows: [] }); });
   });
-  (season.freeAgents || []).forEach(p => { if (!p.banned) byPlayer.set(p.id, { playerId: p.id, name: p.name, teamId: null, position: p.position || null, rows: [] }); });
+  (season.freeAgents || []).forEach(p => { if (!p.banned) byPlayer.set(p.id, { playerId: p.id, name: p.name, teamId: null, rows: [] }); });
   (season.games || []).forEach(g => {
     if (g.isBye || g.isSpringTraining) return;
     if (!!g.isPlayoff !== (mode === 'playoffs')) return;
@@ -4505,7 +4575,7 @@ function computeSeasonPlayerLeaders(season, teamsById, mode = 'regular') {
   });
   const players = [...byPlayer.values()].filter(e => e.rows.length > 0).map(e => {
     const totals = sumPlayerTotals(e.rows);
-    return { playerId: e.playerId, name: e.name, teamId: e.teamId, position: e.position, totals, batting: computeBattingAdvanced(totals), pitching: computePitchingAdvanced(totals) };
+    return { playerId: e.playerId, name: e.name, teamId: e.teamId, totals, batting: computeBattingAdvanced(totals), pitching: computePitchingAdvanced(totals) };
   });
   const leagueOuts = players.reduce((s, p) => s + p.totals.outs, 0);
   const leagueER = players.reduce((s, p) => s + p.totals.er, 0);
@@ -4575,7 +4645,7 @@ function computeCareerLeaders(league, mode = 'regular') {
     const latest = [...entries].sort((a, b) => (a.season.createdAt || 0) - (b.season.createdAt || 0)).pop();
     const totals = sumPlayerTotals(rows);
     players.push({
-      playerId: latest.playerId, name: latest.player.name, teamId: latest.teamId, position: latest.player.position || null,
+      playerId: latest.playerId, name: latest.player.name, teamId: latest.teamId,
       totals, batting: computeBattingAdvanced(totals), pitching: computePitchingAdvanced(totals),
     });
   });
@@ -4625,14 +4695,11 @@ function CustomLeaderboardBuilder({ players, teamsById, onOpenPlayer, leagueLogo
   const [statKey, setStatKey] = useState('ops');
   const [minQualifier, setMinQualifier] = useState(3);
   const [limit, setLimit] = useState(25);
-  const [position, setPosition] = useState('');
   const [sosAdjusted, setSosAdjusted] = useState(false);
-  const positions = useMemo(() => [...new Set(players.map(p => p.position).filter(Boolean))].sort(), [players]);
   const stat = CUSTOM_STAT_OPTIONS.find(s => s.key === statKey) || CUSTOM_STAT_OPTIONS[0];
-  const byPosition = position ? players.filter(p => p.position === position) : players;
-  const pool = stat.qualifier === 'ab' ? byPosition.filter(p => p.totals.ab >= minQualifier)
-    : stat.qualifier === 'ip' ? byPosition.filter(p => p.totals.outs >= minQualifier * 3)
-    : byPosition;
+  const pool = stat.qualifier === 'ab' ? players.filter(p => p.totals.ab >= minQualifier)
+    : stat.qualifier === 'ip' ? players.filter(p => p.totals.outs >= minQualifier * 3)
+    : players;
   // Career rows can span teams/seasons a single season's SOS figure can't
   // speak to, so the adjustment only makes sense for "This Season" scope.
   const sosByTeamId = useMemo(() => {
@@ -4656,15 +4723,6 @@ function CustomLeaderboardBuilder({ players, teamsById, onOpenPlayer, leagueLogo
     <Panel className="overflow-hidden" style={{ borderColor: PRIMARY }}>
       <SectionTitle accent={PRIMARY}>Build a leaderboard</SectionTitle>
       <div className="px-4 pb-3 flex flex-wrap items-end gap-3">
-        {positions.length > 0 && (
-          <label className="flex flex-col gap-1">
-            <span className="text-[10px] uppercase" style={{ color: CHALK_DIM }}>Position</span>
-            <select value={position} onChange={e => setPosition(e.target.value)} className="bg-[#242424] border rounded px-2 py-1.5 text-sm" style={{ borderColor: LINE, color: CHALK }}>
-              <option value="" style={{ background: PANEL2, color: CHALK }}>All positions</option>
-              {positions.map(pos => <option key={pos} value={pos} style={{ background: PANEL2, color: CHALK }}>{pos}</option>)}
-            </select>
-          </label>
-        )}
         <label className="flex flex-col gap-1">
           <span className="text-[10px] uppercase" style={{ color: CHALK_DIM }}>Stat</span>
           <select value={statKey} onChange={e => setStatKey(e.target.value)} className="bg-[#242424] border rounded px-2 py-1.5 text-sm" style={{ borderColor: LINE, color: CHALK }}>
@@ -5671,7 +5729,7 @@ function RosterPanel({ member, color, updatePlayerField, removePlayer, addPlayer
   const isLoggedIn = hasPermission('manageRosters');
   // Signing, releasing, banning, suspending, and moving a player by trade
   // are all Board-and-up moves — a Manager can still browse rosters and
-  // tweak role/number/position/star level, just not transact players.
+  // tweak role/star level, just not transact players.
   const canManageMoves = hasPermission('manageRosterMoves');
   const [name, setName] = useState('');
   const [starLevel, setStarLevel] = useState(null);
@@ -5695,8 +5753,8 @@ function RosterPanel({ member, color, updatePlayerField, removePlayer, addPlayer
 
       {showBulk && canManageMoves && (
         <div className="px-4 pb-4 space-y-2">
-          <p className="text-xs" style={{ color: CHALK_DIM }}>One player per line: <code>Name, Stars, Number, Position</code> — only name is required. Use "R" for unrated.</p>
-          <textarea value={bulkText} onChange={e => setBulkText(e.target.value)} rows={4} placeholder={'Jordan Lee, 5.5, 24, SS\nSam Rivera, R, 8, OF'}
+          <p className="text-xs" style={{ color: CHALK_DIM }}>One player per line: <code>Name, Stars</code> — only name is required. Use "R" for unrated.</p>
+          <textarea value={bulkText} onChange={e => setBulkText(e.target.value)} rows={4} placeholder={'Jordan Lee, 5.5\nSam Rivera, R'}
             className="w-full bg-[#242424] border rounded px-3 py-2 text-sm font-mono" style={{ borderColor: LINE, color: CHALK }} />
           <button onClick={() => setBulkPreview(parseRosterText(bulkText))} disabled={!bulkText.trim()} className="px-3 py-1.5 rounded font-bold text-xs disabled:opacity-40" style={{ background: color, color: INK }}>Preview</button>
           {bulkPreview && (
@@ -5705,7 +5763,7 @@ function RosterPanel({ member, color, updatePlayerField, removePlayer, addPlayer
                 {bulkPreview.map((r, i) => (
                   <div key={i} className="px-3 py-1.5 text-xs flex items-center gap-2">
                     {r.matched ? <Check size={12} style={{ color: WIN }} /> : <X size={12} style={{ color: NEGATIVE }} />}
-                    <span style={{ color: r.matched ? CHALK : CHALK_DIM }}>{r.matched ? `${r.name}${r.number ? ` #${r.number}` : ''}${r.position ? ` (${r.position})` : ''} — ${formatStarLevel(r.starLevel)}` : 'Skipped (no name)'}</span>
+                    <span style={{ color: r.matched ? CHALK : CHALK_DIM }}>{r.matched ? `${r.name} — ${formatStarLevel(r.starLevel)}` : 'Skipped (no name)'}</span>
                   </div>
                 ))}
               </div>
@@ -5728,7 +5786,6 @@ function RosterPanel({ member, color, updatePlayerField, removePlayer, addPlayer
                 <button onClick={() => setExpandedId(isOpen ? null : p.id)} className="flex-1 min-w-0 flex items-center gap-2 text-left">
                   {p.role && <span className="text-[10px] font-mono px-1 rounded flex-shrink-0" style={{ background: PANEL, color: CHALK_DIM }}>{p.role}</span>}
                   <span className="text-sm font-semibold truncate" style={{ color: (p.banned || p.suspended) ? NEGATIVE : CHALK }}>{p.name}</span>
-                  {p.number && <span className="text-xs font-mono flex-shrink-0" style={{ color: CHALK_DIM }}>#{p.number}</span>}
                   {p.banned && <span className="text-[9px] uppercase font-bold px-1.5 py-0.5 rounded flex-shrink-0" style={{ background: `${NEGATIVE}22`, color: NEGATIVE }}>Banned</span>}
                   {p.suspended && (() => {
                     const remaining = p.suspensionGames ? Math.max(0, p.suspensionGames - ((teamGamesPlayed || 0) - (p.suspensionStartGames || 0))) : null;
@@ -5743,8 +5800,6 @@ function RosterPanel({ member, color, updatePlayerField, removePlayer, addPlayer
                 <div className="px-3 pb-3 space-y-2" style={{ borderTop: `1px solid ${LINE}` }}>
                   <div className="flex flex-wrap gap-2 pt-2">
                     <div><div className="text-[10px] uppercase mb-1" style={{ color: CHALK_DIM }}>Role/slot</div><input value={p.role || ''} onChange={e => updatePlayerField(p.id, 'role', e.target.value)} disabled={!isLoggedIn} className="w-16 bg-[#242424] border rounded px-2 py-1 text-xs disabled:opacity-50" style={{ borderColor: LINE, color: CHALK }} /></div>
-                    <div><div className="text-[10px] uppercase mb-1" style={{ color: CHALK_DIM }}>#</div><input value={p.number} onChange={e => updatePlayerField(p.id, 'number', e.target.value)} disabled={!isLoggedIn} className="w-14 bg-[#242424] border rounded px-2 py-1 text-xs disabled:opacity-50" style={{ borderColor: LINE, color: CHALK }} /></div>
-                    <div><div className="text-[10px] uppercase mb-1" style={{ color: CHALK_DIM }}>Position</div><input value={p.position} onChange={e => updatePlayerField(p.id, 'position', e.target.value)} disabled={!isLoggedIn} className="w-20 bg-[#242424] border rounded px-2 py-1 text-xs disabled:opacity-50" style={{ borderColor: LINE, color: CHALK }} /></div>
                   </div>
                   {p.suspended && p.suspensionReason && <p className="text-xs italic" style={{ color: NEGATIVE }}>Suspension reason: {p.suspensionReason}</p>}
                   {p.suspended && p.suspensionGames && <p className="text-xs" style={{ color: CHALK_DIM }}>Length: {p.suspensionGames} game{p.suspensionGames === 1 ? '' : 's'}</p>}
@@ -5909,19 +5964,42 @@ function PendingTradesPanel({ pendingTrades, teamsById, onExecute, onDiscard }) 
   );
 }
 
-function FreeAgentsPanel({ season, teamsById, signFreeAgent, deleteFreeAgent, setPlayerBanned }) {
+function FreeAgentsPanel({ season, teamsById, signFreeAgent, deleteFreeAgent, deleteFreeAgentsBulk, setPlayerBanned }) {
   const { hasPermission } = useAuth();
   const canManageMoves = hasPermission('manageRosterMoves');
   const [signingId, setSigningId] = useState(null);
+  const [selected, setSelected] = useState(() => new Set());
   const freeAgents = season.freeAgents || [];
+  // Selection is keyed by id, so a stale checkbox from a previously-viewed
+  // season can't carry over and silently delete the wrong players.
+  useEffect(() => { setSelected(new Set()); }, [season.id]);
   if (freeAgents.length === 0) return null;
+  const toggle = (id) => setSelected(s => { const n = new Set(s); n.has(id) ? n.delete(id) : n.add(id); return n; });
+  const allSelected = freeAgents.length > 0 && freeAgents.every(p => selected.has(p.id));
+  const deleteSelected = () => {
+    if (selected.size === 0) return;
+    if (confirm(`Permanently delete ${selected.size} free agent${selected.size === 1 ? '' : 's'}? This does not affect their existing stats.`)) {
+      deleteFreeAgentsBulk([...selected]);
+      setSelected(new Set());
+    }
+  };
   return (
     <Panel className="overflow-hidden" style={{ borderColor: GOLD }}>
-      <SectionTitle accent={GOLD}>Free agents ({freeAgents.length})</SectionTitle>
-      <p className="px-4 pb-3 text-xs" style={{ color: CHALK_DIM }}>Released players land here instead of being deleted, so their stats stay on Leaders and their player page. Sign one to a roster to bring them back.</p>
+      <SectionTitle accent={GOLD} right={canManageMoves && deleteFreeAgentsBulk && freeAgents.length > 1 && (
+        <div className="flex items-center gap-2">
+          <label className="flex items-center gap-1 text-[11px] font-semibold" style={{ color: CHALK_DIM }}>
+            <input type="checkbox" checked={allSelected} onChange={e => setSelected(e.target.checked ? new Set(freeAgents.map(p => p.id)) : new Set())} style={{ accentColor: GOLD }} /> Select all
+          </label>
+          {selected.size > 0 && <button onClick={deleteSelected} className="text-[11px] font-bold px-2 py-1 rounded flex items-center gap-1" style={{ background: `${NEGATIVE}22`, color: NEGATIVE }}><Trash2 size={12} /> Delete {selected.size}</button>}
+        </div>
+      )}>Free agents ({freeAgents.length})</SectionTitle>
+      <p className="px-4 pb-3 text-xs" style={{ color: CHALK_DIM }}>Released players land here instead of being deleted, so their stats stay on Leaders and their player page. Sign one to a roster to bring them back, or bulk-delete stale entries from an old season.</p>
       <div className="px-2 pb-3">
         {freeAgents.map((p, i) => (
           <div key={p.id} className="flex items-center gap-2 px-2 py-2" style={{ borderTop: i > 0 ? `1px solid ${LINE}` : 'none' }}>
+            {canManageMoves && deleteFreeAgentsBulk && freeAgents.length > 1 && (
+              <input type="checkbox" checked={selected.has(p.id)} onChange={() => toggle(p.id)} className="flex-shrink-0" style={{ accentColor: GOLD }} />
+            )}
             <span className="flex-1 text-sm font-semibold truncate" style={{ color: p.banned ? NEGATIVE : CHALK }}>{p.name}</span>
             {p.banned && <span className="text-[9px] uppercase font-bold px-1.5 py-0.5 rounded flex-shrink-0" style={{ background: `${NEGATIVE}22`, color: NEGATIVE }}>Banned</span>}
             {setPlayerBanned && canManageMoves && (
@@ -6002,16 +6080,16 @@ function NewSigningPanel({ season, teamsById, addPlayer, signFreeAgent }) {
     </Panel>
   );
 }
-function RosterManagementView({ season, teamsById, updatePlayerField, removePlayer, addPlayer, addPlayersBulk, tradePlayer, tradePlayers, proposeTrade, executeTradeProposal, discardTradeProposal, setPlayerSuspended, setPlayerBanned, onOpenPlayer, signFreeAgent, deleteFreeAgent }) {
+function RosterManagementView({ season, teamsById, updatePlayerField, removePlayer, addPlayer, addPlayersBulk, tradePlayer, tradePlayers, proposeTrade, executeTradeProposal, discardTradeProposal, setPlayerSuspended, setPlayerBanned, onOpenPlayer, signFreeAgent, deleteFreeAgent, deleteFreeAgentsBulk }) {
   const [openTeamId, setOpenTeamId] = useState(null);
   return (
     <div className="p-4 space-y-3">
       <Panel className="overflow-hidden" style={{ borderColor: PRIMARY }}>
         <SectionTitle accent={PRIMARY}>Roster management</SectionTitle>
-        <p className="px-4 pb-4 text-xs" style={{ color: CHALK_DIM }}>Create, trade, remove, and suspend players for any team in the season.</p>
+        <p className="px-4 pb-4 text-xs" style={{ color: CHALK_DIM }}>Create, trade, remove, and suspend players for any team in the season. This follows whichever season you're currently viewing — switch seasons (the layers icon, top right) to clean up an older season's free agent pool.</p>
       </Panel>
       <NewSigningPanel season={season} teamsById={teamsById} addPlayer={addPlayer} signFreeAgent={signFreeAgent} />
-      <FreeAgentsPanel season={season} teamsById={teamsById} signFreeAgent={signFreeAgent} deleteFreeAgent={deleteFreeAgent} setPlayerBanned={setPlayerBanned} />
+      <FreeAgentsPanel season={season} teamsById={teamsById} signFreeAgent={signFreeAgent} deleteFreeAgent={deleteFreeAgent} deleteFreeAgentsBulk={deleteFreeAgentsBulk} setPlayerBanned={setPlayerBanned} />
       <TradeCenter season={season} teamsById={teamsById} onExecuteTrade={tradePlayers} onProposeTrade={proposeTrade} />
       <PendingTradesPanel pendingTrades={season.pendingTrades} teamsById={teamsById} onExecute={executeTradeProposal} onDiscard={discardTradeProposal} />
       {season.members.length === 0 && <Panel><p className="px-4 py-8 text-sm text-center" style={{ color: CHALK_DIM }}>No teams in this season yet — add some in the Teams tab.</p></Panel>}
@@ -7130,8 +7208,6 @@ function PlayerPage({ league, teamsById, playerName, onBack, onOpenTeam, onOpenP
             <h2 className="font-head text-2xl sm:text-3xl font-bold uppercase tracking-tight truncate" style={{ color: '#fff', textShadow: '0 2px 8px rgba(0,0,0,0.4)' }}>{displayName}</h2>
             <div className="flex items-center gap-2 mt-1 flex-wrap">
               {latestTeam ? <button onClick={() => onOpenTeam(latest.teamId)} className="flex items-center gap-1.5 text-sm font-semibold" style={{ color: '#fff' }}><TeamMark team={latestTeam} size={16} /> {latestTeam.name}</button> : <span className="text-sm font-semibold" style={{ color: 'rgba(255,255,255,0.85)' }}>Free Agent</span>}
-              {latest.player.number && <span className="text-xs font-mono" style={{ color: 'rgba(255,255,255,0.75)' }}>#{latest.player.number}</span>}
-              {latest.player.position && <span className="text-xs" style={{ color: 'rgba(255,255,255,0.75)' }}>{latest.player.position}</span>}
             </div>
             {playerBadges.length > 0 && (
               <div className="flex items-center gap-1.5 mt-2 flex-wrap">
@@ -9692,6 +9768,23 @@ function MaintenanceBanner({ banner }) {
   );
 }
 
+// Groups of tab keys that share one top-level nav button, to keep the main
+// nav short — clicking the button lands on the group's first member (or
+// stays put if you're already on one), and SubNav below lets you switch
+// between the group's pages without going back to the main nav.
+const STATS_GROUP = ['stats', 'leaders', 'graphs'];
+const EXTRAS_GROUP = ['extras', 'odds'];
+
+function SubNav({ tab, setTab, items }) {
+  return (
+    <div className="px-4 pt-3 flex flex-wrap gap-2">
+      {items.map(([key, label]) => (
+        <button key={key} onClick={() => setTab(key)} className="px-3 py-1.5 rounded-full text-xs font-bold" style={{ background: tab === key ? PRIMARY : PANEL2, color: tab === key ? INK : CHALK_DIM, border: `1px solid ${tab === key ? PRIMARY : LINE}` }}>{label}</button>
+      ))}
+    </div>
+  );
+}
+
 /* ==================================================================== */
 /* Main App                                                              */
 /* ==================================================================== */
@@ -10181,7 +10274,7 @@ function App() {
   };
   const addPlayersBulk = (teamId, parsedRows) => updateMemberRoster(teamId, roster => [
     ...roster,
-    ...parsedRows.filter(r => r.matched).map(r => ({ ...newPlayer(r.name, r.starLevel), number: r.number, position: r.position })),
+    ...parsedRows.filter(r => r.matched).map(r => newPlayer(r.name, r.starLevel)),
   ]);
   const updatePlayerField = (teamId, playerId, field, value) => updateMemberRoster(teamId, roster => roster.map(p => p.id === playerId ? { ...p, [field]: value } : p));
   // Removing a player never deletes them — they move to the season's free
@@ -10240,6 +10333,15 @@ function App() {
   const deleteFreeAgent = (playerId) => {
     if (!league || !activeSeason) return;
     const seasons = league.seasons.map(s => s.id === activeSeason.id ? { ...s, freeAgents: (s.freeAgents || []).filter(p => p.id !== playerId) } : s);
+    persistLeague({ ...league, seasons });
+  };
+  // Same as deleteFreeAgent but for a whole batch in one write — clearing
+  // out a stale free-agent pool on an old season one-by-one would mean one
+  // persistLeague round-trip per player.
+  const deleteFreeAgentsBulk = (playerIds) => {
+    if (!league || !activeSeason || playerIds.length === 0) return;
+    const idSet = new Set(playerIds);
+    const seasons = league.seasons.map(s => s.id === activeSeason.id ? { ...s, freeAgents: (s.freeAgents || []).filter(p => !idSet.has(p.id)) } : s);
     persistLeague({ ...league, seasons });
   };
   const setPlayerSuspended = (teamId, playerId, suspended, reason, durationGames) => {
@@ -11514,6 +11616,13 @@ function App() {
     });
     return items;
   }, [isLoggedIn, canGM, activeSeason, teamsById]);
+  // Free agents sitting in a season other than the one being viewed — a
+  // nudge toward the bulk-delete tool on the GM tab, since those pools only
+  // grow if nobody ever switches back to clean them out.
+  const staleFreeAgentCount = useMemo(() => {
+    if (!league || !activeSeason) return 0;
+    return league.seasons.filter(s => s.id !== activeSeason.id).reduce((sum, s) => sum + (s.freeAgents || []).length, 0);
+  }, [league, activeSeason]);
 
   if (loading) return <div className="min-h-screen flex items-center justify-center" style={{ background: INK, color: CHALK_DIM }}>Loading…</div>;
 
@@ -11541,13 +11650,13 @@ function App() {
     } else if (!activeSeasonPublic && !isLoggedIn) {
       body = <div className="p-4"><Panel><p className="px-4 py-8 text-sm text-center" style={{ color: CHALK_DIM }}>This season isn't public yet. Check back later, or log in if you're an admin.</p></Panel></div>;
     } else if (tab === 'home') {
-      body = <HomeView season={activeSeason} teamsById={displayTeamsById} settings={activeSeason.settings} onOpenTeam={onOpenTeam} h2hMatrix={h2hMatrix} sport={sport} onStartPlayoffs={startPlayoffs} onClearPlayoffs={clearPlayoffs} onStartPlayIn={startPlayIn} onClearPlayIn={clearPlayIn} onOpenCompare={onOpenCompare} news={league.news || []} onViewNews={() => setTab('news')} onOpenPlayer={onOpenPlayer} onViewLeaders={() => setTab('leaders')} onViewTransactions={() => setTab('transactions')} />;
+      body = <HomeView season={activeSeason} teamsById={displayTeamsById} settings={activeSeason.settings} onOpenTeam={onOpenTeam} h2hMatrix={h2hMatrix} sport={sport} onStartPlayoffs={startPlayoffs} onClearPlayoffs={clearPlayoffs} onStartPlayIn={startPlayIn} onClearPlayIn={clearPlayIn} onOpenCompare={onOpenCompare} news={league.news || []} onViewNews={() => setTab('news')} onOpenPlayer={onOpenPlayer} onViewLeaders={() => setTab('leaders')} onViewTransactions={() => setTab('transactions')} notifications={notifications} staleFreeAgentCount={staleFreeAgentCount} auditLog={league.auditLog} onViewGM={() => setTab('roster')} onViewSettings={() => setTab('settings')} />;
     } else if (tab === 'standings') {
       body = <StandingsView standings={standings} updateMemberField={updateMemberField} season={activeSeason} settings={activeSeason.settings} movementById={movementById} onOpenTeam={onOpenTeam} />;
     } else if (tab === 'teams' && isLoggedIn) {
       body = <TeamsView season={activeSeason} teamsById={teamsById} teamsIndex={teamsIndex} addExistingTeam={addExistingTeamToSeason} createAndAddTeam={createAndAddTeamToSeason} updateMemberField={updateMemberField} updateGlobalTeamField={updateGlobalTeamField} removeMember={removeMember} onOpenTeam={onOpenTeam} importRosterSheet={importRosterSheet} importDraftBoard={importDraftBoard} importStarsSheet={importStarsSheet} addDivision={addDivision} updateDivision={updateDivision} removeDivision={removeDivision} assignMemberDivision={assignMemberDivision} settings={activeSeason.settings} onAddLiveDraftPick={addLiveDraftPick} />;
     } else if (tab === 'roster' && canGM) {
-      body = <RosterManagementView season={activeSeason} teamsById={displayTeamsById} updatePlayerField={updatePlayerField} removePlayer={removePlayer} addPlayer={addPlayer} addPlayersBulk={addPlayersBulk} tradePlayer={tradePlayer} tradePlayers={tradePlayers} proposeTrade={proposeTrade} executeTradeProposal={executeTradeProposal} discardTradeProposal={discardTradeProposal} setPlayerSuspended={setPlayerSuspended} setPlayerBanned={setPlayerBanned} onOpenPlayer={onOpenPlayer} signFreeAgent={signFreeAgent} deleteFreeAgent={deleteFreeAgent} />;
+      body = <RosterManagementView season={activeSeason} teamsById={displayTeamsById} updatePlayerField={updatePlayerField} removePlayer={removePlayer} addPlayer={addPlayer} addPlayersBulk={addPlayersBulk} tradePlayer={tradePlayer} tradePlayers={tradePlayers} proposeTrade={proposeTrade} executeTradeProposal={executeTradeProposal} discardTradeProposal={discardTradeProposal} setPlayerSuspended={setPlayerSuspended} setPlayerBanned={setPlayerBanned} onOpenPlayer={onOpenPlayer} signFreeAgent={signFreeAgent} deleteFreeAgent={deleteFreeAgent} deleteFreeAgentsBulk={deleteFreeAgentsBulk} />;
     } else if (tab === 'schedule') {
       body = <ScheduleView season={activeSeason} settings={activeSeason.settings} saveScore={saveScore} deleteGame={deleteGame} declareForfeit={declareForfeit} setWinnerOverride={setWinnerOverride} teamsById={displayTeamsById} sport={sport} updateGameNotes={updateGameNotes} updateGameStreamUrl={updateGameStreamUrl} saveGamePlayerStats={saveGamePlayerStats} setGameOngoing={setGameOngoing} swapHomeAway={swapHomeAway} onBulkSaveScores={bulkSaveScores} />;
     } else if (tab === 'stats') {
@@ -11628,13 +11737,10 @@ function App() {
             {isLoggedIn && <TabBtn active={tab === 'teams'} onClick={() => setTab('teams')} label="Teams" />}
             {canGM && <TabBtn active={tab === 'roster'} onClick={() => setTab('roster')} label="GM" />}
             <TabBtn active={tab === 'schedule'} onClick={() => setTab('schedule')} label="Schedule" />
-            <TabBtn active={tab === 'stats'} onClick={() => setTab('stats')} label="Stats" />
-            <TabBtn active={tab === 'leaders'} onClick={() => setTab('leaders')} label="Leaders" />
+            <TabBtn active={STATS_GROUP.includes(tab)} onClick={() => setTab(STATS_GROUP.includes(tab) ? tab : 'stats')} label="Stats" />
             <TabBtn active={tab === 'awards'} onClick={() => setTab('awards')} label="Awards" />
             <TabBtn active={tab === 'transactions'} onClick={() => setTab('transactions')} label="Transactions" />
-            <TabBtn active={tab === 'odds'} onClick={() => setTab('odds')} label="Odds" />
-            <TabBtn active={tab === 'extras'} onClick={() => setTab('extras')} label="Extras" />
-            <TabBtn active={tab === 'graphs'} onClick={() => setTab('graphs')} label="Graphs" />
+            <TabBtn active={EXTRAS_GROUP.includes(tab)} onClick={() => setTab(EXTRAS_GROUP.includes(tab) ? tab : 'extras')} label="Extras" />
             <TabBtn active={tab === 'info'} onClick={() => setTab('info')} label="Info" />
             {isLoggedIn && <TabBtn active={tab === 'settings'} onClick={() => setTab('settings')} label="Settings" />}
           </nav>
@@ -11644,6 +11750,8 @@ function App() {
       <main className={`flex-1 ${inSeasonTabs && (activeSeason.games || []).length > 0 ? 'pb-20' : ''}`}>
         <div className="max-w-6xl mx-auto w-full">
           {inSeasonTabs && tab === 'home' && league && <MaintenanceBanner banner={league.maintenanceBanner} />}
+          {STATS_GROUP.includes(tab) && <SubNav tab={tab} setTab={setTab} items={[['stats', 'Team Stats'], ['leaders', 'Leaders'], ['graphs', 'Graphs']]} />}
+          {EXTRAS_GROUP.includes(tab) && <SubNav tab={tab} setTab={setTab} items={[['extras', 'Fun Stats'], ['odds', 'Odds']]} />}
           {body}
         </div>
       </main>
