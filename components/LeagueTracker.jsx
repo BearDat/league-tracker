@@ -2273,7 +2273,7 @@ function PlayInBracket({ standings, settings, playInGames, teamsById, onStart, o
   const winner = winnerId ? teamsById[winnerId] : null;
 
   if (bubble.length < 2 && !hasPlayIn) {
-    return <Panel><SectionTitle>Play-in tournament</SectionTitle><p className="px-4 pb-4 text-sm" style={{ color: CHALK_DIM }}>Not enough bubble teams yet for a play-in bracket.</p></Panel>;
+    return <Panel><SectionTitle>Play-in tournament</SectionTitle><p className="px-4 pb-3 text-sm" style={{ color: CHALK_DIM }}>Not enough bubble teams yet for a play-in bracket.</p></Panel>;
   }
 
   return (
@@ -2332,7 +2332,7 @@ function PlayInBracket({ standings, settings, playInGames, teamsById, onStart, o
           })}
         </div>
       </div>
-      <p className="px-4 pb-4 text-[11px]" style={{ color: CHALK_DIM }}>
+      <p className="px-4 pb-3 text-[11px]" style={{ color: CHALK_DIM }}>
         {hasPlayIn ? 'Score play-in games from the Schedule tab.' : `Seeded from teams ranked #${settings.playoffSpots} through #${settings.playoffSpots + playInTeams - 1} in the standings.`}
       </p>
     </Panel>
@@ -2350,7 +2350,7 @@ function BracketView({ standings, settings, playoffGames, teamsById, onStart, on
 
   if (n < 2 && !hasPlayoffs) {
     return <Panel><SectionTitle>Playoffs</SectionTitle>
-      <p className="px-4 pb-4 text-sm" style={{ color: CHALK_DIM }}>Need at least 2 teams and 2 playoff spots to build a bracket.</p></Panel>;
+      <p className="px-4 pb-3 text-sm" style={{ color: CHALK_DIM }}>Need at least 2 teams and 2 playoff spots to build a bracket.</p></Panel>;
   }
 
   let previewRound1 = [];
@@ -2425,7 +2425,7 @@ function BracketView({ standings, settings, playoffGames, teamsById, onStart, on
           })}
         </div>
       </div>
-      <p className="px-4 pb-4 text-[11px]" style={{ color: CHALK_DIM }}>
+      <p className="px-4 pb-3 text-[11px]" style={{ color: CHALK_DIM }}>
         {hasPlayoffs
           ? 'Score playoff games from the Schedule tab — later rounds fill in automatically as each round finishes.'
           : `Seeded by current standings (${n} of ${playoffSpots} spot${playoffSpots === 1 ? '' : 's'} filled). Generating locks in the bracket and adds real games to your schedule.`}
@@ -2445,7 +2445,7 @@ function LeaguesView({ index, onOpen, onCreate, onDelete, onRename, onRefresh, l
   const [renamingId, setRenamingId] = useState(null);
   const [renameVal, setRenameVal] = useState('');
   return (
-    <div className="p-4 space-y-4">
+    <div className="p-3 space-y-3">
       {loadError && (
         <div className="flex items-center gap-2 px-3 py-2 rounded-lg text-sm" style={{ background: 'rgba(251,113,102,0.12)', color: NEGATIVE, border: `1px solid ${NEGATIVE}` }}>
           <AlertTriangle size={15} /> {loadError}
@@ -2461,7 +2461,7 @@ function LeaguesView({ index, onOpen, onCreate, onDelete, onRename, onRefresh, l
       </button>
       <Panel className="overflow-hidden" style={{ borderColor: PRIMARY }}>
         <SectionTitle accent={PRIMARY}>Start a new league</SectionTitle>
-        <div className="px-4 pb-4 space-y-2">
+        <div className="px-4 pb-3 space-y-2">
           <input value={newName} onChange={e => setNewName(e.target.value)} placeholder="e.g. Riverside Rec League"
             className="w-full bg-[#242424] border rounded px-3 py-2 text-sm" style={{ borderColor: LINE, color: CHALK }} />
           <select value={newSport} onChange={e => setNewSport(e.target.value)} className="w-full bg-[#242424] border rounded px-2 py-2 text-sm" style={{ borderColor: LINE, color: CHALK }}>
@@ -2569,24 +2569,24 @@ function TeamRegistryView({ teamsIndex, teamsById, onBack, onCreate, onOpenHisto
     try { setSyncResult(await onSyncTeams()); } finally { setSyncing(false); }
   };
   return (
-    <div className="p-4 space-y-4">
+    <div className="p-3 space-y-3">
       <button onClick={onBack} className="flex items-center gap-1 text-sm" style={{ color: CHALK_DIM }}><ArrowLeft size={14} /> Back</button>
       {canCreate && (
       <Panel className="overflow-hidden" style={{ borderColor: PRIMARY }}>
         <SectionTitle accent={PRIMARY}>Create a team</SectionTitle>
-        <div className="flex gap-2 px-4 pb-4">
+        <div className="flex gap-2 px-4 pb-3">
           <input value={name} onChange={e => setName(e.target.value)} placeholder="Team name" className="flex-1 bg-[#242424] border rounded px-3 py-2 text-sm" style={{ borderColor: LINE, color: CHALK }} />
           <button onClick={() => { if (name.trim()) { onCreate(name.trim()); setName(''); } }} className="px-3 py-2 rounded font-bold text-sm flex items-center gap-1" style={{ background: PRIMARY, color: INK }}>
             <Plus size={16} /> Add
           </button>
         </div>
-        <p className="px-4 pb-4 text-xs" style={{ color: CHALK_DIM }}>Site Owner only. Teams created here can be added to any season of any league, keep their colors and logos everywhere they're used, and keep one history across all of them.</p>
+        <p className="px-4 pb-3 text-xs" style={{ color: CHALK_DIM }}>Site Owner only. Teams created here can be added to any season of any league, keep their colors and logos everywhere they're used, and keep one history across all of them.</p>
       </Panel>
       )}
       {canCreate && (
       <Panel className="overflow-hidden" style={{ borderColor: GOLD }}>
         <SectionTitle accent={GOLD}>Sync teams from seasons</SectionTitle>
-        <div className="px-4 pb-4 space-y-2">
+        <div className="px-4 pb-3 space-y-2">
           <p className="text-xs" style={{ color: CHALK_DIM }}>Makes sure every team that's ever played a current or past season is in this registry, and merges any duplicates (e.g. two entries for the same team created by an import) into one — the merged team's seasons, games, awards and credits all move to the survivor, so its History shows everything it actually played.</p>
           <button onClick={runSync} disabled={syncing} className="px-3 py-2 rounded font-bold text-sm disabled:opacity-50" style={{ background: GOLD, color: INK }}>{syncing ? 'Syncing…' : 'Sync now'}</button>
           {syncResult && (
@@ -2681,7 +2681,7 @@ function TeamHistoryPage({ team, history, onBack, loading }) {
   const totalGp = totalW + totalL;
   const championships = history.filter(h => h.champion).length;
   return (
-    <div className="p-4 space-y-4">
+    <div className="p-3 space-y-3">
       <button onClick={onBack} className="flex items-center gap-1 text-sm" style={{ color: CHALK_DIM }}><ArrowLeft size={14} /> Back</button>
       <Panel>
         <div className="p-4 flex items-center gap-4" style={{ borderBottom: `1px solid ${LINE}` }}>
@@ -2739,11 +2739,11 @@ function SeasonsView({ league, viewingSeasonId, onBack, onSwitch, onSetDefault, 
   };
 
   return (
-    <div className="p-4 space-y-4">
+    <div className="p-3 space-y-3">
       <button onClick={onBack} className="flex items-center gap-1 text-sm" style={{ color: CHALK_DIM }}><ArrowLeft size={14} /> Back</button>
       <Panel className="overflow-hidden" style={{ borderColor: PRIMARY }}>
         <SectionTitle accent={PRIMARY}>League logo</SectionTitle>
-        <div className="px-4 pb-4 flex items-center gap-3">
+        <div className="px-4 pb-3 flex items-center gap-3">
           {league.logoUrl ? <img src={league.logoUrl} alt="" className="w-14 h-14 object-contain rounded-lg" style={{ background: PANEL2, border: `1px solid ${LINE}` }} /> : <div className="w-14 h-14 rounded-lg flex items-center justify-center" style={{ background: PANEL2, border: `1px solid ${LINE}` }}><Trophy size={22} style={{ color: CHALK_DIM }} /></div>}
           {isLoggedIn && (
             <div className="flex items-center gap-2">
@@ -2759,7 +2759,7 @@ function SeasonsView({ league, viewingSeasonId, onBack, onSwitch, onSetDefault, 
       {isLoggedIn && (
         <Panel className="overflow-hidden" style={{ borderColor: PRIMARY }}>
           <SectionTitle accent={PRIMARY}>Start a new season</SectionTitle>
-          <div className="px-4 pb-4 space-y-2">
+          <div className="px-4 pb-3 space-y-2">
             <input value={newName} onChange={e => setNewName(e.target.value)} placeholder="e.g. 2026 Fall Season" className="w-full bg-[#242424] border rounded px-3 py-2 text-sm" style={{ borderColor: LINE, color: CHALK }} />
             <label className="flex items-center gap-2 text-xs" style={{ color: CHALK_DIM }}>
               <input type="checkbox" checked={copyRoster} onChange={e => setCopyRoster(e.target.checked)} style={{ accentColor: PRIMARY }} /> Bring over teams from the current season (stats reset to 0)
@@ -2867,7 +2867,7 @@ function AdminDashboard({ notifications, staleFreeAgentCount, auditLog, settings
   return (
     <Panel className="overflow-hidden" style={{ borderColor: GOLD }}>
       <SectionTitle accent={GOLD}>{isSiteOwner ? 'Site owner dashboard' : 'Board dashboard'}</SectionTitle>
-      <div className="px-4 pb-4 space-y-3">
+      <div className="px-4 pb-3 space-y-3">
         {!hasAnyFlag && <p className="text-sm" style={{ color: CHALK_DIM }}>Nothing needs your attention right now.</p>}
         <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
           {tradeCount > 0 && <Tile label="Pending trades" value={tradeCount} color={GOLD} onClick={onViewGM} />}
@@ -2899,7 +2899,7 @@ function AdminDashboard({ notifications, staleFreeAgentCount, auditLog, settings
 function HomeView({ season, teamsById, settings, onOpenTeam, h2hMatrix, sport, onStartPlayoffs, onClearPlayoffs, onStartPlayIn, onClearPlayIn, onOpenCompare, news, onViewNews, onOpenPlayer, onViewLeaders, onViewTransactions, notifications, staleFreeAgentCount, auditLog, onViewGM, onViewSettings }) {
   const dashboard = <AdminDashboard notifications={notifications} staleFreeAgentCount={staleFreeAgentCount} auditLog={auditLog} settings={settings} season={season} onViewGM={onViewGM} onViewTransactions={onViewTransactions} onViewSettings={onViewSettings} />;
   if ((season.games || []).length === 0) {
-    return <div className="p-4 space-y-4">{dashboard}<Panel><p className="px-4 py-8 text-sm text-center" style={{ color: CHALK_DIM }}>Import a schedule to see standings and scores here.</p></Panel></div>;
+    return <div className="p-3 space-y-3">{dashboard}<Panel><p className="px-4 py-8 text-sm text-center" style={{ color: CHALK_DIM }}>Import a schedule to see standings and scores here.</p></Panel></div>;
   }
   const liveStandings = computeStandings(season, teamsById).active;
   const remaining = computeRemaining(season);
@@ -2977,7 +2977,7 @@ function HomeView({ season, teamsById, settings, onOpenTeam, h2hMatrix, sport, o
   );
 
   return (
-    <div className="p-4 space-y-4">
+    <div className="p-3 space-y-3">
       <style>{`@keyframes lt-live-pulse { 0%, 100% { opacity: 1; } 50% { opacity: 0.3; } }`}</style>
       {dashboard}
       {season.championTeamId && <ChampionBanner team={teamsById[season.championTeamId]} />}
@@ -3060,7 +3060,7 @@ function HomeView({ season, teamsById, settings, onOpenTeam, h2hMatrix, sport, o
         return (
           <Panel className="overflow-hidden" style={{ borderColor: GOLD }}>
             <SectionTitle accent={GOLD}>Hot &amp; cold</SectionTitle>
-            <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 px-3 pb-4">
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 px-3 pb-3">
               <StreakCol title="Win streaks" color={WIN} rows={hotTeams} renderRow={t => (
                 <button key={t.id} onClick={() => onOpenTeam(t.id)} className="w-full flex items-center justify-between px-2 py-1 text-xs">
                   <span className="flex items-center gap-1.5 truncate" style={{ color: CHALK }}><TeamMark team={t} size={13} /> {t.displayName}</span>
@@ -3090,11 +3090,11 @@ function HomeView({ season, teamsById, settings, onOpenTeam, h2hMatrix, sport, o
         );
       })()}
 
-      <div className="grid grid-cols-1 lg:grid-cols-3 gap-4 items-start">
-      <div className="lg:col-span-2 space-y-4">
+      <div className="grid grid-cols-1 lg:grid-cols-3 gap-3 items-start">
+      <div className="lg:col-span-2 space-y-3">
       <Panel>
         <SectionTitle>Around the league</SectionTitle>
-        <div className="grid grid-cols-1 sm:grid-cols-2 gap-2 px-3 pb-4">
+        <div className="grid grid-cols-1 sm:grid-cols-2 gap-2 px-3 pb-3">
           {liveStandings.map(t => {
             const teamGames = allGamesChrono.filter(g => g.homeTeamId === t.id || g.awayTeamId === t.id);
             const played = teamGames.filter(g => g.played);
@@ -3138,7 +3138,7 @@ function HomeView({ season, teamsById, settings, onOpenTeam, h2hMatrix, sport, o
 
       <Panel>
         <SectionTitle>Standings</SectionTitle>
-        <div className="overflow-x-auto px-2 pb-4">
+        <div className="overflow-x-auto px-2 pb-3">
           <table className="w-full text-sm" style={{ color: CHALK }}>
             <thead><tr className="text-[10px] uppercase" style={{ color: CHALK_DIM }}>
               <th className="text-left px-2 py-1">#</th><th className="text-left px-2 py-1">Team</th><th className="px-2 py-1">W-L</th><th className="px-2 py-1">PCT</th><th className="px-2 py-1">GB</th>
@@ -3162,7 +3162,7 @@ function HomeView({ season, teamsById, settings, onOpenTeam, h2hMatrix, sport, o
           </table>
         </div>
         {(liveStandings.some(t => (clinchSymbols[t.id] || []).length > 0)) && (
-          <p className="px-4 pb-4 text-[11px]" style={{ color: CHALK_DIM }}>
+          <p className="px-4 pb-3 text-[11px]" style={{ color: CHALK_DIM }}>
             <span style={{ color: WIN }}>x</span>-clinched playoff spot &nbsp; <span style={{ color: GOLD }}>y</span>-clinched #1 seed &nbsp; <span style={{ color: NEGATIVE }}>z</span>-eliminated
           </p>
         )}
@@ -3174,7 +3174,7 @@ function HomeView({ season, teamsById, settings, onOpenTeam, h2hMatrix, sport, o
       {playoffGames.length === 0 && (
         <Panel className="overflow-hidden" style={{ borderColor: GOLD }}>
           <SectionTitle accent={GOLD}>Clinch &amp; elimination watch</SectionTitle>
-          <div className="px-4 pb-4 space-y-3">
+          <div className="px-4 pb-3 space-y-3">
             {clinched.length > 0 && (
               <div className="space-y-1">
                 {clinched.map(t => { const d = describeClinchElim(t, clinchElim[t.id], t.rank, settings.playoffSpots, season, teamsById, bubbleOutTeam); return <p key={t.id} className="text-sm" style={{ color: d.color }}>{d.text}</p>; })}
@@ -3198,7 +3198,7 @@ function HomeView({ season, teamsById, settings, onOpenTeam, h2hMatrix, sport, o
       {playoffGames.length === 0 && seedScenarios.length > 0 && (
         <Panel className="overflow-hidden" style={{ borderColor: GOLD }}>
           <SectionTitle accent={GOLD}>Seed scenarios</SectionTitle>
-          <div className="px-4 pb-4 space-y-3">
+          <div className="px-4 pb-3 space-y-3">
             {Object.entries(seedScenarios.reduce((acc, s) => { (acc[s.group] = acc[s.group] || []).push(s); return acc; }, {})).map(([group, list]) => (
               <div key={group} className="space-y-1">
                 <div className="text-[10px] uppercase font-bold" style={{ color: PRIMARY }}>{group}</div>
@@ -3206,11 +3206,11 @@ function HomeView({ season, teamsById, settings, onOpenTeam, h2hMatrix, sport, o
               </div>
             ))}
           </div>
-          <p className="px-4 pb-4 text-[11px]" style={{ color: CHALK_DIM }}>"What needs to happen" for the #1 seed, a 1st-round bye (if the bracket has one), and each division title.</p>
+          <p className="px-4 pb-3 text-[11px]" style={{ color: CHALK_DIM }}>"What needs to happen" for the #1 seed, a 1st-round bye (if the bracket has one), and each division title.</p>
         </Panel>
       )}
       </div>
-      <div className="space-y-4">
+      <div className="space-y-3">
         {newsPanel}
         {leadersPanel}
         {transactionsPanel}
@@ -3265,7 +3265,7 @@ function StandingsView({ standings, updateMemberField, season, settings, movemen
     URL.revokeObjectURL(url);
   };
   return (
-    <div className="p-4 space-y-4">
+    <div className="p-3 space-y-3">
       <div className="flex justify-end">
         <button onClick={downloadCsv} className="text-[11px] font-semibold flex items-center gap-1" style={{ color: PRIMARY }}><Save size={12} /> Export full stats CSV</button>
       </div>
@@ -3281,7 +3281,7 @@ function StandingsView({ standings, updateMemberField, season, settings, movemen
           {divisionGroups.map(g => (
             <Panel key={g.division.id}>
               <SectionTitle>{g.division.conference ? `${g.division.conference} — ${g.division.name}` : g.division.name}</SectionTitle>
-              <div className="overflow-x-auto px-2 pb-4">
+              <div className="overflow-x-auto px-2 pb-3">
                 <table className="w-full text-sm border-separate" style={{ color: CHALK, borderSpacing: 0 }}>
                   <thead><tr className="text-[10px] font-bold uppercase tracking-wide" style={{ color: CHALK_DIM, borderBottom: `2px solid ${PRIMARY}` }}>
                     <th className="text-left px-2 py-2">Team</th><th className="px-2 py-2">W</th><th className="px-2 py-2">L</th><th className="px-2 py-2">PCT</th><th className="px-2 py-2">GB</th><th className="px-2 py-2">Strk</th>
@@ -3322,7 +3322,7 @@ function StandingsView({ standings, updateMemberField, season, settings, movemen
                   </div>
                 ))}
               </div>
-              <p className="px-4 pb-4 text-[11px]" style={{ color: CHALK_DIM }}>Assign these to a division from the Teams tab.</p>
+              <p className="px-4 pb-3 text-[11px]" style={{ color: CHALK_DIM }}>Assign these to a division from the Teams tab.</p>
             </Panel>
           )}
         </>
@@ -3336,7 +3336,7 @@ function StandingsView({ standings, updateMemberField, season, settings, movemen
         }>
           Standings
         </SectionTitle>
-        <div className="overflow-x-auto px-2 pb-4">
+        <div className="overflow-x-auto px-2 pb-3">
           <table className="w-full text-sm border-separate" style={{ color: CHALK, borderSpacing: 0 }}>
             <thead><tr className="text-[10px] font-bold uppercase tracking-wide" style={{ color: CHALK_DIM, borderBottom: `2px solid ${PRIMARY}` }}>
               <th className="text-center px-1.5 py-2 w-6">#</th><th className="text-left px-2 py-2"></th><th className="text-left px-2 py-2">Team</th><th className="px-2 py-2">GP</th><th className="px-2 py-2">W</th><th className="px-2 py-2">L</th>
@@ -3378,13 +3378,13 @@ function StandingsView({ standings, updateMemberField, season, settings, movemen
             </tbody>
           </table>
         </div>
-        {editBaseline && <p className="px-4 pb-4 text-xs" style={{ color: CHALK_DIM }}>Starting record is added on top of results from played schedule games.</p>}
+        {editBaseline && <p className="px-4 pb-3 text-xs" style={{ color: CHALK_DIM }}>Starting record is added on top of results from played schedule games.</p>}
         {(standings.some(t => (clinchSymbols[t.id] || []).length > 0)) && (
           <p className="px-4 pb-2 text-[11px]" style={{ color: CHALK_DIM }}>
             <span style={{ color: WIN }}>x</span>-clinched playoff spot &nbsp; <span style={{ color: GOLD }}>y</span>-clinched #1 seed &nbsp; <span style={{ color: NEGATIVE }}>z</span>-eliminated
           </p>
         )}
-        <p className="px-4 pb-4 text-[11px]" style={{ color: CHALK_DIM }}>Movement compares to standings after the previous round.</p>
+        <p className="px-4 pb-3 text-[11px]" style={{ color: CHALK_DIM }}>Movement compares to standings after the previous round.</p>
       </Panel>
       )}
     </div>
@@ -3403,7 +3403,7 @@ function AppearanceSettings({ theme, saveTheme }) {
   return (
     <Panel>
       <SectionTitle>Appearance</SectionTitle>
-      <div className="px-4 pb-4 space-y-4 text-sm">
+      <div className="px-4 pb-3 space-y-3 text-sm">
         <p className="text-xs" style={{ color: CHALK_DIM }}>Sets the default theme for visitors who haven't picked their own with the header toggle. Changes apply everywhere in the app immediately, and stick across leagues and seasons.</p>
         <div className="flex gap-2">
           {[['dark', 'Dark mode'], ['light', 'Light mode']].map(([key, label]) => (
@@ -3486,7 +3486,7 @@ function ManageAdminsPanel({ onLogAudit }) {
   return (
     <Panel className="overflow-hidden" style={{ borderColor: GOLD }}>
       <SectionTitle accent={GOLD}>Manage admins</SectionTitle>
-      <div className="px-4 pb-4 space-y-3">
+      <div className="px-4 pb-3 space-y-3">
         <p className="text-xs" style={{ color: CHALK_DIM }}>
           Create the account itself in the Supabase dashboard (Authentication → Users → Add user, email <code>username@admin.local</code>), copy its User UID, then grant it a role here.
         </p>
@@ -3556,7 +3556,7 @@ function KpbImportPanel({ league, onRunImport }) {
   return (
     <Panel className="overflow-hidden" style={{ borderColor: PRIMARY }}>
       <SectionTitle accent={PRIMARY}>Import KPB stats (hcbb.info)</SectionTitle>
-      <div className="px-4 pb-4 space-y-3 text-sm">
+      <div className="px-4 pb-3 space-y-3 text-sm">
         <p className="text-xs" style={{ color: CHALK_DIM }}>Pulls full-season batting and pitching totals for the KPB league from hcbb.info and matches players by their Roblox account — checking every player already tracked here, on a roster or in free agency, in any season — rather than just their current on-site name. Unfiltered totals (Qualify: any games, no minimum AB/IP). Unmatched hcbb players are skipped; matched players not yet in the target season are added there as free agents so the stats have somewhere to attach. Re-running with the same mapping replaces the previous import instead of duplicating it.</p>
         {seasonNumbers.map(s => (
           <div key={s} className="flex items-center justify-between gap-2">
@@ -3606,7 +3606,7 @@ function PlayerIdentitySyncPanel({ onRunSync }) {
   return (
     <Panel className="overflow-hidden" style={{ borderColor: GOLD }}>
       <SectionTitle accent={GOLD}>Combine player pages by Roblox history</SectionTitle>
-      <div className="px-4 pb-4 space-y-3 text-sm">
+      <div className="px-4 pb-3 space-y-3 text-sm">
         <p className="text-xs" style={{ color: CHALK_DIM }}>Looks up every tracked player's Roblox account and its full past-username history, then links that account to any other roster or free-agent entry (in any season) that's still filed under one of those old usernames — like a player showing up as a free agent for a past season because they were on a roster that season under a name they've since changed. Once linked, their player pages combine automatically; nothing gets deleted or renamed.</p>
         <button onClick={run} disabled={running} className="px-3 py-2 rounded font-bold text-sm disabled:opacity-40" style={{ background: GOLD, color: INK }}>{running ? 'Syncing…' : 'Sync now'}</button>
         {result && result.error && <p className="text-xs" style={{ color: NEGATIVE }}>{result.error}</p>}
@@ -3641,7 +3641,7 @@ function BadgeManagerPanel({ league, onAddBadgeDef, onRemoveBadgeDef }) {
   return (
     <Panel className="overflow-hidden" style={{ borderColor: GOLD }}>
       <SectionTitle accent={GOLD}>Player badges</SectionTitle>
-      <div className="px-4 pb-4 space-y-3 text-sm">
+      <div className="px-4 pb-3 space-y-3 text-sm">
         <p className="text-xs" style={{ color: CHALK_DIM }}>Custom badges Site Owner can create here, then hand out to any player from their player page — for callouts that don't fit the awards system (e.g. "Franchise Player", "Community MVP").</p>
         {defs.length > 0 && (
           <div className="flex flex-wrap gap-2">
@@ -3684,12 +3684,12 @@ function SettingsView({ settings, saveSettings, theme, saveTheme, sport, season,
   const showImportGroup = canManageSchedule || canManageSettings;
   const showAdminGroup = isSiteOwner || canManageAdmins;
   return (
-    <div className="p-4 space-y-4">
+    <div className="p-3 space-y-3">
       {canManageSettings && <SettingsGroupHeader label="League rules & format" />}
       {canManageSettings && (
       <Panel>
         <SectionTitle>Season settings</SectionTitle>
-        <div className="px-4 pb-4 space-y-3 text-sm">
+        <div className="px-4 pb-3 space-y-3 text-sm">
           <label className="flex items-center justify-between gap-2" style={{ color: CHALK }}>
             <span>Playoff spots<div className="text-[11px]" style={{ color: CHALK_DIM }}>How many teams make the postseason</div></span>
             <NumInput value={settings.playoffSpots} min={1} max={64} onChange={v => saveSettings({ ...settings, playoffSpots: v })} w="w-16" />
@@ -3794,7 +3794,7 @@ function SettingsView({ settings, saveSettings, theme, saveTheme, sport, season,
       {canManageSettings && (
         <Panel>
           <SectionTitle>Odds display</SectionTitle>
-          <div className="px-4 pb-4 text-sm space-y-4">
+          <div className="px-4 pb-3 text-sm space-y-3">
             <div className="flex items-center justify-between gap-2" style={{ color: CHALK }}>
               <span>Default odds format<div className="text-[11px]" style={{ color: CHALK_DIM }}>Percent chance, or American moneyline ("+125") — visitors can override this for themselves from the Odds tab</div></span>
               <div className="flex rounded overflow-hidden border" style={{ borderColor: LINE }}>
@@ -3820,7 +3820,7 @@ function SettingsView({ settings, saveSettings, theme, saveTheme, sport, season,
       {canManageSettings && (
         <Panel style={{ borderColor: league && league.maintenanceBanner && league.maintenanceBanner.active ? GOLD : LINE }}>
           <SectionTitle accent={GOLD}>Homepage banner</SectionTitle>
-          <div className="px-4 pb-4 space-y-2">
+          <div className="px-4 pb-3 space-y-2">
             <p className="text-xs" style={{ color: CHALK_DIM }}>A short message shown at the top of the Home tab to every visitor while active — a planned downtime window, a quick announcement, whatever's worth a heads-up.</p>
             <input defaultValue={(league && league.maintenanceBanner && league.maintenanceBanner.message) || ''} onBlur={e => onSetMaintenanceBanner(e.target.value, !!(league && league.maintenanceBanner && league.maintenanceBanner.active))} placeholder="e.g. Playoffs start this Saturday — see the bracket on Home" className="w-full bg-[#242424] border rounded px-3 py-2 text-sm" style={{ borderColor: LINE, color: CHALK }} />
             <label className="flex items-center gap-2 text-sm" style={{ color: CHALK }}>
@@ -3837,7 +3837,7 @@ function SettingsView({ settings, saveSettings, theme, saveTheme, sport, season,
       {isSiteOwner && (
         <Panel>
           <SectionTitle>Team registry</SectionTitle>
-          <div className="px-4 pb-4 space-y-2">
+          <div className="px-4 pb-3 space-y-2">
             <p className="text-xs" style={{ color: CHALK_DIM }}>Create brand-new teams for the site-wide registry, or edit any existing team's colors/logo from one place. Site Owner only.</p>
             <button onClick={onOpenRegistry} className="px-3 py-2 rounded font-bold text-sm" style={{ background: PRIMARY, color: INK }}>Open team registry</button>
           </div>
@@ -3899,7 +3899,7 @@ function SheetTextImportPanel({ title, placeholder, description, parseFn, render
     <Panel className="overflow-hidden" style={{ borderColor }}>
       <SectionTitle accent={borderColor} right={<button onClick={() => setOpen(v => !v)} className="text-[11px] font-bold" style={{ color: borderColor }}>{open ? 'Hide' : 'Import'}</button>}>{title}</SectionTitle>
       {open && (
-        <div className="px-4 pb-4 space-y-2">
+        <div className="px-4 pb-3 space-y-2">
           <p className="text-xs" style={{ color: CHALK_DIM }}>{description}</p>
           <label className="inline-flex items-center gap-2 px-3 py-2 rounded text-sm font-semibold cursor-pointer" style={{ background: PANEL2, color: CHALK, border: `1px solid ${LINE}` }}>
             <Upload size={14} /> Choose .csv file
@@ -4037,10 +4037,10 @@ function TeamsView({ season, teamsById, teamsIndex, addExistingTeam, createAndAd
   const runSheetPreview = () => { setSheetPreview(parseRosterSheetCsv(sheetText)); setSheetResolutions({}); };
 
   return (
-    <div className="p-4 space-y-4">
+    <div className="p-3 space-y-3">
       <Panel className="overflow-hidden" style={{ borderColor: PRIMARY }}>
         <SectionTitle accent={PRIMARY}>Search teams &amp; players</SectionTitle>
-        <div className="px-4 pb-4 space-y-2">
+        <div className="px-4 pb-3 space-y-2">
           <input value={search} onChange={e => setSearch(e.target.value)} placeholder="Search this season…" className="w-full bg-[#242424] border rounded px-3 py-2 text-sm" style={{ borderColor: LINE, color: CHALK }} />
           {searchResults && (
             <div className="rounded-lg border max-h-56 overflow-y-auto" style={{ borderColor: LINE }}>
@@ -4059,7 +4059,7 @@ function TeamsView({ season, teamsById, teamsIndex, addExistingTeam, createAndAd
       <Panel className="overflow-hidden" style={{ borderColor: PRIMARY }}>
         <SectionTitle accent={PRIMARY}>Add a team to this season</SectionTitle>
         <fieldset disabled={!isLoggedIn} className="contents">
-        <div className="px-4 pb-4 space-y-3">
+        <div className="px-4 pb-3 space-y-3">
           <div className="flex gap-2">
             <select value={pickId} onChange={e => setPickId(e.target.value)} className="flex-1 bg-[#242424] border rounded px-2 py-2 text-sm" style={{ borderColor: LINE, color: CHALK }}>
               <option style={{ background: PANEL2, color: CHALK }} value="">Choose an existing team…</option>
@@ -4078,7 +4078,7 @@ function TeamsView({ season, teamsById, teamsIndex, addExistingTeam, createAndAd
       <Panel className="overflow-hidden" style={{ borderColor: PRIMARY }}>
         <SectionTitle accent={PRIMARY} right={<button onClick={() => setShowSheetImport(v => !v)} disabled={!isLoggedIn} className="text-[11px] font-bold disabled:opacity-40" style={{ color: PRIMARY }}>{showSheetImport ? 'Hide' : 'Import'}</button>}>Import a full roster sheet</SectionTitle>
         {showSheetImport && isLoggedIn && (
-          <div className="px-4 pb-4 space-y-2">
+          <div className="px-4 pb-3 space-y-2">
             <p className="text-xs" style={{ color: CHALK_DIM }}>Paste or upload a CSV export of a roster spreadsheet with several teams laid out side by side (Role, Username, Stars columns per team). Teams are matched by name — new ones are created automatically. Re-importing replaces each matched team's roster with what's in the sheet, so it always matches exactly (no duplicate or stale players left behind).</p>
             <label className="inline-flex items-center gap-2 px-3 py-2 rounded text-sm font-semibold cursor-pointer" style={{ background: PANEL2, color: CHALK, border: `1px solid ${LINE}` }}>
               <Upload size={14} /> Choose .csv file
@@ -4267,7 +4267,7 @@ function ScheduleBalanceChecker({ season, teamsById }) {
     <Panel className="overflow-hidden" style={{ borderColor: PRIMARY }}>
       <SectionTitle accent={PRIMARY} right={<button onClick={() => setOpen(v => !v)} className="text-[11px] font-bold" style={{ color: PRIMARY }}>{open ? 'Hide' : 'Check'}</button>}>Schedule balance</SectionTitle>
       {!open ? (
-        <p className="px-4 pb-4 text-xs" style={{ color: CHALK_DIM }}>{flagged.length === 0 ? 'No major home/away or opponent-count imbalances detected.' : `${flagged.length} team${flagged.length === 1 ? '' : 's'} with a notable imbalance — tap Check for details.`}</p>
+        <p className="px-4 pb-3 text-xs" style={{ color: CHALK_DIM }}>{flagged.length === 0 ? 'No major home/away or opponent-count imbalances detected.' : `${flagged.length} team${flagged.length === 1 ? '' : 's'} with a notable imbalance — tap Check for details.`}</p>
       ) : (
         <>
           <div className="px-2 pb-2">
@@ -4279,7 +4279,7 @@ function ScheduleBalanceChecker({ season, teamsById }) {
               </div>
             ))}
           </div>
-          <p className="px-4 pb-4 text-[11px]" style={{ color: CHALK_DIM }}>Flags a team in gold when their home/away split differs by 3+ games, or when they play some opponents notably more than others (spread of 2+ meetings).</p>
+          <p className="px-4 pb-3 text-[11px]" style={{ color: CHALK_DIM }}>Flags a team in gold when their home/away split differs by 3+ games, or when they play some opponents notably more than others (spread of 2+ meetings).</p>
         </>
       )}
     </Panel>
@@ -4303,7 +4303,7 @@ function RoundRobinGenerator({ season, teamsById, generateSchedule }) {
     <Panel className="overflow-hidden" style={{ borderColor: PRIMARY }}>
       <SectionTitle accent={PRIMARY} right={isLoggedIn && <button onClick={() => setOpen(v => !v)} className="text-[11px] font-bold" style={{ color: PRIMARY }}>{open ? 'Hide' : 'Open'}</button>}>Generate round-robin schedule</SectionTitle>
       {open && isLoggedIn && (
-        <div className="px-4 pb-4 space-y-3">
+        <div className="px-4 pb-3 space-y-3">
           <p className="text-xs" style={{ color: CHALK_DIM }}>Automatically builds a full schedule where every selected team plays every other one evenly — no manual entry needed. Adds to whatever's already on the schedule.</p>
           <div className="flex flex-wrap gap-2">
             {season.members.map(m => {
@@ -4750,7 +4750,7 @@ function CustomLeaderboardBuilder({ players, teamsById, onOpenPlayer, leagueLogo
           </label>
         )}
       </div>
-      <div className="px-4 pb-4">
+      <div className="px-4 pb-3">
         <LeaderBoardCard title={stat.label + (canSosAdjust && sosAdjusted ? ' (SOS-adj.)' : '')} players={pool} valueFn={adjustedValueFn} formatFn={stat.formatFn} sortDesc={stat.sortDesc} limit={limit} teamsById={teamsById} onOpenPlayer={onOpenPlayer} leagueLogoUrl={leagueLogoUrl} scope={scope} />
       </div>
     </Panel>
@@ -5115,7 +5115,7 @@ function BulkScoreEntryPanel({ games, teamsById, onBulkSaveScores }) {
     <Panel className="overflow-hidden" style={{ borderColor: GOLD }}>
       <SectionTitle accent={GOLD} right={<button onClick={() => setOpen(v => !v)} className="text-[11px] font-bold" style={{ color: GOLD }}>{open ? 'Close' : 'Open'}</button>}>Bulk score entry</SectionTitle>
       {open && (
-        <div className="px-2 pb-4">
+        <div className="px-2 pb-3">
           <p className="px-2 pb-2 text-xs" style={{ color: CHALK_DIM }}>Fill in as many as you've got, then save them all at once.</p>
           <div className="space-y-1.5 px-2">
             {unplayed.map(g => {
@@ -5235,7 +5235,7 @@ function ScheduleView({ season, settings, saveScore, deleteGame, declareForfeit,
   };
 
   return (
-    <div className="p-4 space-y-4">
+    <div className="p-3 space-y-3">
       <style>{`@keyframes lt-live-pulse { 0%, 100% { opacity: 1; } 50% { opacity: 0.3; } }`}</style>
       {(() => {
         const regGames = games.filter(g => !g.isPlayoff && !g.isPlayIn);
@@ -5455,7 +5455,7 @@ function ScheduleManagementPanel({ season, settings, importGames, addManualGame,
       <Panel className="overflow-hidden" style={{ borderColor: PRIMARY }}>
         <SectionTitle accent={PRIMARY} right={<button onClick={() => setShowAdd(v => !v)} className="text-[11px] font-bold" style={{ color: PRIMARY }}>{showAdd ? 'Hide' : 'Add games'}</button>}>Add to schedule</SectionTitle>
         {showAdd && (
-          <div className="px-4 pb-4 space-y-4">
+          <div className="px-4 pb-3 space-y-3">
             <div className="space-y-2">
               <p className="text-xs" style={{ color: CHALK_DIM }}>Put a {labelWord.toLowerCase()} on its own line, then list that {labelWord.toLowerCase()}'s games underneath. Change this in the "Schedule labels" setting above.</p>
               <label className="inline-flex items-center gap-2 px-3 py-2 rounded text-sm font-semibold cursor-pointer" style={{ background: PANEL2, color: CHALK, border: `1px solid ${LINE}` }}>
@@ -5571,7 +5571,7 @@ function StatsView({ standings, onOpenTeam, season }) {
     .sort((a, b) => b.l10Pct - a.l10Pct || b.delta - a.delta);
 
   return (
-    <div className="p-4 space-y-4">
+    <div className="p-3 space-y-3">
       <Panel className="overflow-hidden" style={{ borderColor: GOLD }}>
         <SectionTitle accent={GOLD}>Power rankings</SectionTitle>
         <div className="px-2 pb-3">
@@ -5584,7 +5584,7 @@ function StatsView({ standings, onOpenTeam, season }) {
           ))}
           {powerRanked.length === 0 && <p className="px-2 py-4 text-sm" style={{ color: CHALK_DIM }}>No teams yet.</p>}
         </div>
-        <p className="px-4 pb-4 text-[11px]" style={{ color: CHALK_DIM }}>Blends win%, run differential per game, and strength of schedule. "Luck" compares actual wins to Pythagorean expected wins (from runs scored/allowed) — positive means winning more than their run totals suggest.</p>
+        <p className="px-4 pb-3 text-[11px]" style={{ color: CHALK_DIM }}>Blends win%, run differential per game, and strength of schedule. "Luck" compares actual wins to Pythagorean expected wins (from runs scored/allowed) — positive means winning more than their run totals suggest.</p>
       </Panel>
       {clutchRanked.length > 0 && (
         <Panel className="overflow-hidden" style={{ borderColor: GOLD }}>
@@ -5598,7 +5598,7 @@ function StatsView({ standings, onOpenTeam, season }) {
               </div>
             ))}
           </div>
-          <p className="px-4 pb-4 text-[11px]" style={{ color: CHALK_DIM }}>Ranked by winning percentage in 1-run games (weighted 65%) and extra-innings games (weighted 35%) — how teams perform when it's tight. Only includes teams with at least one such game.</p>
+          <p className="px-4 pb-3 text-[11px]" style={{ color: CHALK_DIM }}>Ranked by winning percentage in 1-run games (weighted 65%) and extra-innings games (weighted 35%) — how teams perform when it's tight. Only includes teams with at least one such game.</p>
         </Panel>
       )}
       {formRanked.length > 0 && (
@@ -5614,7 +5614,7 @@ function StatsView({ standings, onOpenTeam, season }) {
               </div>
             ))}
           </div>
-          <p className="px-4 pb-4 text-[11px]" style={{ color: CHALK_DIM }}>Ranked by last-10 record first (so a losing streak always sorts below a winning one, no matter the season-long record) — the +/- number is how that compares to their season-long win%, as a secondary trend signal.</p>
+          <p className="px-4 pb-3 text-[11px]" style={{ color: CHALK_DIM }}>Ranked by last-10 record first (so a losing streak always sorts below a winning one, no matter the season-long record) — the +/- number is how that compares to their season-long win%, as a secondary trend signal.</p>
         </Panel>
       )}
       {bestFinishRanked.length > 0 && (
@@ -5632,7 +5632,7 @@ function StatsView({ standings, onOpenTeam, season }) {
               </div>
             ))}
           </div>
-          <p className="px-4 pb-4 text-[11px]" style={{ color: CHALK_DIM }}>Only teams that could still climb are shown. A team's floor is its current win total — if that alone already beats a rival's ceiling, that rival is unreachable no matter what happens.</p>
+          <p className="px-4 pb-3 text-[11px]" style={{ color: CHALK_DIM }}>Only teams that could still climb are shown. A team's floor is its current win total — if that alone already beats a rival's ceiling, that rival is unreachable no matter what happens.</p>
         </Panel>
       )}
       {surgeRanked.length > 0 && (
@@ -5647,7 +5647,7 @@ function StatsView({ standings, onOpenTeam, season }) {
               </div>
             ))}
           </div>
-          <p className="px-4 pb-4 text-[11px]" style={{ color: CHALK_DIM }}>Splits each team's games in half and compares win% in each — only shown for teams with at least a 15-point swing between the first and second half of their season.</p>
+          <p className="px-4 pb-3 text-[11px]" style={{ color: CHALK_DIM }}>Splits each team's games in half and compares win% in each — only shown for teams with at least a 15-point swing between the first and second half of their season.</p>
         </Panel>
       )}
       <Panel className="overflow-hidden" style={{ borderColor: GOLD }}>
@@ -5677,7 +5677,7 @@ function StatsView({ standings, onOpenTeam, season }) {
           </table>
         </div>
         <p className="px-4 pb-2 text-[11px]" style={{ color: CHALK_DIM }}>SOV (strength of victory) averages the win% of opponents actually beaten — distinct from SOS, which averages every opponent played regardless of outcome.</p>
-        <p className="px-4 pb-4 text-[11px]" style={{ color: CHALK_DIM }}>SOS is the average win% of every opponent on the schedule. Defensive innings approximates innings played on defense from each game's recorded length.</p>
+        <p className="px-4 pb-3 text-[11px]" style={{ color: CHALK_DIM }}>SOS is the average win% of every opponent on the schedule. Defensive innings approximates innings played on defense from each game's recorded length.</p>
       </Panel>
       <Panel>
         <SectionTitle>Home &amp; away splits</SectionTitle>
@@ -5752,7 +5752,7 @@ function RosterPanel({ member, color, updatePlayerField, removePlayer, addPlayer
       )}
 
       {showBulk && canManageMoves && (
-        <div className="px-4 pb-4 space-y-2">
+        <div className="px-4 pb-3 space-y-2">
           <p className="text-xs" style={{ color: CHALK_DIM }}>One player per line: <code>Name, Stars</code> — only name is required. Use "R" for unrated.</p>
           <textarea value={bulkText} onChange={e => setBulkText(e.target.value)} rows={4} placeholder={'Jordan Lee, 5.5\nSam Rivera, R'}
             className="w-full bg-[#242424] border rounded px-3 py-2 text-sm font-mono" style={{ borderColor: LINE, color: CHALK }} />
@@ -5845,7 +5845,7 @@ function RosterPanel({ member, color, updatePlayerField, removePlayer, addPlayer
       </div>
 
       {canManageMoves && (
-      <div className="px-4 pb-4 flex items-center gap-2">
+      <div className="px-4 pb-3 flex items-center gap-2">
         <input value={name} onChange={e => setName(e.target.value)} placeholder="Player name" className="flex-1 bg-[#242424] border rounded px-3 py-2 text-sm" style={{ borderColor: LINE, color: CHALK }} />
         <StarLevelEditor value={starLevel} onChange={setStarLevel} />
         <button onClick={() => { if (name.trim()) { addPlayer(name.trim(), starLevel); setName(''); setStarLevel(null); } }} className="px-3 py-2 rounded font-bold text-sm flex-shrink-0" style={{ background: color, color: INK }}><Plus size={16} /></button>
@@ -5894,7 +5894,7 @@ function TradeCenter({ season, teamsById, onExecuteTrade, onProposeTrade }) {
   return (
     <Panel className="overflow-hidden" style={{ borderColor: PRIMARY }}>
       <SectionTitle accent={PRIMARY}>Trade center</SectionTitle>
-      <div className="px-4 pb-4 space-y-3">
+      <div className="px-4 pb-3 space-y-3">
         <div className="flex items-center gap-2">
           <select value={teamAId} onChange={e => { setTeamAId(e.target.value); setSelectedA([]); }} className="flex-1 bg-[#242424] border rounded px-2 py-2 text-sm" style={{ borderColor: LINE, color: CHALK }}>
             <option value="">Team A…</option>
@@ -5936,7 +5936,7 @@ function PendingTradesPanel({ pendingTrades, teamsById, onExecute, onDiscard }) 
   return (
     <Panel className="overflow-hidden" style={{ borderColor: GOLD }}>
       <SectionTitle accent={GOLD}>Pending trade proposals ({pendingTrades.length})</SectionTitle>
-      <div className="px-4 pb-4 space-y-2">
+      <div className="px-4 pb-3 space-y-2">
         {pendingTrades.map(t => {
           const teamA = teamsById[t.teamAId], teamB = teamsById[t.teamBId];
           return (
@@ -6052,7 +6052,7 @@ function NewSigningPanel({ season, teamsById, addPlayer, signFreeAgent }) {
   return (
     <Panel className="overflow-hidden" style={{ borderColor: PRIMARY }}>
       <SectionTitle accent={PRIMARY} right={<button onClick={reset} className="text-[11px] font-semibold" style={{ color: CHALK_DIM }}>Cancel</button>}>New signing</SectionTitle>
-      <div className="px-4 pb-4 space-y-3">
+      <div className="px-4 pb-3 space-y-3">
         <select value={teamId} onChange={e => setTeamId(e.target.value)} className="w-full bg-[#242424] border rounded px-3 py-2 text-sm" style={{ borderColor: LINE, color: CHALK }}>
           <option value="" disabled>Sign to which team?</option>
           {season.members.map(m => <option key={m.teamId} value={m.teamId}>{(teamsById[m.teamId] && teamsById[m.teamId].name) || m.scheduleName}</option>)}
@@ -6086,7 +6086,7 @@ function RosterManagementView({ season, teamsById, updatePlayerField, removePlay
     <div className="p-4 space-y-3">
       <Panel className="overflow-hidden" style={{ borderColor: PRIMARY }}>
         <SectionTitle accent={PRIMARY}>Roster management</SectionTitle>
-        <p className="px-4 pb-4 text-xs" style={{ color: CHALK_DIM }}>Create, trade, remove, and suspend players for any team in the season. This follows whichever season you're currently viewing — switch seasons (the layers icon, top right) to clean up an older season's free agent pool.</p>
+        <p className="px-4 pb-3 text-xs" style={{ color: CHALK_DIM }}>Create, trade, remove, and suspend players for any team in the season. This follows whichever season you're currently viewing — switch seasons (the layers icon, top right) to clean up an older season's free agent pool.</p>
       </Panel>
       <NewSigningPanel season={season} teamsById={teamsById} addPlayer={addPlayer} signFreeAgent={signFreeAgent} />
       <FreeAgentsPanel season={season} teamsById={teamsById} signFreeAgent={signFreeAgent} deleteFreeAgent={deleteFreeAgent} deleteFreeAgentsBulk={deleteFreeAgentsBulk} setPlayerBanned={setPlayerBanned} />
@@ -6172,7 +6172,7 @@ function RebrandPanel({ team, color, teamsById, onRebrand, onClearRebrand }) {
         <p className="px-4 pb-3 text-xs" style={{ color: CHALK_DIM }}>Rebranded to <span className="font-semibold" style={{ color }}>{team.rebrand.name}</span> this season — was "{team.originalName}". Other seasons still show the original name.</p>
       )}
       {open && (
-        <div className="px-4 pb-4 space-y-3">
+        <div className="px-4 pb-3 space-y-3">
           <p className="text-xs" style={{ color: CHALK_DIM }}>Changes this team's name/color/logo for the rest of this season only — other seasons keep "{team.originalName}".</p>
           {otherTeams.length > 0 && (
             <div>
@@ -6266,7 +6266,7 @@ function TeamPage({ season, settings, team, standingsRow, teamsById, h2hMatrix, 
   };
 
   return (
-    <div className="p-4 space-y-4">
+    <div className="p-3 space-y-3">
       <div className="flex items-center justify-between">
         <button onClick={onBack} className="flex items-center gap-1 text-sm" style={{ color: CHALK_DIM }}><ArrowLeft size={14} /> Back</button>
         <div className="flex items-center gap-3">
@@ -6297,8 +6297,8 @@ function TeamPage({ season, settings, team, standingsRow, teamsById, h2hMatrix, 
         </div>
       </div>
 
-      <div className="grid grid-cols-1 lg:grid-cols-3 gap-4 items-start">
-      <div className="lg:col-span-2 space-y-4">
+      <div className="grid grid-cols-1 lg:grid-cols-3 gap-3 items-start">
+      <div className="lg:col-span-2 space-y-3">
       {standingsRow && (
         <>
           <Panel className="overflow-hidden" style={{ borderColor: color }}>
@@ -6355,7 +6355,7 @@ function TeamPage({ season, settings, team, standingsRow, teamsById, h2hMatrix, 
           {(bestWin || worstLoss) && (
             <Panel className="overflow-hidden" style={{ borderColor: color }}>
               <SectionTitle accent={color}>Notable games</SectionTitle>
-              <div className="px-4 pb-4 space-y-2 text-sm">
+              <div className="px-4 pb-3 space-y-2 text-sm">
                 {bestWin && <p style={{ color: CHALK }}><span style={{ color: WIN }} className="font-bold">Best win:</span> {bestWin.margin > 0 ? `+${bestWin.margin}` : bestWin.margin} vs {nameForOpp(bestWin.g, bestWin.isHome)}{bestWin.g.date ? ` (${bestWin.g.date})` : ''}</p>}
                 {worstLoss && <p style={{ color: CHALK }}><span style={{ color: NEGATIVE }} className="font-bold">Worst loss:</span> {worstLoss.margin} vs {nameForOpp(worstLoss.g, worstLoss.isHome)}{worstLoss.g.date ? ` (${worstLoss.g.date})` : ''}</p>}
               </div>
@@ -6394,13 +6394,13 @@ function TeamPage({ season, settings, team, standingsRow, teamsById, h2hMatrix, 
       </Panel>
       </div>
 
-      <div className="space-y-4">
+      <div className="space-y-3">
         {isLoggedIn && <RebrandPanel team={team} color={color} teamsById={teamsById} onRebrand={onRebrand} onClearRebrand={onClearRebrand} />}
 
         {nextGameInfo && (
           <Panel className="overflow-hidden" style={{ borderColor: color }}>
             <SectionTitle accent={color}>Next game</SectionTitle>
-            <div className="px-4 pb-4 flex items-center justify-between gap-2">
+            <div className="px-4 pb-3 flex items-center justify-between gap-2">
               <div className="flex items-center gap-2 min-w-0">
                 <span className="text-sm" style={{ color: CHALK }}>{nextGameInfo.isHome ? 'vs' : '@'}</span>
                 {nextGameInfo.oppTeam && <TeamMark team={nextGameInfo.oppTeam} size={20} />}
@@ -6492,11 +6492,11 @@ function ComparePage({ season, standingsAll, teamsById, h2hMatrix, initialTeamId
   })() : [];
 
   return (
-    <div className="p-4 space-y-4">
+    <div className="p-3 space-y-3">
       <button onClick={onBack} className="flex items-center gap-1 text-sm" style={{ color: CHALK_DIM }}><ArrowLeft size={14} /> Back</button>
       <Panel>
         <SectionTitle>Team comparison</SectionTitle>
-        <div className="px-4 pb-4 flex items-center gap-2">
+        <div className="px-4 pb-3 flex items-center gap-2">
           <select value={aId} onChange={e => setAId(e.target.value)} className="flex-1 bg-[#242424] border rounded px-2 py-2 text-sm" style={{ borderColor: LINE, color: CHALK }}>
             {season.members.map(m => <option style={{ background: PANEL2, color: CHALK }} key={m.teamId} value={m.teamId}>{teamsById[m.teamId]?.name || m.scheduleName}</option>)}
           </select>
@@ -6549,11 +6549,11 @@ function ComparePage({ season, standingsAll, teamsById, h2hMatrix, initialTeamId
           <Panel>
             <SectionTitle>Head-to-head</SectionTitle>
             {h2h && (h2h.w + h2h.l) > 0 ? (
-              <div className="px-4 pb-4 text-sm" style={{ color: CHALK }}>
+              <div className="px-4 pb-3 text-sm" style={{ color: CHALK }}>
                 <p>{teamA.displayName} leads the season series <span className="font-mono font-bold">{h2h.w}-{h2h.l}</span>, run differential <span className="font-mono font-bold">{h2h.rf - h2h.ra > 0 ? `+${h2h.rf - h2h.ra}` : h2h.rf - h2h.ra}</span>.</p>
               </div>
             ) : (
-              <p className="px-4 pb-4 text-sm" style={{ color: CHALK_DIM }}>These teams haven't played each other yet this season.</p>
+              <p className="px-4 pb-3 text-sm" style={{ color: CHALK_DIM }}>These teams haven't played each other yet this season.</p>
             )}
           </Panel>
           {matchups.length > 0 && (
@@ -6594,7 +6594,7 @@ function ComparePage({ season, standingsAll, teamsById, h2hMatrix, initialTeamId
 // row appended only when there's more than one season to sum.
 function PlayerBattingTable({ rows }) {
   return (
-    <div className="overflow-x-auto px-2 pb-4">
+    <div className="overflow-x-auto px-2 pb-3">
       <table className="w-full text-sm" style={{ color: CHALK }}>
         <thead><tr className="text-[10px] uppercase" style={{ color: CHALK_DIM }}>
           <th className="text-left px-2 py-1">Season</th><th className="px-2 py-1">G</th><th className="px-2 py-1">AB</th><th className="px-2 py-1">R</th><th className="px-2 py-1">H</th><th className="px-2 py-1">HR</th><th className="px-2 py-1">RBI</th><th className="px-2 py-1">BB</th><th className="px-2 py-1">SO</th><th className="px-2 py-1">AVG</th><th className="px-2 py-1">OPS</th>
@@ -6625,7 +6625,7 @@ function PlayerBattingTable({ rows }) {
 }
 function PlayerPitchingTable({ rows }) {
   return (
-    <div className="overflow-x-auto px-2 pb-4">
+    <div className="overflow-x-auto px-2 pb-3">
       <table className="w-full text-sm" style={{ color: CHALK }}>
         <thead><tr className="text-[10px] uppercase" style={{ color: CHALK_DIM }}>
           <th className="text-left px-2 py-1">Season</th><th className="px-2 py-1">G</th><th className="px-2 py-1">IP</th><th className="px-2 py-1">HA</th><th className="px-2 py-1">ER</th><th className="px-2 py-1">BB</th><th className="px-2 py-1">K</th><th className="px-2 py-1">HR</th><th className="px-2 py-1">ERA</th><th className="px-2 py-1">WHIP</th>
@@ -6749,7 +6749,7 @@ function AppealPanel({ seasonId, playerId, playerName, teamId, onSubmitAppeal })
     <Panel style={{ borderColor: NEGATIVE }}>
       <SectionTitle accent={NEGATIVE} right={!open ? <button onClick={() => setOpen(true)} className="text-[11px] font-bold" style={{ color: NEGATIVE }}>Submit an appeal</button> : null}>Currently suspended or banned</SectionTitle>
       {open && (
-        <div className="px-4 pb-4 space-y-2">
+        <div className="px-4 pb-3 space-y-2">
           <textarea value={message} onChange={e => setMessage(e.target.value)} placeholder="Explain why this suspension/ban should be reconsidered…" rows={3} className="w-full bg-[#242424] border rounded px-3 py-2 text-sm" style={{ borderColor: LINE, color: CHALK }} />
           <div className="flex gap-2">
             <button onClick={() => { if (!message.trim()) return; onSubmitAppeal(seasonId, playerId, playerName, teamId, message); setSent(true); }} disabled={!message.trim()} className="px-3 py-1.5 rounded font-bold text-xs disabled:opacity-40" style={{ background: NEGATIVE, color: '#fff' }}>Send appeal</button>
@@ -6787,7 +6787,7 @@ function PlayerEditPanel({ league, seasonsInfo, teamsById, displayName, playerBa
   return (
     <Panel className="overflow-hidden" style={{ borderColor: PRIMARY }}>
       <SectionTitle accent={PRIMARY} right={<button onClick={() => setOpen(false)} className="text-[11px] font-semibold" style={{ color: CHALK_DIM }}>Close</button>}>Site Owner: edit player</SectionTitle>
-      <div className="px-4 pb-4 space-y-4 text-sm">
+      <div className="px-4 pb-3 space-y-3 text-sm">
         <div>
           <div className="text-xs font-semibold mb-1.5" style={{ color: CHALK }}>Player name</div>
           <p className="text-[10px] mb-1.5" style={{ color: CHALK_DIM }}>Fixes a misspelled import (e.g. a sheet typo that created a separate player) — renaming here merges it back into the correctly-spelled player's page automatically. The old name is kept on record so nothing that still uses it breaks. This also locks the name in place — it won't get overwritten if the player's Roblox account is renamed later.</p>
@@ -7190,7 +7190,7 @@ function PlayerPage({ league, teamsById, playerName, onBack, onOpenTeam, onOpenP
   };
 
   return (
-    <div className="p-4 space-y-4">
+    <div className="p-3 space-y-3">
       <button onClick={onBack} className="flex items-center gap-1 text-sm" style={{ color: CHALK_DIM }}><ArrowLeft size={14} /> Back</button>
 
       <div className="rounded-2xl border overflow-hidden" style={{ borderColor: color, boxShadow: `0 4px 20px -4px ${color}44` }}>
@@ -7289,8 +7289,8 @@ function PlayerPage({ league, teamsById, playerName, onBack, onOpenTeam, onOpenP
           <Panel><p className="px-4 py-8 text-sm text-center" style={{ color: CHALK_DIM }}>No stats imported for this player yet.</p></Panel>
         </>
       ) : (
-        <div className="grid grid-cols-1 lg:grid-cols-3 gap-4 items-start">
-        <div className="lg:col-span-2 space-y-4">
+        <div className="grid grid-cols-1 lg:grid-cols-3 gap-3 items-start">
+        <div className="lg:col-span-2 space-y-3">
           {regBattingRows.length > 0 && (
             <Panel>
               <SectionTitle accent={PRIMARY}>Regular season batting</SectionTitle>
@@ -7318,7 +7318,7 @@ function PlayerPage({ league, teamsById, playerName, onBack, onOpenTeam, onOpenP
 
           <Panel>
             <SectionTitle accent={GOLD}>Advanced stats (regular season)</SectionTitle>
-            <div className="px-4 pb-4 grid grid-cols-2 sm:grid-cols-4 gap-3">
+            <div className="px-4 pb-3 grid grid-cols-2 sm:grid-cols-4 gap-3">
               {hasBatting && <>
                 <StatBox label="OBP" value={batting.obp.toFixed(3).replace(/^0/, '')} />
                 <StatBox label="SLG" value={batting.slg.toFixed(3).replace(/^0/, '')} />
@@ -7340,7 +7340,7 @@ function PlayerPage({ league, teamsById, playerName, onBack, onOpenTeam, onOpenP
           {trendData.length >= 3 && (
             <Panel>
               <SectionTitle>{hasBatting ? 'AVG trend' : 'ERA trend'}</SectionTitle>
-              <div className="px-2 pb-4" style={{ height: 180 }}>
+              <div className="px-2 pb-3" style={{ height: 180 }}>
                 <ResponsiveContainer width="100%" height="100%">
                   <LineChart data={trendData}>
                     <CartesianGrid stroke={LINE} strokeDasharray="3 3" />
@@ -7357,7 +7357,7 @@ function PlayerPage({ league, teamsById, playerName, onBack, onOpenTeam, onOpenP
           {seasonTrendData.length >= 2 && (
             <Panel>
               <SectionTitle>{hasBatting ? 'OPS by season' : 'ERA by season'}</SectionTitle>
-              <div className="px-2 pb-4" style={{ height: 180 }}>
+              <div className="px-2 pb-3" style={{ height: 180 }}>
                 <ResponsiveContainer width="100%" height="100%">
                   <LineChart data={seasonTrendData}>
                     <CartesianGrid stroke={LINE} strokeDasharray="3 3" />
@@ -7374,7 +7374,7 @@ function PlayerPage({ league, teamsById, playerName, onBack, onOpenTeam, onOpenP
           {seasonCountingData.length >= 2 && (
             <Panel>
               <SectionTitle>{hasBatting ? 'Hits, HR & RBI by season' : 'Strikeouts & walks by season'}</SectionTitle>
-              <div className="px-2 pb-4" style={{ height: 200 }}>
+              <div className="px-2 pb-3" style={{ height: 200 }}>
                 <ResponsiveContainer width="100%" height="100%">
                   <BarChart data={seasonCountingData}>
                     <CartesianGrid stroke={LINE} strokeDasharray="3 3" />
@@ -7399,7 +7399,7 @@ function PlayerPage({ league, teamsById, playerName, onBack, onOpenTeam, onOpenP
           {hitTypeData.length > 0 && (
             <Panel>
               <SectionTitle>Career hit mix</SectionTitle>
-              <div className="px-2 pb-4" style={{ height: 200 }}>
+              <div className="px-2 pb-3" style={{ height: 200 }}>
                 <ResponsiveContainer width="100%" height="100%">
                   <PieChart>
                     <Pie data={hitTypeData} dataKey="value" nameKey="name" cx="50%" cy="50%" outerRadius={70} label={({ name, value }) => `${name}: ${value}`}>
@@ -7416,7 +7416,7 @@ function PlayerPage({ league, teamsById, playerName, onBack, onOpenTeam, onOpenP
           {hasOneRunSplit && (
             <Panel>
               <SectionTitle>One-run game splits</SectionTitle>
-              <div className="px-4 pb-4 grid grid-cols-2 gap-3">
+              <div className="px-4 pb-3 grid grid-cols-2 gap-3">
                 {hasBatting ? <>
                   <StatBox label="OPS · 1-run games" value={oneRunBatting.ops.toFixed(3).replace(/^0/, '')} color={GOLD} />
                   <StatBox label="OPS · other games" value={otherBatting.ops.toFixed(3).replace(/^0/, '')} />
@@ -7432,7 +7432,7 @@ function PlayerPage({ league, teamsById, playerName, onBack, onOpenTeam, onOpenP
             <Panel>
               <SectionTitle accent={PRIMARY}>Rest-of-season pace</SectionTitle>
               <p className="px-4 pb-2 text-xs" style={{ color: CHALK_DIM }}>Current per-game rate projected across {paceGamesRemaining} remaining game{paceGamesRemaining === 1 ? '' : 's'} this season.</p>
-              <div className="px-4 pb-4 grid grid-cols-3 gap-3">
+              <div className="px-4 pb-3 grid grid-cols-3 gap-3">
                 {paceStats.map(s => (
                   <StatBox key={s.label} label={s.label} value={Math.round((s.v / paceGamesPlayed) * (paceGamesPlayed + paceGamesRemaining))} color={PRIMARY} />
                 ))}
@@ -7442,7 +7442,7 @@ function PlayerPage({ league, teamsById, playerName, onBack, onOpenTeam, onOpenP
 
           <Panel>
             <SectionTitle>Recent games</SectionTitle>
-            <div className="overflow-x-auto px-2 pb-4">
+            <div className="overflow-x-auto px-2 pb-3">
               <table className="w-full text-xs" style={{ color: CHALK }}>
                 <thead><tr className="text-[10px] uppercase" style={{ color: CHALK_DIM }}>
                   <th className="text-left px-2 py-1">Date</th><th className="text-left px-2 py-1">Opp</th><th className="px-2 py-1">AB</th><th className="px-2 py-1">H</th><th className="px-2 py-1">HR</th><th className="px-2 py-1">RBI</th><th className="px-2 py-1">IP</th><th className="px-2 py-1">K</th><th className="px-2 py-1">ER</th>
@@ -7470,7 +7470,7 @@ function PlayerPage({ league, teamsById, playerName, onBack, onOpenTeam, onOpenP
           </Panel>
         </div>
 
-        <div className="space-y-4">
+        <div className="space-y-3">
           {upcomingMilestones.length > 0 && (
             <Panel className="overflow-hidden" style={{ borderColor: GOLD }}>
               <SectionTitle accent={GOLD}>Milestone watch</SectionTitle>
@@ -7533,7 +7533,7 @@ function PlayerPage({ league, teamsById, playerName, onBack, onOpenTeam, onOpenP
           {awards.length > 0 && (
             <Panel className="overflow-hidden" style={{ borderColor: GOLD }}>
               <SectionTitle accent={GOLD}>Awards</SectionTitle>
-              <div className="px-4 pb-4 space-y-1">
+              <div className="px-4 pb-3 space-y-1">
                 {awards.map((a, i) => (
                   <div key={i} className="flex items-center justify-between gap-2 text-sm" style={{ color: GOLD }}>
                     <span className="flex items-center gap-2"><Crown size={14} /> {a.name} {a.seasonName && <span style={{ color: CHALK_DIM }}>({a.seasonName})</span>}</span>
@@ -7547,7 +7547,7 @@ function PlayerPage({ league, teamsById, playerName, onBack, onOpenTeam, onOpenP
           {highs.length > 0 && (
             <Panel>
               <SectionTitle accent={GOLD}>Game highs</SectionTitle>
-              <div className="px-4 pb-4 space-y-2">
+              <div className="px-4 pb-3 space-y-2">
                 {highs.map(h => (
                   <div key={h.key} className="flex items-center justify-between text-sm gap-2">
                     <span style={{ color: CHALK_DIM }}>{h.label}</span>
@@ -7561,7 +7561,7 @@ function PlayerPage({ league, teamsById, playerName, onBack, onOpenTeam, onOpenP
           {notable.length > 0 && (
             <Panel>
               <SectionTitle accent={GOLD}>Notable games</SectionTitle>
-              <div className="px-4 pb-4 space-y-2">
+              <div className="px-4 pb-3 space-y-2">
                 {notable.map((n, i) => (
                   <div key={i} className="flex items-center justify-between text-sm gap-2">
                     <span className="font-semibold" style={{ color: CHALK }}>{n.tags.join(', ')}</span> <GameRef row={n.row} />
@@ -7653,11 +7653,11 @@ function PlayerComparePage({ league, teamsById, initialNameA, initialNameB, onBa
   );
 
   return (
-    <div className="p-4 space-y-4">
+    <div className="p-3 space-y-3">
       <button onClick={onBack} className="flex items-center gap-1 text-sm" style={{ color: CHALK_DIM }}><ArrowLeft size={14} /> Back</button>
       <Panel>
         <SectionTitle>Player comparison</SectionTitle>
-        <div className="px-4 pb-4 flex items-start gap-2">
+        <div className="px-4 pb-3 flex items-start gap-2">
           <PickerSide teamKey={teamAKey} setTeamKey={setTeamAKey} name={nameA} setName={setNameA} />
           <span className="text-xs font-bold pt-2" style={{ color: CHALK_DIM }}>VS</span>
           <PickerSide teamKey={teamBKey} setTeamKey={setTeamBKey} name={nameB} setName={setNameB} />
@@ -7741,7 +7741,7 @@ function StatLeadersView({ league, season, teamsById, onOpenPlayer, leagueLogoUr
   const fmtIp = (v) => v.toFixed(1);
 
   return (
-    <div className="p-4 space-y-4">
+    <div className="p-3 space-y-3">
       <Panel className="overflow-hidden" style={{ borderColor: GOLD }}>
         <SectionTitle accent={GOLD} right={
           <div className="flex items-center gap-2 flex-wrap justify-end">
@@ -7759,7 +7759,7 @@ function StatLeadersView({ league, season, teamsById, onOpenPlayer, leagueLogoUr
             )}
           </div>
         }>Stat leaders</SectionTitle>
-        <p className="px-4 pb-4 text-xs" style={{ color: CHALK_DIM }}>{scope === 'career' ? 'Ranked from every season on record, combined per player' : "Ranked from imported game stats for this season"} {mode === 'playoffs' ? 'playoff games' : 'regular season'} only. Rate stats (AVG, OPS, ERA, WHIP) need at least 3 AB or 1 IP to qualify. WAR is a simplified estimate — linear-weights batting runs plus runs saved vs. league-average ERA, not an official sabermetric figure.</p>
+        <p className="px-4 pb-3 text-xs" style={{ color: CHALK_DIM }}>{scope === 'career' ? 'Ranked from every season on record, combined per player' : "Ranked from imported game stats for this season"} {mode === 'playoffs' ? 'playoff games' : 'regular season'} only. Rate stats (AVG, OPS, ERA, WHIP) need at least 3 AB or 1 IP to qualify. WAR is a simplified estimate — linear-weights batting runs plus runs saved vs. league-average ERA, not an official sabermetric figure.</p>
       </Panel>
 
       {players.length === 0 ? (
@@ -7890,7 +7890,7 @@ function FuturesPanel({ season, standings, teamsById, settings, h2hMatrix }) {
           <button onClick={() => setNonce(n => n + 1)} className="text-[11px] font-bold flex items-center gap-1" style={{ color: PRIMARY }}><RefreshCw size={12} /> Regenerate</button>
       }>Futures board</SectionTitle>
       <p className="px-4 pb-3 text-xs" style={{ color: CHALK_DIM }}>A fresh line-up of odds-based questions each round, all kept between {FUTURES_MIN_PCT}-{FUTURES_MAX_PCT}% so they're genuine toss-ups. Recomputes automatically as games get played and the round advances, or tap Regenerate for a different set right now.</p>
-      <div className="px-3 pb-4 space-y-2.5">
+      <div className="px-3 pb-3 space-y-2.5">
         {!pool && <p className="px-2 py-4 text-sm" style={{ color: CHALK_DIM }}>Computing this round's futures…</p>}
         {pool && selected.length === 0 && <p className="px-2 py-4 text-sm" style={{ color: CHALK_DIM }}>Not enough close races yet for meaningful futures — check back after a few more games.</p>}
         {selected.map(f => <FutureCard key={f.id} f={f} oddsFormat={oddsFormat} decimals={decimals} />)}
@@ -7946,7 +7946,7 @@ function OddsView({ season, teamsById, standings, settings, onOpenTeam, h2hMatri
   const remaining = [...remainingRegular, ...nextPlayoffGames];
 
   return (
-    <div className="p-4 space-y-4">
+    <div className="p-3 space-y-3">
       <div className="flex items-center justify-end gap-2">
         <span className="text-[11px]" style={{ color: CHALK_DIM }}>Odds view (just for you):</span>
         <div className="flex rounded overflow-hidden border" style={{ borderColor: LINE }}>
@@ -7962,9 +7962,9 @@ function OddsView({ season, teamsById, standings, settings, onOpenTeam, h2hMatri
       <Panel>
         <SectionTitle>Playoff series odds</SectionTitle>
         {!playoffSim ? (
-          <p className="px-4 pb-4 text-sm" style={{ color: CHALK_DIM }}>{season.oddsCache ? 'Not enough teams yet to simulate a bracket.' : 'Odds haven’t been computed for this season yet — they’ll generate the next time a score is entered.'}</p>
+          <p className="px-4 pb-3 text-sm" style={{ color: CHALK_DIM }}>{season.oddsCache ? 'Not enough teams yet to simulate a bracket.' : 'Odds haven’t been computed for this season yet — they’ll generate the next time a score is entered.'}</p>
         ) : (
-          <div className="overflow-x-auto px-2 pb-4">
+          <div className="overflow-x-auto px-2 pb-3">
             <table className="text-sm" style={{ color: CHALK, minWidth: '100%' }}>
               <thead><tr className="text-[10px] uppercase" style={{ color: CHALK_DIM }}>
                 <th className="text-left px-2 py-1">Team</th>
@@ -7990,12 +7990,12 @@ function OddsView({ season, teamsById, standings, settings, onOpenTeam, h2hMatri
             </table>
           </div>
         )}
-        {playoffSim && <p className="px-4 pb-4 text-[11px]" style={{ color: CHALK_DIM }}>"Rd N" is the chance of reaching that round; Champion is the chance of winning it all. Based on {settings.simRuns.toLocaleString()} simulated brackets. Teams already eliminated from the bracket are dropped from this table.</p>}
+        {playoffSim && <p className="px-4 pb-3 text-[11px]" style={{ color: CHALK_DIM }}>"Rd N" is the chance of reaching that round; Champion is the chance of winning it all. Based on {settings.simRuns.toLocaleString()} simulated brackets. Teams already eliminated from the bracket are dropped from this table.</p>}
       </Panel>
 
       <Panel>
         <SectionTitle>Magic &amp; elimination numbers</SectionTitle>
-        <div className="overflow-x-auto px-2 pb-4">
+        <div className="overflow-x-auto px-2 pb-3">
           <table className="text-sm" style={{ color: CHALK }}>
             <thead><tr className="text-[10px] uppercase" style={{ color: CHALK_DIM }}><th className="text-left px-2 py-1">Team</th><th className="px-2 py-1">Status</th><th className="px-2 py-1">Number</th></tr></thead>
             <tbody>
@@ -8014,13 +8014,13 @@ function OddsView({ season, teamsById, standings, settings, onOpenTeam, h2hMatri
             </tbody>
           </table>
         </div>
-        <p className="px-4 pb-4 text-[11px]" style={{ color: CHALK_DIM }}>Approximate, based on remaining games count vs. the bubble teams — not a full combinatorial check.</p>
+        <p className="px-4 pb-3 text-[11px]" style={{ color: CHALK_DIM }}>Approximate, based on remaining games count vs. the bubble teams — not a full combinatorial check.</p>
       </Panel>
 
       {sim && (
         <Panel>
           <SectionTitle>Odds by finish position</SectionTitle>
-          <div className="overflow-x-auto px-2 pb-4">
+          <div className="overflow-x-auto px-2 pb-3">
             <table className="text-sm" style={{ color: CHALK, minWidth: '100%' }}>
               <thead><tr className="text-[10px] uppercase" style={{ color: CHALK_DIM }}><th className="text-left px-2 py-1">Team</th>{Array.from({ length: maxSeed }).map((_, i) => <th key={i} className="px-2 py-1">{i + 1}</th>)}</tr></thead>
               <tbody>
@@ -8033,13 +8033,13 @@ function OddsView({ season, teamsById, standings, settings, onOpenTeam, h2hMatri
               </tbody>
             </table>
           </div>
-          <p className="px-4 pb-4 text-xs" style={{ color: CHALK_DIM }}>Percent chance of finishing in each position, based on {settings.simRuns.toLocaleString()} simulated seasons.</p>
+          <p className="px-4 pb-3 text-xs" style={{ color: CHALK_DIM }}>Percent chance of finishing in each position, based on {settings.simRuns.toLocaleString()} simulated seasons.</p>
         </Panel>
       )}
 
       <Panel>
         <SectionTitle>Upcoming game odds</SectionTitle>
-        <div className="px-3 pb-4 space-y-4 max-h-[420px] overflow-y-auto">
+        <div className="px-3 pb-3 space-y-3 max-h-[420px] overflow-y-auto">
           {remaining.length === 0 && <p className="px-1 py-4 text-sm" style={{ color: CHALK_DIM }}>No unplayed games on the schedule.</p>}
           {(() => {
             const groups = [];
@@ -8118,11 +8118,11 @@ function AwardsView({ league, season, standings, teamsById, addAwardDef, updateA
   });
 
   return (
-    <div className="p-4 space-y-4">
+    <div className="p-3 space-y-3">
       {isLoggedIn && (
         <Panel>
           <SectionTitle>Create an award</SectionTitle>
-          <div className="px-4 pb-4 space-y-2">
+          <div className="px-4 pb-3 space-y-2">
             <input value={name} onChange={e => setName(e.target.value)} placeholder="Award name (e.g. MVP)" className="w-full bg-[#242424] border rounded px-3 py-2 text-sm" style={{ borderColor: LINE, color: CHALK }} />
             <input value={desc} onChange={e => setDesc(e.target.value)} placeholder="Description (optional)" className="w-full bg-[#242424] border rounded px-3 py-2 text-sm" style={{ borderColor: LINE, color: CHALK }} />
             <button onClick={() => { if (name.trim()) { addAwardDef(name.trim(), desc.trim()); setName(''); setDesc(''); } }} className="px-3 py-2 rounded font-bold text-sm flex items-center gap-1" style={{ background: PRIMARY, color: INK }}><Plus size={16} /> Create award</button>
@@ -8146,7 +8146,7 @@ function AwardsView({ league, season, standings, teamsById, addAwardDef, updateA
         return (
           <Panel key={a.id}>
             <SectionTitle right={isLoggedIn && <button onClick={() => removeAwardDef(a.id)} className="p-1 rounded" style={{ color: NEGATIVE }}><Trash2 size={14} /></button>}>{a.name}</SectionTitle>
-            <div className="px-4 pb-4 space-y-2">
+            <div className="px-4 pb-3 space-y-2">
               {a.description && <p className="text-xs" style={{ color: CHALK_DIM }}>{a.description}</p>}
               {winnerList.length > 0 ? (
                 <div className="space-y-1.5">
@@ -8215,10 +8215,10 @@ function LeagueInfoView({ league, updateLeagueInfo, addStaffMember, updateStaffM
   useEffect(() => { setConstitutionDraft((constitution && constitution.text) || ''); }, [constitution && constitution.version]);
 
   return (
-    <div className="p-4 space-y-4">
+    <div className="p-3 space-y-3">
       <Panel>
         <SectionTitle>About the league</SectionTitle>
-        <div className="px-4 pb-4">
+        <div className="px-4 pb-3">
           {isLoggedIn ? (
             <textarea value={descDraft} onChange={e => setDescDraft(e.target.value)} onBlur={() => updateLeagueInfo({ description: descDraft })} placeholder="A short description of the league…" rows={4} className="w-full bg-[#242424] border rounded px-3 py-2 text-sm resize-none" style={{ borderColor: LINE, color: CHALK }} />
           ) : info.description ? (
@@ -8236,7 +8236,7 @@ function LeagueInfoView({ league, updateLeagueInfo, addStaffMember, updateStaffM
             {isLoggedIn && <button onClick={() => setShowConstitution(v => !v)} className="text-[11px] font-semibold" style={{ color: PRIMARY }}>{showConstitution ? 'Close' : 'Edit'}</button>}
           </div>
         }>League constitution</SectionTitle>
-        <div className="px-4 pb-4">
+        <div className="px-4 pb-3">
           {showConstitution && isLoggedIn ? (
             <div className="space-y-2">
               <textarea value={constitutionDraft} onChange={e => setConstitutionDraft(e.target.value)} placeholder="Rules, format, conduct policy — whatever the league's actual constitution covers…" rows={10} className="w-full bg-[#242424] border rounded px-3 py-2 text-sm" style={{ borderColor: LINE, color: CHALK }} />
@@ -8282,7 +8282,7 @@ function LeagueInfoView({ league, updateLeagueInfo, addStaffMember, updateStaffM
           ))}
         </div>
         {isLoggedIn && (
-          <div className="px-4 pb-4 flex flex-wrap items-center gap-2 pt-2" style={{ borderTop: `1px solid ${LINE}` }}>
+          <div className="px-4 pb-3 flex flex-wrap items-center gap-2 pt-2" style={{ borderTop: `1px solid ${LINE}` }}>
             <input value={staffName} onChange={e => setStaffName(e.target.value)} placeholder="Name" className="flex-1 min-w-[120px] bg-[#242424] border rounded px-2 py-1.5 text-sm" style={{ borderColor: LINE, color: CHALK }} />
             <input value={staffRole} onChange={e => setStaffRole(e.target.value)} placeholder="Role (e.g. Commissioner)" className="flex-1 min-w-[120px] bg-[#242424] border rounded px-2 py-1.5 text-sm" style={{ borderColor: LINE, color: CHALK }} />
             <button onClick={() => { if (staffName.trim()) { addStaffMember(staffName.trim(), staffRole.trim()); setStaffName(''); setStaffRole(''); } }} className="px-3 py-1.5 rounded font-bold text-xs flex items-center gap-1 flex-shrink-0" style={{ background: PRIMARY, color: INK }}><Plus size={14} /> Add</button>
@@ -8292,7 +8292,7 @@ function LeagueInfoView({ league, updateLeagueInfo, addStaffMember, updateStaffM
 
       <Panel>
         <SectionTitle>Links</SectionTitle>
-        <div className="px-4 pb-4 space-y-3">
+        <div className="px-4 pb-3 space-y-3">
           <div>
             <div className="text-[10px] uppercase mb-1" style={{ color: CHALK_DIM }}>Discord</div>
             {isLoggedIn ? (
@@ -8547,7 +8547,7 @@ function NewsView({ league, season, teamsById, addNewsPost, updateNewsPost, remo
   };
 
   return (
-    <div className="p-4 space-y-4">
+    <div className="p-3 space-y-3">
       {isLoggedIn && (
         <Panel>
           <SectionTitle right={
@@ -8556,7 +8556,7 @@ function NewsView({ league, season, teamsById, addNewsPost, updateNewsPost, remo
               <button onClick={openRankBuilder} className="px-2.5 py-1 text-[11px] font-bold" style={{ background: postType === 'rankings' ? GOLD : 'transparent', color: postType === 'rankings' ? INK : CHALK_DIM }}>Power Rankings</button>
             </div>
           }>Post news</SectionTitle>
-          <div className="px-4 pb-4 space-y-2">
+          <div className="px-4 pb-3 space-y-2">
             <input value={title} onChange={e => setTitle(e.target.value)} placeholder={postType === 'rankings' ? 'e.g. Week 6 Power Rankings' : 'Headline'} className="w-full bg-[#242424] border rounded px-3 py-2 text-sm font-bold" style={{ borderColor: LINE, color: CHALK }} />
             {postType === 'rankings' ? (
               seasonTeamIds.length === 0 ? (
@@ -8674,7 +8674,7 @@ function ExtrasView({ extras, teamsById, leagueRecords, activityLog, season, sta
   const workload = useMemo(() => season ? computePitcherWorkload(season, teamsById) : [], [season, teamsById]);
   const draftGrades = useMemo(() => season ? computeDraftClassGrades(season, teamsById) : [], [season, teamsById]);
   const draftValue = useMemo(() => season ? computeDraftValueBoard(season, teamsById) : [], [season, teamsById]);
-  if (!extras) return <div className="p-4 space-y-4"><Panel><p className="px-4 py-8 text-sm text-center" style={{ color: CHALK_DIM }}>Enter some scores to unlock fun stats here.</p></Panel></div>;
+  if (!extras) return <div className="p-3 space-y-3"><Panel><p className="px-4 py-8 text-sm text-center" style={{ color: CHALK_DIM }}>Enter some scores to unlock fun stats here.</p></Panel></div>;
   const GameCard = ({ label, g, note }) => {
     if (!g) return null;
     const away = teamsById[g.awayTeamId], home = teamsById[g.homeTeamId];
@@ -8702,7 +8702,7 @@ function ExtrasView({ extras, teamsById, leagueRecords, activityLog, season, sta
   const biggestFaller = movers.length ? movers[movers.length - 1] : null;
   const hasNotable = extras.highest || extras.lowest || extras.longest || extras.shortest || extras.biggestBlowout || extras.highestSingleTeamScore;
   return (
-    <div className="p-4 space-y-4">
+    <div className="p-3 space-y-3">
       {(biggestRiser && biggestRiser.delta > 0) || (biggestFaller && biggestFaller.delta < 0) ? (
         <Panel className="overflow-hidden" style={{ borderColor: GOLD }}>
           <SectionTitle accent={GOLD}>Biggest movers</SectionTitle>
@@ -8722,7 +8722,7 @@ function ExtrasView({ extras, teamsById, leagueRecords, activityLog, season, sta
               </div>
             )}
           </div>
-          <p className="px-4 pb-4 text-[11px]" style={{ color: CHALK_DIM }}>Standings position from the first round of the season to now.</p>
+          <p className="px-4 pb-3 text-[11px]" style={{ color: CHALK_DIM }}>Standings position from the first round of the season to now.</p>
         </Panel>
       ) : null}
       {hasNotable && (
@@ -8770,7 +8770,7 @@ function ExtrasView({ extras, teamsById, leagueRecords, activityLog, season, sta
               </div>
             ))}
           </div>
-          <p className="px-4 pb-4 text-[11px]" style={{ color: CHALK_DIM }}>Based on final standings rank, not the rank at the time the game was actually played.</p>
+          <p className="px-4 pb-3 text-[11px]" style={{ color: CHALK_DIM }}>Based on final standings rank, not the rank at the time the game was actually played.</p>
         </Panel>
       )}
       {extras.closest.length > 0 && (
@@ -8815,7 +8815,7 @@ function ExtrasView({ extras, teamsById, leagueRecords, activityLog, season, sta
               </div>
             )}
           </div>
-          <p className="px-4 pb-4 text-[11px]" style={{ color: CHALK_DIM }}>Scanned across every season in this league.</p>
+          <p className="px-4 pb-3 text-[11px]" style={{ color: CHALK_DIM }}>Scanned across every season in this league.</p>
         </Panel>
       )}
       {consistency.length > 0 && (
@@ -8957,10 +8957,10 @@ function TransactionsView({ season, teamsById, onOpenPlayer, onRemoveActivity, o
   };
 
   return (
-    <div className="p-4 space-y-4">
+    <div className="p-3 space-y-3">
       <Panel className="overflow-hidden" style={{ borderColor: PRIMARY }}>
         <SectionTitle accent={PRIMARY}>Transactions</SectionTitle>
-        <p className="px-4 pb-4 text-xs" style={{ color: CHALK_DIM }}>Every signing, trade, release, suspension, and ban recorded this season.</p>
+        <p className="px-4 pb-3 text-xs" style={{ color: CHALK_DIM }}>Every signing, trade, release, suspension, and ban recorded this season.</p>
       </Panel>
 
       {isLoggedIn && appeals.length > 0 && (
@@ -9079,7 +9079,7 @@ function TimeCapsulePanel({ season, rounds, roundHistory, teamsById, onOpenTeam,
           <span className="truncate text-right">{rounds[rounds.length - 1].label}</span>
         </div>
       </div>
-      <div className="grid grid-cols-1 lg:grid-cols-2 gap-3 px-4 pb-4">
+      <div className="grid grid-cols-1 lg:grid-cols-2 gap-3 px-4 pb-3">
         <div className="rounded-lg border overflow-hidden" style={{ borderColor: LINE }}>
           <div className="px-3 py-2 text-[11px] font-bold uppercase tracking-wide" style={{ background: PANEL2, color: CHALK_DIM }}>Standings</div>
           {snap.standings.map((t, i) => (
@@ -9192,7 +9192,7 @@ function GraphsView({ league, roundHistory, standings, scoringTrend, season, h2h
   const topWarData = [...playerLeaders].sort((a, b) => b.war - a.war).slice(0, 8).map(p => ({ name: p.name, value: Number(p.war.toFixed(1)), color: (teamsByIdLocal[p.teamId] && teamColor(teamsByIdLocal[p.teamId])) || GOLD }));
 
   return (
-    <div className="p-4 space-y-4">
+    <div className="p-3 space-y-3">
       <div className="flex flex-wrap gap-1 rounded-lg overflow-hidden border w-fit" style={{ borderColor: LINE }}>
         {GRAPH_CATEGORIES.map(c => (
           <button key={c.key} onClick={() => setCat(c.key)} className="px-3 py-1.5 text-xs font-bold" style={{ background: cat === c.key ? PRIMARY : 'transparent', color: cat === c.key ? INK : CHALK_DIM }}>{c.label}</button>
@@ -9261,7 +9261,7 @@ function GraphsView({ league, roundHistory, standings, scoringTrend, season, h2h
       {cat === 'trends' && scoringTrend.length > 0 && (
         <Panel>
           <SectionTitle>League scoring trend</SectionTitle>
-          <div className="px-2 pb-4">
+          <div className="px-2 pb-3">
             <ResponsiveContainer width="100%" height={240}>
               <LineChart data={scoringTrend} margin={{ left: -10, right: 12, top: 8 }}>
                 <CartesianGrid stroke={LINE} strokeDasharray="3 3" />
@@ -9345,7 +9345,7 @@ function GraphsView({ league, roundHistory, standings, scoringTrend, season, h2h
       {season.oddsCache && season.oddsCache.sim && (
         <Panel>
           <SectionTitle>Playoff odds ({season.settings.playoffSpots} spot{season.settings.playoffSpots === 1 ? '' : 's'}, {season.settings.simRuns.toLocaleString()} runs)</SectionTitle>
-          <div className="px-4 pb-4">
+          <div className="px-4 pb-3">
             <ResponsiveContainer width="100%" height={Math.max(160, standings.length * 34)}>
               <BarChart data={standings.map(t => ({ name: t.displayName, pct: season.oddsCache.sim[t.id] ? Number(season.oddsCache.sim[t.id].playoffPct.toFixed(1)) : 0, id: t.id }))} layout="vertical" margin={{ left: 8, right: 24 }}>
                 <CartesianGrid stroke={LINE} horizontal={false} />
@@ -9380,7 +9380,7 @@ function GraphsView({ league, roundHistory, standings, scoringTrend, season, h2h
 
       <Panel>
         <SectionTitle>Home vs. away win %</SectionTitle>
-        <div className="px-2 pb-4">
+        <div className="px-2 pb-3">
           <ResponsiveContainer width="100%" height={Math.max(160, standings.length * 30)}>
             <BarChart data={homeAwayData} layout="vertical" margin={{ left: 8, right: 16 }}>
               <CartesianGrid stroke={LINE} horizontal={false} />
@@ -9397,7 +9397,7 @@ function GraphsView({ league, roundHistory, standings, scoringTrend, season, h2h
 
       <Panel>
         <SectionTitle>Runs for vs. against</SectionTitle>
-        <div className="px-2 pb-4">
+        <div className="px-2 pb-3">
           <ResponsiveContainer width="100%" height={Math.max(160, standings.length * 30)}>
             <BarChart data={standings.map(t => ({ name: t.displayName, RF: t.rf, RA: t.ra }))} layout="vertical" margin={{ left: 8, right: 16 }}>
               <CartesianGrid stroke={LINE} horizontal={false} />
@@ -9414,7 +9414,7 @@ function GraphsView({ league, roundHistory, standings, scoringTrend, season, h2h
 
       <Panel>
         <SectionTitle>Margin of victory</SectionTitle>
-        <div className="px-2 pb-4">
+        <div className="px-2 pb-3">
           <ResponsiveContainer width="100%" height={220}>
             <BarChart data={marginData} margin={{ left: -10, right: 16, top: 8 }}>
               <CartesianGrid stroke={LINE} strokeDasharray="3 3" />
@@ -9439,7 +9439,7 @@ function GraphsView({ league, roundHistory, standings, scoringTrend, season, h2h
         <>
           <Panel>
             <SectionTitle accent={GOLD}>Home run leaders</SectionTitle>
-            <div className="px-2 pb-4">
+            <div className="px-2 pb-3">
               <ResponsiveContainer width="100%" height={Math.max(160, topHrData.length * 32)}>
                 <BarChart data={topHrData} layout="vertical" margin={{ left: 8, right: 16 }}>
                   <CartesianGrid stroke={LINE} horizontal={false} />
@@ -9455,7 +9455,7 @@ function GraphsView({ league, roundHistory, standings, scoringTrend, season, h2h
           </Panel>
           <Panel>
             <SectionTitle accent={GOLD}>WAR leaders</SectionTitle>
-            <div className="px-2 pb-4">
+            <div className="px-2 pb-3">
               <ResponsiveContainer width="100%" height={Math.max(160, topWarData.length * 32)}>
                 <BarChart data={topWarData} layout="vertical" margin={{ left: 8, right: 16 }}>
                   <CartesianGrid stroke={LINE} horizontal={false} />
@@ -9514,7 +9514,7 @@ function H2HSection({ standings, h2hMatrix, season, onOpenTeam, spotA, spotB, se
     .sort((x, y) => (y.date || '').localeCompare(x.date || ''));
 
   return (
-    <div className="space-y-4">
+    <div className="space-y-3">
       <Panel className="overflow-hidden">
         <div className="px-4 pt-4 pb-2 flex items-center gap-2 flex-wrap">
           <span className="text-xs font-bold uppercase tracking-wide" style={{ color: CHALK_DIM }}>Spotlight</span>
@@ -9614,7 +9614,7 @@ function H2HSection({ standings, h2hMatrix, season, onOpenTeam, spotA, spotB, se
             </tbody>
           </table>
         </div>
-        <p className="px-4 pb-4 text-[11px]" style={{ color: CHALK_DIM }}>Reading across a row: that team's record against each column team. Click any cell to load it into the spotlight above.</p>
+        <p className="px-4 pb-3 text-[11px]" style={{ color: CHALK_DIM }}>Reading across a row: that team's record against each column team. Click any cell to load it into the spotlight above.</p>
       </Panel>
     </div>
   );
@@ -11632,7 +11632,7 @@ function App() {
     body = <LeaguesView index={leaguesIndex} onOpen={openLeague} onCreate={createLeague} onDelete={deleteLeagueById} onRename={renameLeague} onRefresh={refreshIndexes} loadError={loadError} onOpenRegistry={openRegistry} onOpenAppearance={() => setScreen('appearance')} />;
   } else if (screen === 'appearance') {
     body = (
-      <div className="p-4 space-y-4">
+      <div className="p-3 space-y-3">
         <button onClick={() => setScreen('leagues')} className="flex items-center gap-1 text-sm" style={{ color: CHALK_DIM }}><ArrowLeft size={14} /> Back</button>
         <AppearanceSettings theme={theme} saveTheme={saveTheme} />
       </div>
