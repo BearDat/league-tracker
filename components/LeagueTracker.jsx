@@ -11,7 +11,7 @@ import {
   ChevronRight, ChevronLeft, ChevronUp, ChevronDown, Pencil, Check, X, Folder, Save, RefreshCw, ArrowLeft,
   Activity, AlertTriangle, Image as ImageIcon, Layers, Crown, History, Sparkles, Home as HomeIcon, Settings as SettingsIcon,
   Award as AwardIcon, Eye, EyeOff, Sun, Moon, Video, ClipboardList, Newspaper, Info as InfoIcon, TrendingUp, Star, Ban,
-  Bell, Search
+  Bell, Search, Pause
 } from 'lucide-react';
 import { supabase } from '../lib/supabaseClient';
 import { AuthProvider, useAuth, ROLE_LABELS } from '../lib/AuthContext';
@@ -3009,17 +3009,19 @@ function HomeView({ season, teamsById, settings, onOpenTeam, h2hMatrix, sport, o
         }
         const GameChip = ({ g }) => {
           const home = teamsById[g.homeTeamId], away = teamsById[g.awayTeamId];
-          const isLive = g.isOngoing && !g.played;
-          const periodLabel = isLive ? formatLivePeriod(sport, g.livePeriod, g.liveHalf) : null;
-          const awayScore = isLive ? g.liveAwayScore : g.awayScore;
-          const homeScore = isLive ? g.liveHomeScore : g.homeScore;
-          const showScore = g.played || (isLive && awayScore != null && homeScore != null);
+          const inProgress = g.isOngoing && !g.played;
+          const delayed = inProgress && !!g.isDelayed;
+          const isLive = inProgress && !delayed;
+          const periodLabel = inProgress ? formatLivePeriod(sport, g.livePeriod, g.liveHalf) : null;
+          const awayScore = inProgress ? g.liveAwayScore : g.awayScore;
+          const homeScore = inProgress ? g.liveHomeScore : g.homeScore;
+          const showScore = g.played || (inProgress && awayScore != null && homeScore != null);
           return (
-            <div className="flex-shrink-0 snap-start rounded-lg p-3" style={{ width: 168, background: PANEL2, border: `1px solid ${isLive ? NEGATIVE : LINE}` }}>
-              <div className="text-[9px] uppercase font-bold mb-2 flex items-center justify-between" style={{ color: isLive ? NEGATIVE : g.played ? CHALK_DIM : PRIMARY }}>
+            <div className="flex-shrink-0 snap-start rounded-lg p-3" style={{ width: 168, background: PANEL2, border: `1px solid ${isLive ? NEGATIVE : delayed ? GOLD : LINE}` }}>
+              <div className="text-[9px] uppercase font-bold mb-2 flex items-center justify-between" style={{ color: isLive ? NEGATIVE : delayed ? GOLD : g.played ? CHALK_DIM : PRIMARY }}>
                 <span className="flex items-center gap-1">
                   {isLive && <span className="w-1.5 h-1.5 rounded-full flex-shrink-0" style={{ background: NEGATIVE, animation: 'lt-live-pulse 1.4s ease-in-out infinite' }} />}
-                  {isLive ? (periodLabel || 'Live') : g.played ? 'Final' : (g.date ? (settings.scheduleMode === 'round' ? formatRoundLabel(g.date) : g.date) : 'Upcoming')}
+                  {isLive ? (periodLabel || 'Live') : delayed ? 'Delayed' : g.played ? 'Final' : (g.date ? (settings.scheduleMode === 'round' ? formatRoundLabel(g.date) : g.date) : 'Upcoming')}
                 </span>
                 {g.streamUrl && !g.played && <Video size={11} style={{ color: PRIMARY }} />}
               </div>
@@ -5139,7 +5141,7 @@ function BulkScoreEntryPanel({ games, teamsById, onBulkSaveScores }) {
     </Panel>
   );
 }
-function ScheduleView({ season, settings, saveScore, deleteGame, declareForfeit, setWinnerOverride, teamsById, sport, updateGameNotes, updateGameStreamUrl, saveGamePlayerStats, setGameOngoing, swapHomeAway, onBulkSaveScores }) {
+function ScheduleView({ season, settings, saveScore, deleteGame, declareForfeit, setWinnerOverride, teamsById, sport, updateGameNotes, updateGameStreamUrl, saveGamePlayerStats, setGameOngoing, setGameDelayed, swapHomeAway, onBulkSaveScores }) {
   const { hasPermission } = useAuth();
   const isLoggedIn = hasPermission('manageSchedule');
   const scheduleMode = settings.scheduleMode || 'date';
@@ -5319,10 +5321,14 @@ function ScheduleView({ season, settings, saveScore, deleteGame, declareForfeit,
                                 Final{g.innings && g.innings !== (settings.standardInnings || 7) && !g.isPlayoff ? `/${g.innings}` : ''}{g.isForfeit ? ' (F)' : ''}{g.winnerOverride ? ' *' : ''}
                               </span>
                             : g.isOngoing
-                              ? <span className="flex items-center gap-1 font-bold text-[10px] uppercase tracking-wide px-2 py-0.5 rounded" style={{ background: `${NEGATIVE}22`, color: NEGATIVE }}>
-                                  <span className="w-1.5 h-1.5 rounded-full" style={{ background: NEGATIVE, animation: 'lt-live-pulse 1.4s ease-in-out infinite' }} />
-                                  Live{formatLivePeriod(sport, g.livePeriod, g.liveHalf) ? ` · ${formatLivePeriod(sport, g.livePeriod, g.liveHalf)}` : ''}
-                                </span>
+                              ? (g.isDelayed
+                                ? <span className="flex items-center gap-1 font-bold text-[10px] uppercase tracking-wide px-2 py-0.5 rounded" style={{ background: `${GOLD}22`, color: GOLD }}>
+                                    <Pause size={10} /> Delayed
+                                  </span>
+                                : <span className="flex items-center gap-1 font-bold text-[10px] uppercase tracking-wide px-2 py-0.5 rounded" style={{ background: `${NEGATIVE}22`, color: NEGATIVE }}>
+                                    <span className="w-1.5 h-1.5 rounded-full" style={{ background: NEGATIVE, animation: 'lt-live-pulse 1.4s ease-in-out infinite' }} />
+                                    Live{formatLivePeriod(sport, g.livePeriod, g.liveHalf) ? ` · ${formatLivePeriod(sport, g.livePeriod, g.liveHalf)}` : ''}
+                                  </span>)
                               : <span className="text-[10px] font-bold uppercase tracking-wide px-2 py-0.5 rounded" style={{ background: PANEL2, color: CHALK_DIM }}>Upcoming</span>}
                           {g.streamUrl && !g.played && (
                             <a href={g.streamUrl} target="_blank" rel="noopener noreferrer" className="flex items-center gap-1 text-[10px] font-bold uppercase tracking-wide px-2 py-0.5 rounded" style={{ background: `${PRIMARY}22`, color: PRIMARY }}><Video size={11} /> Watch</a>
@@ -5331,7 +5337,7 @@ function ScheduleView({ season, settings, saveScore, deleteGame, declareForfeit,
                         {isLoggedIn && (
                           <div className="flex items-center justify-center gap-1 mt-1.5 pt-1.5" style={{ borderTop: `1px solid ${LINE}` }}>
                             {!g.played && (
-                              <button onClick={() => { setLiveForm({ away: String(g.liveAwayScore ?? 0), home: String(g.liveHomeScore ?? 0), period: String(g.livePeriod ?? 1), half: g.liveHalf || 'top' }); setLiveEditingId(g.id); setEditingId(null); }} className="p-1 rounded" style={{ color: g.isOngoing ? NEGATIVE : CHALK_DIM }} title={g.isOngoing ? 'Update live game' : 'Mark as ongoing'}><Activity size={13} /></button>
+                              <button onClick={() => { setLiveForm({ away: String(g.liveAwayScore ?? 0), home: String(g.liveHomeScore ?? 0), period: String(g.livePeriod ?? 1), half: g.liveHalf || 'top' }); setLiveEditingId(g.id); setEditingId(null); }} className="p-1 rounded" style={{ color: g.isOngoing ? (g.isDelayed ? GOLD : NEGATIVE) : CHALK_DIM }} title={g.isOngoing ? (g.isDelayed ? 'Delayed — update live game' : 'Update live game') : 'Mark as ongoing'}><Activity size={13} /></button>
                             )}
                             <button onClick={() => swapHomeAway(g.id)} className="p-1 rounded font-bold text-xs" style={{ color: CHALK_DIM }} title="Swap home/away">⇄</button>
                             <button onClick={() => openScoreEditor(g)} className="p-1 rounded" style={{ color: PRIMARY }}><Pencil size={13} /></button>
@@ -5355,9 +5361,13 @@ function ScheduleView({ season, settings, saveScore, deleteGame, declareForfeit,
                           </div>
                           <div className="flex flex-wrap items-center gap-2">
                             <button onClick={() => { setGameOngoing(g.id, true, { away: Number(liveForm.away) || 0, home: Number(liveForm.home) || 0, period: Number(liveForm.period) || 1, half: liveForm.half }); setLiveEditingId(null); }} className="px-3 py-1.5 rounded font-bold text-xs flex items-center gap-1" style={{ background: NEGATIVE, color: INK }}><Activity size={12} /> {g.isOngoing ? 'Update' : 'Go live'}</button>
+                            {g.isOngoing && (g.isDelayed
+                              ? <button onClick={() => { setGameDelayed(g.id, false); setLiveEditingId(null); }} className="px-3 py-1.5 rounded font-bold text-xs flex items-center gap-1" style={{ background: GOLD, color: INK }}><Activity size={12} /> Resume</button>
+                              : <button onClick={() => { setGameDelayed(g.id, true); setLiveEditingId(null); }} className="px-3 py-1.5 rounded font-bold text-xs flex items-center gap-1" style={{ background: 'transparent', color: GOLD, border: `1px solid ${GOLD}` }}><Pause size={12} /> Mark delayed</button>)}
                             {g.isOngoing && <button onClick={() => { setGameOngoing(g.id, false); setLiveEditingId(null); }} className="px-3 py-1.5 rounded font-bold text-xs" style={{ background: PANEL2, color: CHALK_DIM, border: `1px solid ${LINE}` }}>End live</button>}
                             <button onClick={() => setLiveEditingId(null)} className="px-2 py-1.5 rounded text-xs" style={{ color: CHALK_DIM }}>Cancel</button>
                           </div>
+                          {g.isDelayed && <p className="text-[11px] font-semibold" style={{ color: GOLD }}>Marked delayed — score is held as-is and won't pulse as live until you resume or update it.</p>}
                           <p className="text-[11px]" style={{ color: CHALK_DIM }}>Live score and {sport.period} are informational only — they don't count toward standings until you enter a final score with the pencil icon.</p>
                         </div>
                       )}
@@ -9639,25 +9649,32 @@ function LiveTicker({ season, teamsById, sport, onOpenTeam }) {
 
   const Item = ({ g }) => {
     const home = teamsById[g.homeTeamId], away = teamsById[g.awayTeamId];
-    const isLive = g.isOngoing && !g.played;
-    const periodLabel = isLive ? formatLivePeriod(sport, g.livePeriod, g.liveHalf) : null;
-    const awayScore = isLive ? g.liveAwayScore : g.awayScore;
-    const homeScore = isLive ? g.liveHomeScore : g.homeScore;
+    const inProgress = g.isOngoing && !g.played;
+    const delayed = inProgress && !!g.isDelayed;
+    const isLive = inProgress && !delayed;
+    const periodLabel = inProgress ? formatLivePeriod(sport, g.livePeriod, g.liveHalf) : null;
+    const awayScore = inProgress ? g.liveAwayScore : g.awayScore;
+    const homeScore = inProgress ? g.liveHomeScore : g.homeScore;
     return (
-      <div className="flex items-center gap-2 px-3 py-1.5 rounded-lg flex-shrink-0" style={{ background: PANEL2, border: `1px solid ${isLive ? NEGATIVE : LINE}` }}>
+      <div className="flex items-center gap-2 px-3 py-1.5 rounded-lg flex-shrink-0" style={{ background: PANEL2, border: `1px solid ${isLive ? NEGATIVE : delayed ? GOLD : LINE}` }}>
         {isLive && <span className="w-1.5 h-1.5 rounded-full flex-shrink-0" style={{ background: NEGATIVE, animation: 'lt-live-pulse 1.4s ease-in-out infinite' }} />}
         <button onClick={() => away && onOpenTeam(away.id)} className="flex items-center gap-1 text-xs font-semibold" style={{ color: CHALK }}>{away && <TeamMark team={away} size={13} />} {away ? away.name : g.awayScheduleName}</button>
         <span className="font-mono text-xs font-bold" style={{ color: CHALK }}>{awayScore}-{homeScore}</span>
         <button onClick={() => home && onOpenTeam(home.id)} className="flex items-center gap-1 text-xs font-semibold" style={{ color: CHALK }}>{home ? home.name : g.homeScheduleName} {home && <TeamMark team={home} size={13} />}</button>
-        <span className="text-[10px] font-bold uppercase flex-shrink-0" style={{ color: isLive ? NEGATIVE : CHALK_DIM }}>{isLive ? (periodLabel || 'Live') : 'Final'}</span>
+        <span className="text-[10px] font-bold uppercase flex-shrink-0" style={{ color: isLive ? NEGATIVE : delayed ? GOLD : CHALK_DIM }}>{isLive ? (periodLabel || 'Live') : delayed ? 'Delayed' : 'Final'}</span>
       </div>
     );
   };
 
+  const anyLive = liveGames.some(g => !g.isDelayed);
+  const anyDelayed = liveGames.some(g => g.isDelayed);
+  const headerLabel = anyLive ? 'Live' : anyDelayed ? 'Delayed' : 'Latest';
+  const headerColor = anyLive ? NEGATIVE : anyDelayed ? GOLD : CHALK_DIM;
+
   return (
     <div className="fixed bottom-0 left-0 right-0 z-30" style={{ background: `${PANEL}f7`, backdropFilter: 'blur(10px)', WebkitBackdropFilter: 'blur(10px)', borderTop: `1px solid ${LINE}` }}>
       <div className="max-w-6xl mx-auto px-3 py-2 flex items-center gap-2">
-        <span className="text-[10px] font-bold uppercase flex-shrink-0" style={{ color: liveGames.length > 0 ? NEGATIVE : CHALK_DIM }}>{liveGames.length > 0 ? 'Live' : 'Latest'}</span>
+        <span className="text-[10px] font-bold uppercase flex-shrink-0" style={{ color: headerColor }}>{headerLabel}</span>
         <div className="flex-1 flex items-center gap-2 overflow-x-auto">
           {items.map(g => <Item key={g.id} g={g} />)}
         </div>
@@ -11342,7 +11359,7 @@ function App() {
   };
   const saveScore = (gameId, { awayScore, homeScore, innings }) => {
     if (!league || !activeSeason) return;
-    const updatedGames = activeSeason.games.map(g => g.id === gameId ? { ...g, awayScore, homeScore, innings, played: true, isForfeit: false, forfeitBy: null, isOngoing: false } : g);
+    const updatedGames = activeSeason.games.map(g => g.id === gameId ? { ...g, awayScore, homeScore, innings, played: true, isForfeit: false, forfeitBy: null, isOngoing: false, isDelayed: false } : g);
     const { games: afterPlayIn } = advancePlayIn(updatedGames);
     const { games, championTeamId } = advancePlayoffs(afterPlayIn, activeSeason.settings, seedById);
     const seasons = league.seasons.map(s => s.id === activeSeason.id ? withOddsCache({ ...s, games, championTeamId: championTeamId !== undefined ? championTeamId : s.championTeamId }) : s);
@@ -11357,7 +11374,7 @@ function App() {
     const updatedGames = activeSeason.games.map(g => {
       const u = byGameId.get(g.id);
       if (!u) return g;
-      return { ...g, awayScore: u.awayScore, homeScore: u.homeScore, innings: u.innings, played: true, isForfeit: false, forfeitBy: null, isOngoing: false };
+      return { ...g, awayScore: u.awayScore, homeScore: u.homeScore, innings: u.innings, played: true, isForfeit: false, forfeitBy: null, isOngoing: false, isDelayed: false };
     });
     const { games: afterPlayIn } = advancePlayIn(updatedGames);
     const { games, championTeamId } = advancePlayoffs(afterPlayIn, activeSeason.settings, seedById);
@@ -11368,7 +11385,7 @@ function App() {
     if (!league || !activeSeason) return;
     const homeScore = forfeitBy === 'home' ? 0 : 9;
     const awayScore = forfeitBy === 'away' ? 0 : 9;
-    const updatedGames = activeSeason.games.map(g => g.id === gameId ? { ...g, awayScore, homeScore, innings: 0, played: true, isForfeit: true, forfeitBy, winnerOverride: null, isOngoing: false } : g);
+    const updatedGames = activeSeason.games.map(g => g.id === gameId ? { ...g, awayScore, homeScore, innings: 0, played: true, isForfeit: true, forfeitBy, winnerOverride: null, isOngoing: false, isDelayed: false } : g);
     const { games: afterPlayIn } = advancePlayIn(updatedGames);
     const { games, championTeamId } = advancePlayoffs(afterPlayIn, activeSeason.settings, seedById);
     const seasons = league.seasons.map(s => s.id === activeSeason.id ? withOddsCache({ ...s, games, championTeamId: championTeamId !== undefined ? championTeamId : s.championTeamId }) : s);
@@ -11386,11 +11403,27 @@ function App() {
       ...s, games: s.games.map(g => g.id === gameId ? {
         ...g,
         isOngoing: ongoing,
+        // Going live/updating always means it's actually live again, and
+        // ending live abandons the session entirely — either way this isn't
+        // "delayed" anymore. Marking delayed is its own explicit action
+        // (setGameDelayed) so a paused game's score survives in between.
+        isDelayed: false,
         liveAwayScore: ongoing ? (liveState ? liveState.away : g.liveAwayScore) : null,
         liveHomeScore: ongoing ? (liveState ? liveState.home : g.liveHomeScore) : null,
         livePeriod: ongoing ? (liveState ? liveState.period : g.livePeriod) : null,
         liveHalf: ongoing ? (liveState ? liveState.half : g.liveHalf) : null,
       } : g)
+    } : s);
+    persistLeague({ ...league, seasons });
+  };
+  // Pauses a live game in place (weather delay, resumes later) without
+  // wiping its live score/period the way ending live does — the schedule
+  // shows "Delayed" instead of a pulsing "Live" badge until someone resumes
+  // it or updates the score again.
+  const setGameDelayed = (gameId, delayed) => {
+    if (!league || !activeSeason) return;
+    const seasons = league.seasons.map(s => s.id === activeSeason.id ? {
+      ...s, games: s.games.map(g => g.id === gameId ? { ...g, isDelayed: delayed } : g)
     } : s);
     persistLeague({ ...league, seasons });
   };
@@ -11658,7 +11691,7 @@ function App() {
     } else if (tab === 'roster' && canGM) {
       body = <RosterManagementView season={activeSeason} teamsById={displayTeamsById} updatePlayerField={updatePlayerField} removePlayer={removePlayer} addPlayer={addPlayer} addPlayersBulk={addPlayersBulk} tradePlayer={tradePlayer} tradePlayers={tradePlayers} proposeTrade={proposeTrade} executeTradeProposal={executeTradeProposal} discardTradeProposal={discardTradeProposal} setPlayerSuspended={setPlayerSuspended} setPlayerBanned={setPlayerBanned} onOpenPlayer={onOpenPlayer} signFreeAgent={signFreeAgent} deleteFreeAgent={deleteFreeAgent} deleteFreeAgentsBulk={deleteFreeAgentsBulk} />;
     } else if (tab === 'schedule') {
-      body = <ScheduleView season={activeSeason} settings={activeSeason.settings} saveScore={saveScore} deleteGame={deleteGame} declareForfeit={declareForfeit} setWinnerOverride={setWinnerOverride} teamsById={displayTeamsById} sport={sport} updateGameNotes={updateGameNotes} updateGameStreamUrl={updateGameStreamUrl} saveGamePlayerStats={saveGamePlayerStats} setGameOngoing={setGameOngoing} swapHomeAway={swapHomeAway} onBulkSaveScores={bulkSaveScores} />;
+      body = <ScheduleView season={activeSeason} settings={activeSeason.settings} saveScore={saveScore} deleteGame={deleteGame} declareForfeit={declareForfeit} setWinnerOverride={setWinnerOverride} teamsById={displayTeamsById} sport={sport} updateGameNotes={updateGameNotes} updateGameStreamUrl={updateGameStreamUrl} saveGamePlayerStats={saveGamePlayerStats} setGameOngoing={setGameOngoing} setGameDelayed={setGameDelayed} swapHomeAway={swapHomeAway} onBulkSaveScores={bulkSaveScores} />;
     } else if (tab === 'stats') {
       body = <StatsView standings={standings} onOpenTeam={onOpenTeam} season={activeSeason} />;
     } else if (tab === 'leaders') {
