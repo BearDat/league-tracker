@@ -112,7 +112,7 @@ boundary. Treat every admin account as trusted, the same as before roles existed
 | Media | News posts |
 
 **Granting a role:** create the account in Supabase (Authentication → Users → Add user,
-per step 4 above), copy its User UID, then a Site Owner adds it from **Settings → Manage
+per step 4 above), copy its User UID, then a Site Owner adds it from **Admin → Manage
 admins** in the app itself. Changing or revoking a role works the same way.
 
 **Migrating an existing email-login account to a username:** open Authentication → Users
@@ -121,3 +121,94 @@ in the Supabase dashboard, click the account, and edit its email to
 `@admin.local`) — their password doesn't change. Do this for every existing admin account
 before they next try to log in, since the login form now always appends `@admin.local`
 itself.
+
+## Discord bot
+
+Three separate pieces, all optional and independent of each other:
+
+- **Feedback button** (bottom-right of every page) — posts to a Discord webhook.
+- **Admin action alerts** — every entry the app writes to its admin audit log (role
+  changes, bans, forfeits, season create/delete, etc.) also posts to a Discord webhook.
+- **Slash commands** (`/standings`, `/player`, `/compare`, `/leaders`, `/nextgame`,
+  `/help`) — answered live from the same Supabase data the site itself reads, via
+  Discord's HTTP Interactions API (no always-on bot process to host — it runs as an
+  ordinary Vercel route, same as the rest of this app).
+
+The two webhook-based pieces (feedback, admin alerts) don't need a bot at all — just a
+webhook URL each. Slash commands need a real Discord Application/bot. All of the
+following happens in Discord's own UI and dashboard, since that's tied to your Discord
+account — nothing here can be scripted from outside it.
+
+### 1. Feedback and admin-alert webhooks
+
+A Discord webhook posts to exactly one channel — that's what makes "only send admin
+alerts to one specific server" automatic: point the webhook at that one channel, in that
+one server, and nothing else ever gets it, no matter how many other servers the bot (if
+you set one up) is also sitting in.
+
+1. In the Discord channel you want feedback to land in: **Channel Settings → Integrations
+   → Webhooks → New Webhook**. Copy its **Webhook URL**.
+2. Do the same in your admin server's specific channel for admin action alerts — a
+   separate webhook, in a separate (or the same, your call) channel.
+3. Set both as environment variables (`.env.local` for local dev, and the same names in
+   Vercel's **Project Settings → Environment Variables** for production):
+   ```
+   DISCORD_FEEDBACK_WEBHOOK_URL=https://discord.com/api/webhooks/...
+   DISCORD_ADMIN_WEBHOOK_URL=https://discord.com/api/webhooks/...
+   ```
+4. Deploy (or restart `npm run dev` locally). The feedback button and every audit-logged
+   admin action now post automatically — nothing else to configure.
+
+### 2. Slash-command bot
+
+1. Go to the [Discord Developer Portal](https://discord.com/developers/applications) →
+   **New Application**, name it (e.g. your league's name).
+2. **General Information** tab: copy the **Application ID** (this is `DISCORD_CLIENT_ID`)
+   and the **Public Key** (this is `DISCORD_PUBLIC_KEY`). Leave the **Interactions
+   Endpoint URL** field blank for now — you'll come back to it after deploying, since
+   Discord verifies that URL live and it has to actually be up first.
+3. **Bot** tab → **Reset Token** (or **Add Bot** if this is a brand-new application) →
+   copy the token (this is `DISCORD_BOT_TOKEN`). You won't be able to see it again after
+   leaving the page — if you lose it, reset it and update the env var.
+4. **OAuth2 → URL Generator**: check scopes **`bot`** and **`applications.commands`**.
+   Under Bot Permissions, check **Send Messages**, **Embed Links**, and **Use Slash
+   Commands**. Copy the generated URL at the bottom, open it, and invite the bot to
+   whichever server(s) you want the commands available in — repeat for a second server if
+   you want the bot in both a public and an admin server. (The `/standings`-style
+   commands are meant to be public, so it's fine — even expected — to invite it into
+   multiple servers; only the admin-alert webhook above is restricted to one channel.)
+5. Set the three bot env vars, same as the webhooks above:
+   ```
+   DISCORD_BOT_TOKEN=...
+   DISCORD_PUBLIC_KEY=...
+   DISCORD_CLIENT_ID=...
+   ```
+6. Deploy to Vercel (or make sure it's already live) so `https://your-domain.vercel.app`
+   is reachable.
+7. Back in the Developer Portal's **General Information** tab, set **Interactions
+   Endpoint URL** to:
+   ```
+   https://your-domain.vercel.app/api/discord-interactions
+   ```
+   Discord immediately sends a test request and only saves the field if it gets a valid
+   signed response back — if this fails, double check `DISCORD_PUBLIC_KEY` is set in
+   Vercel and that the deployment succeeded, then try saving again.
+8. Register the slash commands with Discord — run this once (and again any time you add
+   or change a command):
+   ```
+   node scripts/register-discord-commands.js
+   ```
+   Registered this way (no server id argument), commands are **global** and can take up
+   to an hour to show up in Discord the first time. For instant testing in one server
+   while you're setting this up, pass that server's id instead:
+   ```
+   node scripts/register-discord-commands.js YOUR_SERVER_ID
+   ```
+   (Right-click the server icon in Discord → Copy Server ID — you may need to enable
+   **Settings → Advanced → Developer Mode** first to see that option.)
+9. In Discord, type `/` in any channel the bot's in and try `/standings`, `/player`,
+   `/compare`, `/leaders`, `/nextgame`, or `/help`.
+
+`NEXT_PUBLIC_SUPABASE_URL`, `NEXT_PUBLIC_SUPABASE_ANON_KEY`, and `NEXT_PUBLIC_LEAGUE_ID`
+(already set up per the Supabase section above) are reused as-is for the bot's data
+lookups — no separate database credentials needed.

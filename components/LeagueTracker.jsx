@@ -11,7 +11,7 @@ import {
   ChevronRight, ChevronLeft, ChevronUp, ChevronDown, Pencil, Check, X, Folder, Save, RefreshCw, ArrowLeft,
   Activity, AlertTriangle, Image as ImageIcon, Layers, Crown, History, Sparkles, Home as HomeIcon, Settings as SettingsIcon,
   Award as AwardIcon, Eye, EyeOff, Sun, Moon, Video, ClipboardList, Newspaper, Info as InfoIcon, TrendingUp, Star, Ban,
-  Bell, Search, Pause
+  Bell, Search, Pause, MessageSquare
 } from 'lucide-react';
 import { supabase } from '../lib/supabaseClient';
 import { AuthProvider, useAuth, ROLE_LABELS } from '../lib/AuthContext';
@@ -88,8 +88,20 @@ function uid(prefix = 'id') {
 // A lightweight admin audit trail, separate from the public Transactions
 // log — who changed a structural setting and when, not roster moves. Capped
 // so it doesn't grow forever; nobody needs more than the last ~100 entries.
+// Every call site immediately persists the returned object, so this is the
+// one choke point every audit-worthy action passes through — firing the
+// Discord admin-channel notification here (rather than duplicating a call
+// at all ~15 call sites) guarantees nothing gets logged without also being
+// posted. Fire-and-forget: a slow/unreachable Discord webhook should never
+// block or fail the actual save.
 function appendAuditEntry(lg, action, detail) {
   const entry = { id: uid('audit'), action, detail: detail || '', at: Date.now() };
+  if (typeof fetch === 'function') {
+    fetch('/api/admin-notify', {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ action, detail: detail || '' }),
+    }).catch(() => {});
+  }
   return { ...lg, auditLog: [...(lg.auditLog || []).slice(-99), entry] };
 }
 // awardWinners[awardId] used to store a single winner object; it's now a list
@@ -9903,6 +9915,61 @@ function LiveTicker({ season, teamsById, sport, onOpenTeam }) {
   );
 }
 
+// A floating "send feedback" button visible to every visitor, logged in or
+// not — posts straight to /api/feedback, which relays it to a Discord
+// webhook. Sits above LiveTicker's fixed bottom bar (bottom-20 instead of
+// bottom-4) so the two never overlap regardless of whether the ticker is
+// currently showing.
+function FeedbackButton() {
+  const [open, setOpen] = useState(false);
+  const [message, setMessage] = useState('');
+  const [contact, setContact] = useState('');
+  const [status, setStatus] = useState('idle'); // idle | sending | sent | error
+
+  const submit = async () => {
+    if (!message.trim()) return;
+    setStatus('sending');
+    try {
+      const res = await fetch('/api/feedback', {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ message, contact, page: typeof window !== 'undefined' ? window.location.href : '' }),
+      });
+      if (!res.ok) throw new Error('failed');
+      setStatus('sent');
+      setMessage(''); setContact('');
+      setTimeout(() => { setOpen(false); setStatus('idle'); }, 1500);
+    } catch (e) { setStatus('error'); }
+  };
+
+  return (
+    <>
+      <button onClick={() => setOpen(true)} className="fixed z-40 flex items-center gap-1.5 px-3 py-2 rounded-full font-bold text-xs shadow-lg" style={{ bottom: 84, right: 16, background: PRIMARY, color: INK }}>
+        <MessageSquare size={14} /> Feedback
+      </button>
+      {open && (
+        <div className="fixed inset-0 z-50 flex items-end sm:items-center justify-center p-4" style={{ background: 'rgba(0,0,0,0.6)' }} onClick={() => setOpen(false)}>
+          <div onClick={e => e.stopPropagation()} className="w-full max-w-sm rounded-xl border p-4 space-y-3" style={{ background: PANEL, borderColor: LINE }}>
+            <div className="flex items-center justify-between">
+              <h3 className="font-head text-sm font-bold uppercase tracking-wide" style={{ color: CHALK }}>Send feedback</h3>
+              <button onClick={() => setOpen(false)} style={{ color: CHALK_DIM }}><X size={16} /></button>
+            </div>
+            {status === 'sent' ? (
+              <p className="text-sm font-semibold" style={{ color: WIN }}>Thanks — sent!</p>
+            ) : (
+              <>
+                <textarea value={message} onChange={e => setMessage(e.target.value)} rows={4} placeholder="Bug report, idea, anything…" className="w-full bg-[#242424] border rounded px-3 py-2 text-sm resize-none" style={{ borderColor: LINE, color: CHALK }} />
+                <input value={contact} onChange={e => setContact(e.target.value)} placeholder="Contact info (optional)" className="w-full bg-[#242424] border rounded px-3 py-2 text-sm" style={{ borderColor: LINE, color: CHALK }} />
+                {status === 'error' && <p className="text-xs" style={{ color: NEGATIVE }}>Couldn't send that — try again in a moment.</p>}
+                <button onClick={submit} disabled={!message.trim() || status === 'sending'} className="w-full px-3 py-2 rounded font-bold text-sm disabled:opacity-40" style={{ background: PRIMARY, color: INK }}>{status === 'sending' ? 'Sending…' : 'Send'}</button>
+              </>
+            )}
+          </div>
+        </div>
+      )}
+    </>
+  );
+}
+
 // Header bell for logged-in admins — surfaces pending trade proposals and
 // suspensions that have run out their game count but haven't been lifted,
 // instead of making someone remember to check the Roster/Transactions tabs.
@@ -12051,6 +12118,7 @@ function App() {
       </main>
 
       {inSeasonTabs && <LiveTicker season={activeSeason} teamsById={displayTeamsById} sport={sport} onOpenTeam={onOpenTeam} />}
+      <FeedbackButton />
     </div>
   );
 }
