@@ -22,7 +22,29 @@ export const ROLE_LABELS = {
   stat_mod: 'Stat Mod',
   media: 'Media',
 };
-const ALL_PERMS = ['manageAdmins', 'manageSettings', 'manageSeasons', 'manageRosters', 'manageRosterMoves', 'manageSchedule', 'manageNews', 'manageAwards', 'manageLeagueInfo'];
+export const ALL_PERMS = ['manageAdmins', 'manageSettings', 'manageSeasons', 'manageRosters', 'manageRosterMoves', 'manageSchedule', 'manageNews', 'manageAwards', 'manageLeagueInfo'];
+export const PERM_LABELS = {
+  manageAdmins: 'Manage admins',
+  manageSettings: 'Manage settings',
+  manageSeasons: 'Manage seasons',
+  manageRosters: 'Manage rosters',
+  manageRosterMoves: 'Manage roster moves',
+  manageSchedule: 'Manage schedule',
+  manageNews: 'Manage news',
+  manageAwards: 'Manage awards',
+  manageLeagueInfo: 'Manage league info',
+};
+export const PERM_DESCRIPTIONS = {
+  manageAdmins: 'Grant or revoke admin accounts and roles.',
+  manageSettings: 'Change season settings, appearance, and run external imports.',
+  manageSeasons: 'Create seasons, edit divisions, start/clear playoffs.',
+  manageRosters: 'Open the GM tab, edit minor player fields, browse rosters.',
+  manageRosterMoves: 'Sign, release, ban, suspend, and execute trades.',
+  manageSchedule: 'Enter scores, import games, edit the schedule.',
+  manageNews: 'Write and publish news posts.',
+  manageAwards: 'Create award definitions and assign winners.',
+  manageLeagueInfo: 'Edit the League Info page (staff, links, description).',
+};
 // Board of Directors runs day-to-day league operations at Commissioner
 // scope, minus manageAdmins (Site Owner-exclusive, so role-granting can't be
 // handed out any further than that) and minus manageSettings — season
@@ -37,7 +59,7 @@ const ALL_PERMS = ['manageAdmins', 'manageSettings', 'manageSeasons', 'manageRos
 // a trade instantly or out of the pending-proposals queue) stays a
 // Board-and-up call, so a Manager can't move a player without someone at
 // that level confirming it.
-const ROLE_PERMISSIONS = {
+export const ROLE_PERMISSIONS = {
   site_owner: ALL_PERMS,
   commissioner: ['manageSettings', 'manageSeasons', 'manageRosters', 'manageRosterMoves', 'manageSchedule', 'manageNews', 'manageAwards', 'manageLeagueInfo'],
   board: ['manageSeasons', 'manageRosters', 'manageRosterMoves', 'manageSchedule', 'manageNews', 'manageAwards', 'manageLeagueInfo'],
