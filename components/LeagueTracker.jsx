@@ -1199,6 +1199,61 @@ function compareGameDates(aLabel, bLabel, scheduleMode) {
   }
   return String(aLabel || '').localeCompare(String(bLabel || ''), undefined, { numeric: true });
 }
+// Game start times are entered by the admin in Eastern Time (the league's
+// home timezone) but stored as an absolute UTC instant, so every visitor's
+// browser can render it back out in their own local timezone with nothing
+// more than Date/Intl — no separate "convert for this viewer" step needed.
+// Eastern (not fixed EST/EDT) is used deliberately so the stored instant
+// stays correct across the DST changeover without the admin having to think
+// about which one applies to a given game's date.
+const GAME_TIME_ZONE = 'America/New_York';
+// The offset (ms) between UTC and `timeZone`'s wall clock at the instant
+// `utcMs` represents — the standard Intl-based trick for getting a named
+// zone's offset for an arbitrary date without a timezone database library.
+function tzOffsetMs(utcMs, timeZone) {
+  const dtf = new Intl.DateTimeFormat('en-US', {
+    timeZone, hourCycle: 'h23',
+    year: 'numeric', month: '2-digit', day: '2-digit',
+    hour: '2-digit', minute: '2-digit', second: '2-digit',
+  });
+  const parts = dtf.formatToParts(new Date(utcMs)).reduce((acc, p) => { acc[p.type] = p.value; return acc; }, {});
+  const asUTC = Date.UTC(Number(parts.year), Number(parts.month) - 1, Number(parts.day), Number(parts.hour) % 24, Number(parts.minute), Number(parts.second));
+  return asUTC - utcMs;
+}
+// Interprets a "YYYY-MM-DDTHH:MM" wall-clock string (straight out of a
+// <input type="datetime-local">) as Eastern Time and returns the equivalent
+// UTC instant in ms.
+function easternDatetimeLocalToUtcMs(value) {
+  if (!value) return null;
+  const [datePart, timePart] = value.split('T');
+  const [y, mo, d] = datePart.split('-').map(Number);
+  const [hh, mm] = (timePart || '00:00').split(':').map(Number);
+  const naiveUtc = Date.UTC(y, mo - 1, d, hh, mm, 0);
+  return naiveUtc - tzOffsetMs(naiveUtc, GAME_TIME_ZONE);
+}
+// Inverse of the above — given a stored UTC instant, returns the
+// "YYYY-MM-DDTHH:MM" string as it reads on an Eastern-Time wall clock, to
+// pre-fill the datetime-local input when reopening the editor.
+function utcMsToEasternDatetimeLocal(utcMs) {
+  if (utcMs == null) return '';
+  const dtf = new Intl.DateTimeFormat('en-CA', {
+    timeZone: GAME_TIME_ZONE, hourCycle: 'h23',
+    year: 'numeric', month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit',
+  });
+  const parts = dtf.formatToParts(new Date(utcMs)).reduce((acc, p) => { acc[p.type] = p.value; return acc; }, {});
+  return `${parts.year}-${parts.month}-${parts.day}T${parts.hour}:${parts.minute}`;
+}
+// Renders a stored game-time instant in whoever's looking at it own local
+// timezone — no `timeZone` override passed to toLocaleString, so the
+// browser fills in the viewer's own.
+function formatGameTimeLocal(utcMs) {
+  if (utcMs == null) return null;
+  return new Date(utcMs).toLocaleString([], { month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit', timeZoneName: 'short' });
+}
+function formatGameTimeOfDayLocal(utcMs) {
+  if (utcMs == null) return null;
+  return new Date(utcMs).toLocaleTimeString([], { hour: 'numeric', minute: '2-digit', timeZoneName: 'short' });
+}
 function sortGamesChronologically(games, scheduleMode) {
   const regular = games.filter(g => !g.isPlayoff && !g.isPlayIn);
   const playIn = games.filter(g => g.isPlayIn);
@@ -3072,6 +3127,9 @@ function HomeView({ season, teamsById, settings, onOpenTeam, h2hMatrix, sport, o
                 <span className="flex items-center gap-1 min-w-0 text-xs font-semibold truncate" style={{ color: CHALK }}>{home && <TeamMark team={home} size={13} />} {home ? home.name : g.homeScheduleName}</span>
                 {showScore && <span className="font-head text-sm font-bold flex-shrink-0" style={{ color: CHALK }}>{homeScore}</span>}
               </div>
+              {!g.played && g.gameTimeUTC != null && (
+                <div className="text-[10px] font-semibold mt-1.5 pt-1.5 text-center" style={{ color: CHALK_DIM, borderTop: `1px solid ${LINE}` }}>{formatGameTimeOfDayLocal(g.gameTimeUTC)}</div>
+              )}
             </div>
           );
         };
@@ -5192,7 +5250,7 @@ function BulkScoreEntryPanel({ games, teamsById, onBulkSaveScores }) {
     </Panel>
   );
 }
-function ScheduleView({ season, settings, saveScore, deleteGame, declareForfeit, setWinnerOverride, teamsById, sport, updateGameNotes, updateGameStreamUrl, saveGamePlayerStats, setGameOngoing, setGameDelayed, swapHomeAway, onBulkSaveScores }) {
+function ScheduleView({ season, settings, saveScore, deleteGame, declareForfeit, setWinnerOverride, teamsById, sport, updateGameNotes, updateGameStreamUrl, updateGameTime, saveGamePlayerStats, setGameOngoing, setGameDelayed, swapHomeAway, onBulkSaveScores }) {
   const { hasPermission } = useAuth();
   const isLoggedIn = hasPermission('manageSchedule');
   const scheduleMode = settings.scheduleMode || 'date';
@@ -5385,6 +5443,9 @@ function ScheduleView({ season, settings, saveScore, deleteGame, declareForfeit,
                             <a href={g.streamUrl} target="_blank" rel="noopener noreferrer" className="flex items-center gap-1 text-[10px] font-bold uppercase tracking-wide px-2 py-0.5 rounded" style={{ background: `${PRIMARY}22`, color: PRIMARY }}><Video size={11} /> Watch</a>
                           )}
                         </div>
+                        {!g.played && g.gameTimeUTC != null && (
+                          <div className="text-center text-[11px] font-semibold mt-1" style={{ color: CHALK_DIM }}>{formatGameTimeOfDayLocal(g.gameTimeUTC)}</div>
+                        )}
                         {isLoggedIn && (
                           <div className="flex items-center justify-center gap-1 mt-1.5 pt-1.5" style={{ borderTop: `1px solid ${LINE}` }}>
                             {!g.played && (
@@ -5447,6 +5508,11 @@ function ScheduleView({ season, settings, saveScore, deleteGame, declareForfeit,
                               {g.winnerOverride && <button onClick={() => setWinnerOverride(g.id, null)} className="px-2 py-1 rounded text-[11px]" style={{ color: CHALK_DIM }}>Use score instead</button>}
                             </div>
                           )}
+                          <div className="flex flex-wrap items-center gap-2 pt-1" style={{ borderTop: `1px solid ${LINE}` }}>
+                            <span className="text-[10px] uppercase flex-shrink-0" style={{ color: CHALK_DIM }}>Start time (ET):</span>
+                            <input type="datetime-local" defaultValue={utcMsToEasternDatetimeLocal(g.gameTimeUTC)} onBlur={e => updateGameTime(g.id, e.target.value ? easternDatetimeLocalToUtcMs(e.target.value) : null)} className="bg-[#242424] border rounded px-2 py-1 text-xs" style={{ borderColor: LINE, color: CHALK }} />
+                            {g.gameTimeUTC != null && <span className="text-[11px]" style={{ color: CHALK_DIM }}>{formatGameTimeLocal(g.gameTimeUTC)} for you</span>}
+                          </div>
                           <div className="flex items-center gap-2 pt-1" style={{ borderTop: `1px solid ${LINE}` }}>
                             <span className="text-[10px] uppercase flex-shrink-0" style={{ color: CHALK_DIM }}>Note:</span>
                             <input defaultValue={g.notes || ''} onBlur={e => updateGameNotes(g.id, e.target.value)} placeholder="e.g. walk-off, rain delay…" className="flex-1 bg-[#242424] border rounded px-2 py-1 text-xs" style={{ borderColor: LINE, color: CHALK }} />
@@ -11687,6 +11753,11 @@ function App() {
     const seasons = league.seasons.map(s => s.id === activeSeason.id ? { ...s, games: s.games.map(g => g.id === gameId ? { ...g, streamUrl } : g) } : s);
     persistLeague({ ...league, seasons });
   };
+  const updateGameTime = (gameId, gameTimeUTC) => {
+    if (!league || !activeSeason) return;
+    const seasons = league.seasons.map(s => s.id === activeSeason.id ? { ...s, games: s.games.map(g => g.id === gameId ? { ...g, gameTimeUTC } : g) } : s);
+    persistLeague({ ...league, seasons });
+  };
   const saveGamePlayerStats = (gameId, side, entries) => {
     if (!league || !activeSeason) return;
     const seasons = league.seasons.map(s => s.id === activeSeason.id ? { ...s, games: s.games.map(g => g.id === gameId ? { ...g, playerStats: { ...(g.playerStats || {}), [side]: entries } } : g) } : s);
@@ -11875,7 +11946,7 @@ function App() {
     } else if (tab === 'roster' && canGM) {
       body = <RosterManagementView season={activeSeason} teamsById={displayTeamsById} updatePlayerField={updatePlayerField} removePlayer={removePlayer} addPlayer={addPlayer} addPlayersBulk={addPlayersBulk} tradePlayer={tradePlayer} tradePlayers={tradePlayers} proposeTrade={proposeTrade} executeTradeProposal={executeTradeProposal} discardTradeProposal={discardTradeProposal} setPlayerSuspended={setPlayerSuspended} setPlayerBanned={setPlayerBanned} onOpenPlayer={onOpenPlayer} signFreeAgent={signFreeAgent} deleteFreeAgent={deleteFreeAgent} deleteFreeAgentsBulk={deleteFreeAgentsBulk} />;
     } else if (tab === 'schedule') {
-      body = <ScheduleView season={activeSeason} settings={activeSeason.settings} saveScore={saveScore} deleteGame={deleteGame} declareForfeit={declareForfeit} setWinnerOverride={setWinnerOverride} teamsById={displayTeamsById} sport={sport} updateGameNotes={updateGameNotes} updateGameStreamUrl={updateGameStreamUrl} saveGamePlayerStats={saveGamePlayerStats} setGameOngoing={setGameOngoing} setGameDelayed={setGameDelayed} swapHomeAway={swapHomeAway} onBulkSaveScores={bulkSaveScores} />;
+      body = <ScheduleView season={activeSeason} settings={activeSeason.settings} saveScore={saveScore} deleteGame={deleteGame} declareForfeit={declareForfeit} setWinnerOverride={setWinnerOverride} teamsById={displayTeamsById} sport={sport} updateGameNotes={updateGameNotes} updateGameStreamUrl={updateGameStreamUrl} updateGameTime={updateGameTime} saveGamePlayerStats={saveGamePlayerStats} setGameOngoing={setGameOngoing} setGameDelayed={setGameDelayed} swapHomeAway={swapHomeAway} onBulkSaveScores={bulkSaveScores} />;
     } else if (tab === 'stats') {
       body = <StatsView standings={standings} onOpenTeam={onOpenTeam} season={activeSeason} />;
     } else if (tab === 'leaders') {
