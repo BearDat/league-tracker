@@ -5343,13 +5343,13 @@ function PercentileBar({ stat, player, pool }) {
   const color = savantColor(pct);
   const value = stat.valueFn(player);
   return (
-    <div className="flex items-center gap-2.5 py-1.5">
-      <span className="w-28 sm:w-32 text-xs font-semibold flex-shrink-0 truncate" style={{ color: CHALK }}>{stat.label}</span>
+    <div className="flex items-center gap-2 py-1.5">
+      <span className="w-20 text-xs font-semibold flex-shrink-0 truncate" style={{ color: CHALK }}>{stat.label}</span>
       <div className="flex-1 h-2 rounded-full relative" style={{ background: LINE }}>
         <div className="h-full rounded-full" style={{ width: `${pct}%`, background: color }} />
       </div>
-      <span className="w-7 h-5 flex-shrink-0 rounded-full text-[11px] font-bold flex items-center justify-center" style={{ background: color, color: '#0a0a0a' }}>{pct}</span>
-      <span className="w-12 text-right font-mono text-xs flex-shrink-0" style={{ color: CHALK_DIM }}>{stat.formatFn(value)}</span>
+      <span className="w-6 h-5 flex-shrink-0 rounded-full text-[11px] font-bold flex items-center justify-center" style={{ background: color, color: '#0a0a0a' }}>{pct}</span>
+      <span className="w-10 text-right font-mono text-xs flex-shrink-0" style={{ color: CHALK_DIM }}>{stat.formatFn(value)}</span>
     </div>
   );
 }
@@ -5361,7 +5361,7 @@ function SavantPercentilesPanel({ player, pool, seasonName }) {
     <Panel className="overflow-hidden">
       <SectionTitle accent={GOLD}>Percentile rankings</SectionTitle>
       <p className="px-4 pb-2 text-xs" style={{ color: CHALK_DIM }}>Where {player.name} ranks against every qualifying regular-season {pitchingStats.length > 0 && battingStats.length === 0 ? 'pitcher' : 'batter'} in {seasonName} (min. 3 AB / 1 IP). 100 = best in the league, 0 = worst.</p>
-      <div className="px-4 pb-3 grid grid-cols-1 sm:grid-cols-2 gap-x-6">
+      <div className="px-4 pb-3">
         {battingStats.length > 0 && (
           <div>
             {pitchingStats.length > 0 && <p className="text-[10px] uppercase font-bold pt-1 pb-0.5" style={{ color: CHALK_DIM }}>Batting</p>}
@@ -8154,9 +8154,6 @@ function PlayerPage({ league, teamsById, playerName, onBack, onOpenTeam, onOpenP
       ) : (
         <div className="grid grid-cols-1 lg:grid-cols-3 gap-3 items-start">
         <div className="lg:col-span-2 space-y-3">
-          {myPercentileEntry && percentileSeason && (
-            <SavantPercentilesPanel player={myPercentileEntry} pool={percentilePool} seasonName={percentileSeason.name} />
-          )}
           {(peakBattingSeason || peakPitchingSeason) && (
             <Panel style={{ borderColor: GOLD }}>
               <SectionTitle accent={GOLD}>Career-peak season</SectionTitle>
@@ -8480,6 +8477,9 @@ function PlayerPage({ league, teamsById, playerName, onBack, onOpenTeam, onOpenP
             </Panel>
           )}
 
+          {myPercentileEntry && percentileSeason && (
+            <SavantPercentilesPanel player={myPercentileEntry} pool={percentilePool} seasonName={percentileSeason.name} />
+          )}
           <Panel>
             <SectionTitle accent={PRIMARY}>Top performances</SectionTitle>
             <div className="px-2 pb-3">
@@ -10997,7 +10997,6 @@ function LiveTicker({ season, teamsById, sport, onOpenTeam }) {
 function FeedbackButton() {
   const [open, setOpen] = useState(false);
   const [message, setMessage] = useState('');
-  const [contact, setContact] = useState('');
   const [status, setStatus] = useState('idle'); // idle | sending | sent | error
 
   const submit = async () => {
@@ -11006,11 +11005,11 @@ function FeedbackButton() {
     try {
       const res = await fetch('/api/feedback', {
         method: 'POST', headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ message, contact, page: typeof window !== 'undefined' ? window.location.href : '' }),
+        body: JSON.stringify({ message, page: typeof window !== 'undefined' ? window.location.href : '' }),
       });
       if (!res.ok) throw new Error('failed');
       setStatus('sent');
-      setMessage(''); setContact('');
+      setMessage('');
       setTimeout(() => { setOpen(false); setStatus('idle'); }, 1500);
     } catch (e) { setStatus('error'); }
   };
@@ -11032,7 +11031,6 @@ function FeedbackButton() {
             ) : (
               <>
                 <textarea value={message} onChange={e => setMessage(e.target.value)} rows={4} placeholder="Bug report, idea, anything…" className="w-full bg-[#242424] border rounded px-3 py-2 text-sm resize-none" style={{ borderColor: LINE, color: CHALK }} />
-                <input value={contact} onChange={e => setContact(e.target.value)} placeholder="Contact info (optional)" className="w-full bg-[#242424] border rounded px-3 py-2 text-sm" style={{ borderColor: LINE, color: CHALK }} />
                 {status === 'error' && <p className="text-xs" style={{ color: NEGATIVE }}>Couldn't send that — try again in a moment.</p>}
                 <button onClick={submit} disabled={!message.trim() || status === 'sending'} className="w-full px-3 py-2 rounded font-bold text-sm disabled:opacity-40" style={{ background: PRIMARY, color: INK }}>{status === 'sending' ? 'Sending…' : 'Send'}</button>
               </>

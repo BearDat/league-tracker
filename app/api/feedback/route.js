@@ -16,17 +16,13 @@ export async function POST(request) {
 
   const message = String(body.message || '').trim().slice(0, MAX_LEN);
   const page = String(body.page || '').trim().slice(0, 200);
-  const contact = String(body.contact || '').trim().slice(0, 200);
   if (!message) return Response.json({ error: 'Feedback message is required.' }, { status: 400 });
 
   const embed = {
     title: 'New site feedback',
     color: 0xf5c64b,
     description: message,
-    fields: [
-      ...(page ? [{ name: 'Page', value: page, inline: true }] : []),
-      ...(contact ? [{ name: 'Contact', value: contact, inline: true }] : []),
-    ],
+    fields: page ? [{ name: 'Page', value: page, inline: true }] : [],
     timestamp: new Date().toISOString(),
   };
 
