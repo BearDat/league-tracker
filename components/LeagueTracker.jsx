@@ -2261,6 +2261,12 @@ function TeamMark({ team, size = 22 }) {
   if (team.logoUrl) return <img src={team.logoUrl} alt="" style={{ width: size, height: size, objectFit: 'contain', borderRadius: 6, flexShrink: 0, boxShadow: `0 0 0 2px ${color}` }} />;
   return <span className="inline-block rounded-full flex-shrink-0" style={{ width: Math.round(size * 0.6), height: Math.round(size * 0.6), background: color, boxShadow: `0 0 0 2px ${color}55` }} />;
 }
+// Same fallback pattern as TeamMark: a custom-uploaded image when a badge
+// def has one, otherwise the emoji/text icon it was created with.
+function BadgeIcon({ badge, size = 16 }) {
+  if (badge && badge.imageUrl) return <img src={badge.imageUrl} alt="" className="rounded-full object-cover flex-shrink-0" style={{ width: size, height: size }} />;
+  return <span className="flex-shrink-0" style={{ fontSize: size }}>{badge && badge.icon}</span>;
+}
 function TeamAccentCell({ team, children, className = '' }) {
   return <td className={className} style={{ borderLeft: `3px solid ${teamColor(team)}` }}>{children}</td>;
 }
@@ -3931,29 +3937,59 @@ function BadgeManagerPanel({ league, onAddBadgeDef, onRemoveBadgeDef }) {
   const [name, setName] = useState('');
   const [icon, setIcon] = useState('');
   const [color, setColor] = useState(GOLD);
+  const [imageUrl, setImageUrl] = useState(null);
+  const [imageBusy, setImageBusy] = useState(false);
   const defs = (league && league.badgeDefs) || [];
   if (!canManage && defs.length === 0) return null;
+  const handleImage = async (file) => {
+    if (!file) return;
+    setImageBusy(true);
+    try {
+      const dataUrl = await resizeImageFile(file, 96);
+      if (dataUrl.length > 1_500_000) alert('That image is too large even after resizing — try a smaller file.');
+      else setImageUrl(dataUrl);
+    } catch (e) { alert('Could not read that image file.'); }
+    setImageBusy(false);
+  };
+  const add = () => {
+    if (!name.trim()) return;
+    onAddBadgeDef(name, icon, color, imageUrl);
+    setName(''); setIcon(''); setImageUrl(null);
+  };
   return (
     <Panel className="overflow-hidden" style={{ borderColor: GOLD }}>
       <SectionTitle accent={GOLD}>Player badges</SectionTitle>
       <div className="px-4 pb-3 space-y-3 text-sm">
-        <p className="text-xs" style={{ color: CHALK_DIM }}>Custom badges the Site Owner or Commissioner can create here, then hand out to any player from their player page — for callouts that don't fit the awards system (e.g. "Franchise Player", "Community MVP").</p>
+        <p className="text-xs" style={{ color: CHALK_DIM }}>Custom badges the Site Owner or Commissioner can create here, then hand out to any player from their player page — for callouts that don't fit the awards system (e.g. "Franchise Player", "Community MVP"). Use an emoji or upload a small custom image as the icon.</p>
         {defs.length > 0 && (
           <div className="flex flex-wrap gap-2">
             {defs.map(b => (
               <div key={b.id} className="flex items-center gap-1.5 pl-2 pr-1 py-1 rounded-full text-xs font-semibold" style={{ background: `${b.color}22`, color: b.color, border: `1px solid ${b.color}55` }}>
-                <span>{b.icon}</span><span>{b.name}</span>
+                <BadgeIcon badge={b} size={14} /><span>{b.name}</span>
                 {canManage && <button onClick={() => { if (confirm(`Delete badge "${b.name}"? Removes it from every player who has it.`)) onRemoveBadgeDef(b.id); }} className="p-0.5 rounded-full" style={{ color: b.color }}><X size={11} /></button>}
               </div>
             ))}
           </div>
         )}
         {canManage && (
-          <div className="flex items-center gap-2">
-            <input value={icon} onChange={e => setIcon(e.target.value.slice(0, 4))} placeholder="🏆" className="w-14 bg-[#242424] border rounded px-2 py-2 text-sm text-center" style={{ borderColor: LINE, color: CHALK }} />
-            <input value={name} onChange={e => setName(e.target.value)} placeholder="Badge name" className="flex-1 bg-[#242424] border rounded px-3 py-2 text-sm" style={{ borderColor: LINE, color: CHALK }} />
+          <div className="flex flex-wrap items-center gap-2">
+            {imageUrl ? (
+              <button onClick={() => setImageUrl(null)} title="Remove image, use emoji instead" className="relative w-9 h-9 rounded-full overflow-hidden flex-shrink-0" style={{ border: `1px solid ${LINE}` }}>
+                <img src={imageUrl} alt="" className="w-full h-full object-cover" />
+                <span className="absolute inset-0 flex items-center justify-center opacity-0 hover:opacity-100" style={{ background: 'rgba(0,0,0,0.6)' }}><X size={14} color="#fff" /></span>
+              </button>
+            ) : (
+              <>
+                <input value={icon} onChange={e => setIcon(e.target.value.slice(0, 4))} placeholder="🏆" className="w-14 bg-[#242424] border rounded px-2 py-2 text-sm text-center" style={{ borderColor: LINE, color: CHALK }} />
+                <label className="px-2 py-2 rounded text-[11px] font-bold cursor-pointer flex-shrink-0" style={{ background: PANEL2, color: CHALK_DIM }}>
+                  {imageBusy ? '…' : 'Image'}
+                  <input type="file" accept="image/*" className="hidden" disabled={imageBusy} onChange={e => handleImage(e.target.files && e.target.files[0])} />
+                </label>
+              </>
+            )}
+            <input value={name} onChange={e => setName(e.target.value)} placeholder="Badge name" className="flex-1 min-w-[100px] bg-[#242424] border rounded px-3 py-2 text-sm" style={{ borderColor: LINE, color: CHALK }} />
             <input type="color" value={color} onChange={e => setColor(e.target.value)} className="w-9 h-9 rounded cursor-pointer bg-transparent flex-shrink-0" style={{ border: `1px solid ${LINE}` }} />
-            <button onClick={() => { if (name.trim()) { onAddBadgeDef(name, icon, color); setName(''); setIcon(''); } }} disabled={!name.trim()} className="px-3 py-2 rounded font-bold text-sm disabled:opacity-40 flex-shrink-0" style={{ background: GOLD, color: INK }}><Plus size={16} /></button>
+            <button onClick={add} disabled={!name.trim()} className="px-3 py-2 rounded font-bold text-sm disabled:opacity-40 flex-shrink-0" style={{ background: GOLD, color: INK }}><Plus size={16} /></button>
           </div>
         )}
       </div>
@@ -7593,7 +7629,7 @@ function PlayerBadgeAssigner({ league, playerBadges, primaryIdentityKey, onSetPl
           const has = badgeIdSet.has(b.id);
           return (
             <button key={b.id} onClick={() => toggleBadge(b.id)} className="flex items-center gap-1 px-2 py-1 rounded-full text-xs font-semibold" style={{ background: has ? `${b.color}33` : 'transparent', color: has ? b.color : CHALK_DIM, border: `1px solid ${has ? b.color : LINE}` }}>
-              {b.icon} {b.name}
+              <BadgeIcon badge={b} size={14} /> {b.name}
             </button>
           );
         })}
@@ -8074,7 +8110,7 @@ function PlayerPage({ league, teamsById, playerName, onBack, onOpenTeam, onOpenP
                 ))}
                 {playerBadges.map(b => (
                   <span key={b.id} title={b.name} className="flex items-center gap-1.5 px-2.5 py-1 rounded-full text-xs font-bold shadow-sm" style={{ background: '#fff', color: '#1a1a1a' }}>
-                    <span>{b.icon}</span><span>{b.name}</span>
+                    <BadgeIcon badge={b} size={14} /><span>{b.name}</span>
                   </span>
                 ))}
               </div>
@@ -8857,7 +8893,7 @@ function BadgeShowcaseView({ league, onOpenPlayer }) {
             return (
               <Panel key={b.id} className="overflow-hidden">
                 <div className="px-4 pt-3 flex items-center gap-2">
-                  <span className="text-2xl">{b.icon}</span>
+                  <BadgeIcon badge={b} size={28} />
                   <div>
                     <p className="text-sm font-bold" style={{ color: CHALK }}>{b.name}</p>
                     <p className="text-[11px]" style={{ color: CHALK_DIM }}>{holders.length} holder{holders.length === 1 ? '' : 's'}</p>
@@ -12578,9 +12614,9 @@ function App() {
   // name), so an entry written under an old name-key before an id existed
   // still surfaces once the id is linked — no migration needed.
   const setBadgeDefs = (defs) => { if (league) persistLeague({ ...league, badgeDefs: defs }); };
-  const addBadgeDef = (name, icon, color) => {
+  const addBadgeDef = (name, icon, color, imageUrl) => {
     if (!league || !name.trim()) return;
-    const def = { id: uid('badge'), name: name.trim(), icon: (icon || '').trim() || '★', color: color || GOLD };
+    const def = { id: uid('badge'), name: name.trim(), icon: (icon || '').trim() || '★', color: color || GOLD, imageUrl: imageUrl || null };
     persistLeague(appendAuditEntry({ ...league, badgeDefs: [...(league.badgeDefs || []), def] }, 'Badge created', def.name));
   };
   const removeBadgeDef = (badgeId) => {
