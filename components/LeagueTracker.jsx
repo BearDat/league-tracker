@@ -5299,6 +5299,86 @@ const CUSTOM_STAT_OPTIONS = [
   { key: 'bb9', label: 'BB/9', group: 'pitching', valueFn: p => p.pitching.bb9, formatFn: fmtStat2, sortDesc: false, qualifier: 'ip' },
   { key: 'war', label: 'WAR', group: 'both', valueFn: p => p.war, formatFn: fmtStat1, sortDesc: true, qualifier: null },
 ];
+// Baseball-Savant-style percentile rankings — where a player's regular-
+// season rate stats fall (0-100) against every other qualifying regular/
+// pitcher in that same season, reusing CUSTOM_STAT_OPTIONS so the value/
+// direction/qualifier logic can't drift out of sync with the leaderboard
+// builder above. Counting stats (HR, RBI, etc.) are deliberately left out —
+// Savant's own percentile shelf is rate/quality metrics, not raw totals,
+// since a part-timer's counting stats aren't comparable to a full-timer's.
+const SAVANT_BATTING_KEYS = ['ops', 'avg', 'obp', 'slg', 'iso', 'bb', 'so'];
+const SAVANT_PITCHING_KEYS = ['era', 'whip', 'k9', 'bb9'];
+// Unlike the leaderboard builder (which only enforces a minimum sample on
+// rate stats and happily lists raw BB/SO totals for anyone), a percentile
+// bar is meaningless without a real sample behind it — a pitcher with 0 ABs
+// "qualifying" for a batting-walks percentile off a trivial 0-for-0 is
+// worse than not showing the bar at all. Gate by stat group instead of the
+// stat's own (sometimes null) qualifier field.
+function qualifiesForStat(stat, p) {
+  if (stat.group === 'batting') return p.totals.ab >= 3;
+  if (stat.group === 'pitching') return p.totals.outs >= 3;
+  return true;
+}
+function computePercentile(stat, player, pool) {
+  const values = pool.filter(p => qualifiesForStat(stat, p)).map(stat.valueFn).filter(Number.isFinite);
+  if (values.length < 2 || !qualifiesForStat(stat, player)) return null;
+  const v = stat.valueFn(player);
+  if (!Number.isFinite(v)) return null;
+  const worseOrEqual = stat.sortDesc ? values.filter(x => x <= v).length : values.filter(x => x >= v).length;
+  return Math.max(0, Math.min(100, Math.round(((worseOrEqual - 1) / (values.length - 1)) * 100)));
+}
+// Blue (bad) → grey (average) → red (good), the same three-stop gradient
+// Baseball Savant uses on its percentile shelf.
+function savantColor(pct) {
+  if (pct == null) return CHALK_DIM;
+  const lo = pct <= 50 ? [64, 105, 225] : [148, 148, 148];
+  const hi = pct <= 50 ? [148, 148, 148] : [214, 39, 40];
+  const t = pct <= 50 ? pct / 50 : (pct - 50) / 50;
+  const [r, g, b] = lo.map((c, i) => Math.round(c + (hi[i] - c) * t));
+  return `rgb(${r}, ${g}, ${b})`;
+}
+function PercentileBar({ stat, player, pool }) {
+  const pct = computePercentile(stat, player, pool);
+  if (pct == null) return null;
+  const color = savantColor(pct);
+  const value = stat.valueFn(player);
+  return (
+    <div className="flex items-center gap-2.5 py-1.5">
+      <span className="w-28 sm:w-32 text-xs font-semibold flex-shrink-0 truncate" style={{ color: CHALK }}>{stat.label}</span>
+      <div className="flex-1 h-2 rounded-full relative" style={{ background: LINE }}>
+        <div className="h-full rounded-full" style={{ width: `${pct}%`, background: color }} />
+      </div>
+      <span className="w-7 h-5 flex-shrink-0 rounded-full text-[11px] font-bold flex items-center justify-center" style={{ background: color, color: '#0a0a0a' }}>{pct}</span>
+      <span className="w-12 text-right font-mono text-xs flex-shrink-0" style={{ color: CHALK_DIM }}>{stat.formatFn(value)}</span>
+    </div>
+  );
+}
+function SavantPercentilesPanel({ player, pool, seasonName }) {
+  const battingStats = SAVANT_BATTING_KEYS.map(k => CUSTOM_STAT_OPTIONS.find(s => s.key === k)).filter(s => computePercentile(s, player, pool) != null);
+  const pitchingStats = SAVANT_PITCHING_KEYS.map(k => CUSTOM_STAT_OPTIONS.find(s => s.key === k)).filter(s => computePercentile(s, player, pool) != null);
+  if (battingStats.length === 0 && pitchingStats.length === 0) return null;
+  return (
+    <Panel className="overflow-hidden">
+      <SectionTitle accent={GOLD}>Percentile rankings</SectionTitle>
+      <p className="px-4 pb-2 text-xs" style={{ color: CHALK_DIM }}>Where {player.name} ranks against every qualifying regular-season {pitchingStats.length > 0 && battingStats.length === 0 ? 'pitcher' : 'batter'} in {seasonName} (min. 3 AB / 1 IP). 100 = best in the league, 0 = worst.</p>
+      <div className="px-4 pb-3 grid grid-cols-1 sm:grid-cols-2 gap-x-6">
+        {battingStats.length > 0 && (
+          <div>
+            {pitchingStats.length > 0 && <p className="text-[10px] uppercase font-bold pt-1 pb-0.5" style={{ color: CHALK_DIM }}>Batting</p>}
+            {battingStats.map(s => <PercentileBar key={s.key} stat={s} player={player} pool={pool} />)}
+          </div>
+        )}
+        {pitchingStats.length > 0 && (
+          <div>
+            {battingStats.length > 0 && <p className="text-[10px] uppercase font-bold pt-1 pb-0.5" style={{ color: CHALK_DIM }}>Pitching</p>}
+            {pitchingStats.map(s => <PercentileBar key={s.key} stat={s} player={player} pool={pool} />)}
+          </div>
+        )}
+      </div>
+    </Panel>
+  );
+}
+
 // Lets a visitor pick any tracked stat, a minimum sample size, and how many
 // names to show, instead of only the fixed set of cards above — shares
 // whatever season/all-time and regular/playoffs scope the page is already
@@ -7652,6 +7732,14 @@ function PlayerPage({ league, teamsById, playerName, onBack, onOpenTeam, onOpenP
   const currentSeasonEntry = seasonsInfo.length > 0
     ? (seasonsInfo.find(info => info.season.id === activeSeasonId) || seasonsInfo[seasonsInfo.length - 1])
     : null;
+  // Percentile rankings compare this identity's currentSeasonEntry season
+  // line against every other regular-season player from that same season —
+  // computeSeasonPlayerLeaders gives every entry, including this player's
+  // own, the exact same shape (totals/batting/pitching/war) keyed by the
+  // season-scoped playerId currentSeasonEntry already carries.
+  const percentileSeason = currentSeasonEntry ? currentSeasonEntry.season : null;
+  const percentilePool = percentileSeason ? computeSeasonPlayerLeaders(percentileSeason, teamsById, 'regular') : [];
+  const myPercentileEntry = currentSeasonEntry ? percentilePool.find(p => p.playerId === currentSeasonEntry.playerId) : null;
   // The most recent roster/free-agent entry for this name carries the
   // Roblox account id, if one's been resolved yet — looking avatars up by id
   // instead of username means a rename doesn't break the avatar, and lets
@@ -8066,6 +8154,9 @@ function PlayerPage({ league, teamsById, playerName, onBack, onOpenTeam, onOpenP
       ) : (
         <div className="grid grid-cols-1 lg:grid-cols-3 gap-3 items-start">
         <div className="lg:col-span-2 space-y-3">
+          {myPercentileEntry && percentileSeason && (
+            <SavantPercentilesPanel player={myPercentileEntry} pool={percentilePool} seasonName={percentileSeason.name} />
+          )}
           {(peakBattingSeason || peakPitchingSeason) && (
             <Panel style={{ borderColor: GOLD }}>
               <SectionTitle accent={GOLD}>Career-peak season</SectionTitle>
