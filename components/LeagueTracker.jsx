@@ -3629,12 +3629,12 @@ function PlayerIdentitySyncPanel({ onRunSync }) {
 }
 
 // Badge definitions are global to the whole site (like the team registry),
-// not per-league, so Site Owner is the only role that can create or delete
-// one — same restriction as creating a new team. Any admin can still assign
-// an already-created badge to a player from the player page itself.
+// so only Site Owner and Commissioner can create or delete one — same
+// trust tier as the awards system these complement. Any admin can still
+// assign an already-created badge to a player from the player page itself.
 function BadgeManagerPanel({ league, onAddBadgeDef, onRemoveBadgeDef }) {
   const { role } = useAuth();
-  const canManage = role === 'site_owner';
+  const canManage = role === 'site_owner' || role === 'commissioner';
   const [name, setName] = useState('');
   const [icon, setIcon] = useState('');
   const [color, setColor] = useState(GOLD);
@@ -3644,7 +3644,7 @@ function BadgeManagerPanel({ league, onAddBadgeDef, onRemoveBadgeDef }) {
     <Panel className="overflow-hidden" style={{ borderColor: GOLD }}>
       <SectionTitle accent={GOLD}>Player badges</SectionTitle>
       <div className="px-4 pb-3 space-y-3 text-sm">
-        <p className="text-xs" style={{ color: CHALK_DIM }}>Custom badges Site Owner can create here, then hand out to any player from their player page — for callouts that don't fit the awards system (e.g. "Franchise Player", "Community MVP").</p>
+        <p className="text-xs" style={{ color: CHALK_DIM }}>Custom badges the Site Owner or Commissioner can create here, then hand out to any player from their player page — for callouts that don't fit the awards system (e.g. "Franchise Player", "Community MVP").</p>
         {defs.length > 0 && (
           <div className="flex flex-wrap gap-2">
             {defs.map(b => (
@@ -3674,6 +3674,63 @@ function BadgeManagerPanel({ league, onAddBadgeDef, onRemoveBadgeDef }) {
 function SettingsGroupHeader({ label }) {
   return (
     <div className="pt-2 pb-1 px-1 text-xs font-bold uppercase tracking-widest" style={{ color: CHALK_DIM, borderBottom: `1px solid ${LINE}` }}>{label}</div>
+  );
+}
+
+// <input type="datetime-local"> wants "YYYY-MM-DDTHH:mm" in local time, no
+// timezone suffix — Date's own toISOString is UTC, so this rolls one by
+// hand from the epoch ms a banner's startAt/endAt is stored as.
+function toDatetimeLocalValue(ms) {
+  if (!ms) return '';
+  const d = new Date(ms);
+  const pad = (n) => String(n).padStart(2, '0');
+  return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}T${pad(d.getHours())}:${pad(d.getMinutes())}`;
+}
+
+// A message shown at the top of Home while active. Optionally scheduled —
+// startAt/endAt let it show/hide itself on time instead of relying on
+// someone remembering to flip the toggle (e.g. "Playoffs start Saturday"
+// posted days ahead, or a downtime notice that clears itself afterward).
+function HomepageBannerPanel({ league, onSetMaintenanceBanner }) {
+  const banner = (league && league.maintenanceBanner) || {};
+  const [message, setMessage] = useState(banner.message || '');
+  const [active, setActive] = useState(!!banner.active);
+  const [startAt, setStartAt] = useState(toDatetimeLocalValue(banner.startAt));
+  const [endAt, setEndAt] = useState(toDatetimeLocalValue(banner.endAt));
+  const now = Date.now();
+  const status = !banner.active || !banner.message ? 'off'
+    : banner.startAt && now < banner.startAt ? 'upcoming'
+    : banner.endAt && now > banner.endAt ? 'expired'
+    : 'live';
+  const statusColor = status === 'live' ? GOLD : status === 'upcoming' ? PRIMARY : CHALK_DIM;
+  const statusLabel = { live: 'Showing now', upcoming: 'Scheduled — not showing yet', expired: 'Window passed — not showing', off: 'Off' }[status];
+  const save = () => onSetMaintenanceBanner(message, active, startAt ? new Date(startAt).getTime() : null, endAt ? new Date(endAt).getTime() : null);
+  return (
+    <Panel style={{ borderColor: status === 'live' ? GOLD : status === 'upcoming' ? PRIMARY : LINE }}>
+      <SectionTitle accent={GOLD}>Homepage banner</SectionTitle>
+      <div className="px-4 pb-3 space-y-2">
+        <p className="text-xs" style={{ color: CHALK_DIM }}>A short message shown at the top of the Home tab while enabled — a planned downtime window, a quick announcement, whatever's worth a heads-up. Optionally schedule it to start and/or end on its own instead of remembering to toggle it.</p>
+        <input value={message} onChange={e => setMessage(e.target.value)} placeholder="e.g. Playoffs start this Saturday — see the bracket on Home" className="w-full bg-[#242424] border rounded px-3 py-2 text-sm" style={{ borderColor: LINE, color: CHALK }} />
+        <label className="flex items-center gap-2 text-sm" style={{ color: CHALK }}>
+          <input type="checkbox" checked={active} onChange={e => setActive(e.target.checked)} />
+          Enabled
+        </label>
+        <div className="flex flex-wrap gap-3">
+          <label className="flex flex-col gap-1">
+            <span className="text-[10px] uppercase" style={{ color: CHALK_DIM }}>Starts (optional)</span>
+            <input type="datetime-local" value={startAt} onChange={e => setStartAt(e.target.value)} className="bg-[#242424] border rounded px-2 py-1.5 text-xs" style={{ borderColor: LINE, color: CHALK }} />
+          </label>
+          <label className="flex flex-col gap-1">
+            <span className="text-[10px] uppercase" style={{ color: CHALK_DIM }}>Ends (optional)</span>
+            <input type="datetime-local" value={endAt} onChange={e => setEndAt(e.target.value)} className="bg-[#242424] border rounded px-2 py-1.5 text-xs" style={{ borderColor: LINE, color: CHALK }} />
+          </label>
+        </div>
+        <div className="flex items-center gap-3 pt-1">
+          <button onClick={save} className="px-3 py-1.5 rounded font-bold text-xs" style={{ background: GOLD, color: INK }}>Save banner</button>
+          <span className="text-[11px] font-semibold" style={{ color: statusColor }}>{statusLabel}</span>
+        </div>
+      </div>
+    </Panel>
   );
 }
 
@@ -3819,19 +3876,7 @@ function SettingsView({ settings, saveSettings, theme, saveTheme, sport, season,
       {canManageSettings && <KpbImportPanel league={league} onRunImport={onRunKpbImport} />}
       {canManageSettings && <PlayerIdentitySyncPanel onRunSync={onSyncPlayerIdentities} />}
       {canManageSettings && <SettingsGroupHeader label="Content" />}
-      {canManageSettings && (
-        <Panel style={{ borderColor: league && league.maintenanceBanner && league.maintenanceBanner.active ? GOLD : LINE }}>
-          <SectionTitle accent={GOLD}>Homepage banner</SectionTitle>
-          <div className="px-4 pb-3 space-y-2">
-            <p className="text-xs" style={{ color: CHALK_DIM }}>A short message shown at the top of the Home tab to every visitor while active — a planned downtime window, a quick announcement, whatever's worth a heads-up.</p>
-            <input defaultValue={(league && league.maintenanceBanner && league.maintenanceBanner.message) || ''} onBlur={e => onSetMaintenanceBanner(e.target.value, !!(league && league.maintenanceBanner && league.maintenanceBanner.active))} placeholder="e.g. Playoffs start this Saturday — see the bracket on Home" className="w-full bg-[#242424] border rounded px-3 py-2 text-sm" style={{ borderColor: LINE, color: CHALK }} />
-            <label className="flex items-center gap-2 text-sm" style={{ color: CHALK }}>
-              <input type="checkbox" checked={!!(league && league.maintenanceBanner && league.maintenanceBanner.active)} onChange={e => onSetMaintenanceBanner((league && league.maintenanceBanner && league.maintenanceBanner.message) || '', e.target.checked)} />
-              Show banner
-            </label>
-          </div>
-        </Panel>
-      )}
+      {canManageSettings && <HomepageBannerPanel league={league} onSetMaintenanceBanner={onSetMaintenanceBanner} />}
       <BadgeManagerPanel league={league} onAddBadgeDef={onAddBadgeDef} onRemoveBadgeDef={onRemoveBadgeDef} />
       {canManageSettings && <SettingsGroupHeader label="Appearance" />}
       <AppearanceSettings theme={theme} saveTheme={saveTheme} />
@@ -6770,7 +6815,36 @@ function AppealPanel({ seasonId, playerId, playerName, teamId, onSubmitAppeal })
     </Panel>
   );
 }
-function PlayerEditPanel({ league, seasonsInfo, teamsById, displayName, playerBadges, playerAccolades, playerTeamCredits, primaryIdentityKey, onSetPlayerBadges, onAddPlayerAccolade, onRemovePlayerAccolade, onAddPlayerTeamCredit, onRemovePlayerTeamCredit, onUpsertManualStatLine, onDeleteManualStatLine, onRenamePlayer }) {
+// Badge assignment is split out from PlayerEditPanel so Commissioner can
+// hand out badges without also getting the rest of Site Owner's editing
+// powers there (rename, accolades, manual stat lines).
+function PlayerBadgeAssigner({ league, playerBadges, primaryIdentityKey, onSetPlayerBadges }) {
+  const { role } = useAuth();
+  const canManage = role === 'site_owner' || role === 'commissioner';
+  const badgeDefs = (league && league.badgeDefs) || [];
+  if (!canManage || badgeDefs.length === 0) return null;
+  const badgeIdSet = new Set(playerBadges.map(b => b.id));
+  const toggleBadge = (id) => {
+    const next = badgeIdSet.has(id) ? [...badgeIdSet].filter(x => x !== id) : [...badgeIdSet, id];
+    onSetPlayerBadges(primaryIdentityKey, next);
+  };
+  return (
+    <Panel className="overflow-hidden" style={{ borderColor: GOLD }}>
+      <SectionTitle accent={GOLD}>Assign badges</SectionTitle>
+      <div className="px-4 pb-3 flex flex-wrap gap-1.5">
+        {badgeDefs.map(b => {
+          const has = badgeIdSet.has(b.id);
+          return (
+            <button key={b.id} onClick={() => toggleBadge(b.id)} className="flex items-center gap-1 px-2 py-1 rounded-full text-xs font-semibold" style={{ background: has ? `${b.color}33` : 'transparent', color: has ? b.color : CHALK_DIM, border: `1px solid ${has ? b.color : LINE}` }}>
+              {b.icon} {b.name}
+            </button>
+          );
+        })}
+      </div>
+    </Panel>
+  );
+}
+function PlayerEditPanel({ league, seasonsInfo, teamsById, displayName, playerAccolades, playerTeamCredits, primaryIdentityKey, onAddPlayerAccolade, onRemovePlayerAccolade, onAddPlayerTeamCredit, onRemovePlayerTeamCredit, onUpsertManualStatLine, onDeleteManualStatLine, onRenamePlayer }) {
   const [open, setOpen] = useState(false);
   const [accName, setAccName] = useState('');
   const [accSeason, setAccSeason] = useState('');
@@ -6778,12 +6852,6 @@ function PlayerEditPanel({ league, seasonsInfo, teamsById, displayName, playerBa
   const [tcSeasonLabel, setTcSeasonLabel] = useState('');
   const [editingLine, setEditingLine] = useState(null); // { seasonId, line } | { newSeasonId }
   const [nameDraft, setNameDraft] = useState(displayName || '');
-  const badgeDefs = (league && league.badgeDefs) || [];
-  const badgeIdSet = new Set(playerBadges.map(b => b.id));
-  const toggleBadge = (id) => {
-    const next = badgeIdSet.has(id) ? [...badgeIdSet].filter(x => x !== id) : [...badgeIdSet, id];
-    onSetPlayerBadges(primaryIdentityKey, next);
-  };
   const allStatLines = seasonsInfo.flatMap(info => (info.season.importedStatLines || []).filter(l => l.playerId === info.playerId).map(l => ({ ...l, seasonId: info.season.id, seasonName: info.season.name })));
   const nameChanged = nameDraft.trim() && nameDraft.trim() !== (displayName || '').trim();
   const saveRename = () => {
@@ -6805,24 +6873,6 @@ function PlayerEditPanel({ league, seasonsInfo, teamsById, displayName, playerBa
             <input value={nameDraft} onChange={e => setNameDraft(e.target.value)} className="flex-1 bg-[#242424] border rounded px-2 py-1.5 text-xs" style={{ borderColor: LINE, color: CHALK }} />
             <button onClick={saveRename} disabled={!nameChanged} className="px-2.5 py-1.5 rounded font-bold text-xs disabled:opacity-40" style={{ background: PRIMARY, color: INK }}>Save</button>
           </div>
-        </div>
-
-        <div>
-          <div className="text-xs font-semibold mb-1.5" style={{ color: CHALK }}>Badges</div>
-          {badgeDefs.length === 0 ? (
-            <p className="text-xs" style={{ color: CHALK_DIM }}>No badges created yet — add some in Settings.</p>
-          ) : (
-            <div className="flex flex-wrap gap-1.5">
-              {badgeDefs.map(b => {
-                const has = badgeIdSet.has(b.id);
-                return (
-                  <button key={b.id} onClick={() => toggleBadge(b.id)} className="flex items-center gap-1 px-2 py-1 rounded-full text-xs font-semibold" style={{ background: has ? `${b.color}33` : 'transparent', color: has ? b.color : CHALK_DIM, border: `1px solid ${has ? b.color : LINE}` }}>
-                    {b.icon} {b.name}
-                  </button>
-                );
-              })}
-            </div>
-          )}
         </div>
 
         <div>
@@ -7194,6 +7244,24 @@ function PlayerPage({ league, teamsById, playerName, onBack, onOpenTeam, onOpenP
   // key this identity has been known by (see identityLookupKeys below).
   (playerAccolades || []).forEach(a => awards.push({ name: a.name, seasonName: a.seasonName, id: a.id, isManual: true, _key: a._key }));
 
+  // Header badge row, auto-derived from the same award/championship data as
+  // the accolades list below — grouped and counted (one "MVP ×3" pill, not
+  // three separate ones) so a long career doesn't turn the header into a
+  // wall of pills. Manual accolades are excluded here since they already
+  // render in the dedicated accolades section further down the page.
+  const autoBadges = [];
+  {
+    const counts = {};
+    awards.forEach(a => {
+      if (a.isManual) return;
+      const key = a.isChampionship ? 'League Champion' : a.name;
+      counts[key] = (counts[key] || 0) + 1;
+    });
+    Object.entries(counts).forEach(([label, count]) => autoBadges.push({ key: `award:${label}`, label, count, isChampionship: label === 'League Champion' }));
+  }
+  const hofEntry = (league.hallOfFame || []).find(e => e.playerName && nameTargets.includes(normName(e.playerName)));
+  if (hofEntry) autoBadges.push({ key: 'hof', label: 'Hall of Fame', count: 0, isHof: true });
+
   const GameRef = ({ row }) => {
     const opp = teamsById[row.oppTeamId];
     return <span className="text-xs flex-shrink-0" style={{ color: CHALK_DIM }}>{row.date ? `${row.date} · ` : ''}{opp ? `vs ${opp.name}` : ''}{row.isPlayoff ? ' (Playoffs)' : ''}</span>;
@@ -7219,11 +7287,17 @@ function PlayerPage({ league, teamsById, playerName, onBack, onOpenTeam, onOpenP
             <div className="flex items-center gap-2 mt-1 flex-wrap">
               {latestTeam ? <button onClick={() => onOpenTeam(latest.teamId)} className="flex items-center gap-1.5 text-sm font-semibold" style={{ color: '#fff' }}><TeamMark team={latestTeam} size={16} /> {latestTeam.name}</button> : <span className="text-sm font-semibold" style={{ color: 'rgba(255,255,255,0.85)' }}>Free Agent</span>}
             </div>
-            {playerBadges.length > 0 && (
+            {(playerBadges.length > 0 || autoBadges.length > 0) && (
               <div className="flex items-center gap-1.5 mt-2 flex-wrap">
                 {playerBadges.map(b => (
                   <span key={b.id} title={b.name} className="flex items-center gap-1 px-2 py-0.5 rounded-full text-[11px] font-semibold" style={{ background: 'rgba(0,0,0,0.35)', color: '#fff', border: '1px solid rgba(255,255,255,0.35)' }}>
                     <span>{b.icon}</span><span>{b.name}</span>
+                  </span>
+                ))}
+                {autoBadges.map(b => (
+                  <span key={b.key} title={b.isHof ? 'Inducted into the Hall of Fame' : b.label} className="flex items-center gap-1 px-2 py-0.5 rounded-full text-[11px] font-semibold" style={{ background: 'rgba(245,198,75,0.22)', color: GOLD, border: `1px solid ${GOLD}` }}>
+                    {b.isHof ? <Star size={11} /> : b.isChampionship ? <Crown size={11} /> : <AwardIcon size={11} />}
+                    <span>{b.label}{b.count > 1 ? ` ×${b.count}` : ''}</span>
                   </span>
                 ))}
               </div>
@@ -7237,12 +7311,14 @@ function PlayerPage({ league, teamsById, playerName, onBack, onOpenTeam, onOpenP
         <AppealPanel seasonId={latest.season.id} playerId={latest.playerId} playerName={displayName} teamId={latest.teamId} onSubmitAppeal={onSubmitAppeal} />
       )}
 
+      <PlayerBadgeAssigner league={league} playerBadges={playerBadges} primaryIdentityKey={primaryIdentityKey} onSetPlayerBadges={onSetPlayerBadges} />
+
       {isSiteOwner && (
         <PlayerEditPanel
           league={league} seasonsInfo={seasonsInfo} teamsById={teamsById} displayName={displayName}
-          playerBadges={playerBadges} playerAccolades={playerAccolades} playerTeamCredits={playerTeamCredits}
+          playerAccolades={playerAccolades} playerTeamCredits={playerTeamCredits}
           primaryIdentityKey={primaryIdentityKey}
-          onSetPlayerBadges={onSetPlayerBadges} onAddPlayerAccolade={onAddPlayerAccolade} onRemovePlayerAccolade={onRemovePlayerAccolade}
+          onAddPlayerAccolade={onAddPlayerAccolade} onRemovePlayerAccolade={onRemovePlayerAccolade}
           onAddPlayerTeamCredit={onAddPlayerTeamCredit} onRemovePlayerTeamCredit={onRemovePlayerTeamCredit}
           onUpsertManualStatLine={onUpsertManualStatLine} onDeleteManualStatLine={onDeleteManualStatLine}
           onRenamePlayer={(entries, newName) => { onRenamePlayer(entries, newName); if (onPlayerRenamed) onPlayerRenamed(newName); }}
@@ -8198,6 +8274,65 @@ function AwardsView({ league, season, standings, teamsById, addAwardDef, updateA
           </Panel>
         );
       })}
+    </div>
+  );
+}
+
+// The league's all-time honor roll — separate from per-season Awards, this
+// is for names the league wants remembered for good: legendary players,
+// builders, whoever. Free-text so it can honor a person who never touched a
+// roster (a commissioner, a streamer) just as easily as a star player.
+function HallOfFameView({ league, addHallOfFameEntry, removeHallOfFameEntry, onOpenPlayer }) {
+  const { hasPermission } = useAuth();
+  const canManage = hasPermission('manageAwards');
+  const [name, setName] = useState('');
+  const [note, setNote] = useState('');
+  const [year, setYear] = useState('');
+  const [playerName, setPlayerName] = useState('');
+  const entries = [...(league.hallOfFame || [])].sort((a, b) => (b.addedAt || 0) - (a.addedAt || 0));
+
+  return (
+    <div className="p-3 space-y-3">
+      {canManage && (
+        <Panel>
+          <SectionTitle>Induct someone into the Hall of Fame</SectionTitle>
+          <div className="px-4 pb-3 space-y-2">
+            <input value={name} onChange={e => setName(e.target.value)} placeholder="Name" className="w-full bg-[#242424] border rounded px-3 py-2 text-sm" style={{ borderColor: LINE, color: CHALK }} />
+            <input value={year} onChange={e => setYear(e.target.value)} placeholder="Class / year (e.g. 2025)" className="w-full bg-[#242424] border rounded px-3 py-2 text-sm" style={{ borderColor: LINE, color: CHALK }} />
+            <input value={playerName} onChange={e => setPlayerName(e.target.value)} placeholder="Linked player page name (optional, must match exactly)" className="w-full bg-[#242424] border rounded px-3 py-2 text-sm" style={{ borderColor: LINE, color: CHALK }} />
+            <textarea value={note} onChange={e => setNote(e.target.value)} placeholder="Why they're being inducted (optional)" rows={2} className="w-full bg-[#242424] border rounded px-3 py-2 text-sm resize-none" style={{ borderColor: LINE, color: CHALK }} />
+            <button onClick={() => { if (name.trim()) { addHallOfFameEntry(name.trim(), note, year, playerName); setName(''); setNote(''); setYear(''); setPlayerName(''); } }} disabled={!name.trim()} className="px-3 py-2 rounded font-bold text-sm flex items-center gap-1 disabled:opacity-40" style={{ background: PRIMARY, color: INK }}><Plus size={16} /> Induct</button>
+          </div>
+        </Panel>
+      )}
+
+      {entries.length === 0 && <Panel><p className="px-4 py-8 text-sm text-center" style={{ color: CHALK_DIM }}>No Hall of Fame inductees yet.</p></Panel>}
+
+      {entries.length > 0 && (
+        <Panel>
+          <div className="divide-y" style={{ borderColor: LINE }}>
+            {entries.map(e => (
+              <div key={e.id} className="px-4 py-3 flex items-start gap-3" style={{ borderColor: LINE }}>
+                <div className="w-9 h-9 rounded-full flex items-center justify-center flex-shrink-0" style={{ background: 'rgba(245,198,75,0.15)', border: `1.5px solid ${GOLD}` }}>
+                  <AwardIcon size={16} style={{ color: GOLD }} />
+                </div>
+                <div className="flex-1 min-w-0">
+                  <div className="flex items-center gap-2 flex-wrap">
+                    {e.playerName ? (
+                      <button onClick={() => onOpenPlayer(e.playerName)} className="text-sm font-bold hover:underline" style={{ color: CHALK }}>{e.name}</button>
+                    ) : (
+                      <span className="text-sm font-bold" style={{ color: CHALK }}>{e.name}</span>
+                    )}
+                    {e.year && <span className="text-[10px] font-bold px-2 py-0.5 rounded-full" style={{ background: 'rgba(245,198,75,0.12)', color: GOLD }}>Class of {e.year}</span>}
+                  </div>
+                  {e.note && <p className="text-xs mt-1" style={{ color: CHALK_DIM }}>{e.note}</p>}
+                </div>
+                {canManage && <button onClick={() => removeHallOfFameEntry(e.id)} className="p-1 rounded flex-shrink-0" style={{ color: NEGATIVE }}><Trash2 size={14} /></button>}
+              </div>
+            ))}
+          </div>
+        </Panel>
+      )}
     </div>
   );
 }
@@ -9776,6 +9911,9 @@ function GlobalSearch({ teamsIndex, league, onOpenTeam, onOpenPlayer, setTab }) 
 function MaintenanceBanner({ banner }) {
   const [dismissedKey, setDismissedKey] = useState(null);
   if (!banner || !banner.active || !banner.message || dismissedKey === banner.message) return null;
+  const now = Date.now();
+  if (banner.startAt && now < banner.startAt) return null;
+  if (banner.endAt && now > banner.endAt) return null;
   return (
     <div className="mx-4 mt-4 px-4 py-2.5 flex items-center gap-3 rounded-xl" style={{ background: GOLD, color: INK }}>
       <AlertTriangle size={15} className="flex-shrink-0" />
@@ -9791,6 +9929,7 @@ function MaintenanceBanner({ banner }) {
 // between the group's pages without going back to the main nav.
 const STATS_GROUP = ['stats', 'leaders', 'graphs'];
 const EXTRAS_GROUP = ['extras', 'odds'];
+const AWARDS_GROUP = ['awards', 'halloffame'];
 
 function SubNav({ tab, setTab, items }) {
   return (
@@ -10193,15 +10332,16 @@ function App() {
     const s = newSeason(name);
     if (tournamentMode) s.settings = { ...s.settings, playoffFormat: 'wbc', isTournament: true };
     if (copyRoster && activeSeason) s.members = activeSeason.members.map(m => ({ teamId: m.teamId, scheduleName: m.scheduleName, baselineW: 0, baselineL: 0, baselineRF: 0, baselineRA: 0, active: m.active }));
-    const lg = { ...league, seasons: [...league.seasons, s], activeSeasonId: s.id };
+    const lg = appendAuditEntry({ ...league, seasons: [...league.seasons, s], activeSeasonId: s.id }, 'Season created', s.name);
     persistLeague(lg); setSelectedTeamId(null); setRoundIdx(0); setTab('home');
   };
   const renameSeason = (seasonId, name) => { if (!league) return; persistLeague({ ...league, seasons: league.seasons.map(s => s.id === seasonId ? { ...s, name } : s) }); };
   const deleteSeason = (seasonId) => {
     if (!league) return;
+    const target = league.seasons.find(s => s.id === seasonId);
     const remaining = league.seasons.filter(s => s.id !== seasonId);
     const activeSeasonId = league.activeSeasonId === seasonId ? (remaining[0] ? remaining[0].id : null) : league.activeSeasonId;
-    persistLeague({ ...league, seasons: remaining, activeSeasonId });
+    persistLeague(appendAuditEntry({ ...league, seasons: remaining, activeSeasonId }, 'Season deleted', target ? target.name : seasonId));
   };
   const setChampion = (seasonId, teamId) => { if (!league) return; persistLeague({ ...league, seasons: league.seasons.map(s => s.id === seasonId ? { ...s, championTeamId: teamId } : s) }); };
   const setSeasonPublic = (seasonId, isPublic) => { if (!league) return; persistLeague({ ...league, seasons: league.seasons.map(s => s.id === seasonId ? { ...s, public: isPublic } : s) }); };
@@ -10362,25 +10502,28 @@ function App() {
     persistLeague({ ...league, seasons });
   };
   const setPlayerSuspended = (teamId, playerId, suspended, reason, durationGames) => {
-    const player = ((activeSeason && activeSeason.members.find(m => m.teamId === teamId)) || {}).roster?.find(p => p.id === playerId);
+    if (!league || !activeSeason) return;
+    const player = ((activeSeason.members.find(m => m.teamId === teamId)) || {}).roster?.find(p => p.id === playerId);
     // Games-served is tracked as "team's completed games at suspension time"
     // rather than a countdown, so it stays correct even if games get
     // rescored/reordered later — remaining is always derived, never stored.
     const gamesPlayed = (activeSeason.games || []).filter(g => g.played && !g.isBye && (g.homeTeamId === teamId || g.awayTeamId === teamId)).length;
-    updateMemberRosterWithActivity(
-      teamId,
-      roster => roster.map(p => p.id === playerId ? {
-        ...p, suspended, suspensionReason: suspended ? (reason || '') : '',
-        suspensionGames: suspended ? (durationGames || null) : null,
-        suspensionStartGames: suspended ? gamesPlayed : null,
-      } : p),
-      player ? {
-        type: suspended ? 'suspend' : 'unsuspend', teamId,
-        text: suspended
-          ? `${player.name} (${(teamsById[teamId] && teamsById[teamId].name) || 'a team'}) suspended${durationGames ? ` for ${durationGames} game${durationGames === 1 ? '' : 's'}` : ''}${reason ? ` — ${reason}` : ''}`
-          : `${player.name} (${(teamsById[teamId] && teamsById[teamId].name) || 'a team'}) suspension lifted`,
-      } : null
-    );
+    const text = player ? (suspended
+      ? `${player.name} (${(teamsById[teamId] && teamsById[teamId].name) || 'a team'}) suspended${durationGames ? ` for ${durationGames} game${durationGames === 1 ? '' : 's'}` : ''}${reason ? ` — ${reason}` : ''}`
+      : `${player.name} (${(teamsById[teamId] && teamsById[teamId].name) || 'a team'}) suspension lifted`) : '';
+    const seasons = league.seasons.map(s => {
+      if (s.id !== activeSeason.id) return s;
+      const members = s.members.map(m => m.teamId === teamId ? {
+        ...m, roster: (m.roster || []).map(p => p.id === playerId ? {
+          ...p, suspended, suspensionReason: suspended ? (reason || '') : '',
+          suspensionGames: suspended ? (durationGames || null) : null,
+          suspensionStartGames: suspended ? gamesPlayed : null,
+        } : p),
+      } : m);
+      const activityLog = player ? [...(s.activityLog || []), { id: uid('act'), type: suspended ? 'suspend' : 'unsuspend', teamId, text, at: Date.now() }] : (s.activityLog || []);
+      return { ...s, members, activityLog };
+    });
+    persistLeague(appendAuditEntry({ ...league, seasons }, suspended ? 'Player suspended' : 'Player suspension lifted', text || (player && player.name) || ''));
   };
   // Bans are more severe than a suspension: the player disappears from stat
   // leaders entirely (see computeSeasonPlayerLeaders's banned filter) rather
@@ -10394,18 +10537,19 @@ function App() {
     const player = (member && member.roster.find(p => p.id === playerId)) || fa;
     if (!player) return;
     const teamName = member ? ((teamsById[member.teamId] && teamsById[member.teamId].name) || 'a team') : 'free agency';
+    const text = banned ? `${player.name} (${teamName}) banned${reason ? ` — ${reason}` : ''}` : `${player.name} ban lifted`;
     const seasons = league.seasons.map(s => {
       if (s.id !== activeSeason.id) return s;
       const members = s.members.map(m => ({ ...m, roster: (m.roster || []).map(p => p.id === playerId ? { ...p, banned, banReason: banned ? (reason || '') : '' } : p) }));
       const freeAgents = (s.freeAgents || []).map(p => p.id === playerId ? { ...p, banned, banReason: banned ? (reason || '') : '' } : p);
       const activityLog = [...(s.activityLog || []), {
         id: uid('act'), type: banned ? 'ban' : 'unban', teamId: member ? member.teamId : null,
-        text: banned ? `${player.name} (${teamName}) banned${reason ? ` — ${reason}` : ''}` : `${player.name} ban lifted`,
+        text,
         at: Date.now(),
       }];
       return { ...s, members, freeAgents, activityLog };
     });
-    persistLeague({ ...league, seasons });
+    persistLeague(appendAuditEntry({ ...league, seasons }, banned ? 'Player banned' : 'Player ban lifted', text));
   };
   // Anyone can submit an appeal from a suspended/banned player's page — no
   // login required, this is the one write action a logged-out visitor can
@@ -10540,7 +10684,7 @@ function App() {
       members: s.members.map(m => m.teamId === teamId ? { ...m, rebrand: { name, color: color || null, logoUrl: logoUrl || null, wordmarkUrl: wordmarkUrl || null } } : m),
       activityLog: [...(s.activityLog || []), { id: uid('act'), type: 'rebrand', teamId, text: `${oldName} rebranded to ${name}`, at: Date.now() }],
     } : s);
-    persistLeague({ ...league, seasons });
+    persistLeague(appendAuditEntry({ ...league, seasons }, 'Team rebranded', `${oldName} → ${name}`));
   };
   const clearRebrand = (teamId) => {
     if (!league || !activeSeason) return;
@@ -11014,6 +11158,17 @@ function App() {
     });
     persistLeague({ ...league, seasons });
   };
+  /* ---- hall of fame ---- */
+  const addHallOfFameEntry = (name, note, year, playerName) => {
+    if (!league || !name.trim()) return;
+    const entry = { id: uid('hof'), name: name.trim(), note: (note || '').trim(), year: (year || '').trim(), playerName: (playerName || '').trim() || null, addedAt: Date.now() };
+    persistLeague(appendAuditEntry({ ...league, hallOfFame: [...(league.hallOfFame || []), entry] }, 'Hall of Fame inductee added', entry.name));
+  };
+  const removeHallOfFameEntry = (id) => {
+    if (!league) return;
+    const entry = (league.hallOfFame || []).find(e => e.id === id);
+    persistLeague(appendAuditEntry({ ...league, hallOfFame: (league.hallOfFame || []).filter(e => e.id !== id) }, 'Hall of Fame inductee removed', entry ? entry.name : id));
+  };
   const removeActivityItem = (activityId, seasonId) => {
     if (!league) return;
     const targetId = seasonId || (activeSeason && activeSeason.id);
@@ -11134,11 +11289,12 @@ function App() {
   const addBadgeDef = (name, icon, color) => {
     if (!league || !name.trim()) return;
     const def = { id: uid('badge'), name: name.trim(), icon: (icon || '').trim() || '★', color: color || GOLD };
-    persistLeague({ ...league, badgeDefs: [...(league.badgeDefs || []), def] });
+    persistLeague(appendAuditEntry({ ...league, badgeDefs: [...(league.badgeDefs || []), def] }, 'Badge created', def.name));
   };
   const removeBadgeDef = (badgeId) => {
     if (!league) return;
-    persistLeague({ ...league, badgeDefs: (league.badgeDefs || []).filter(b => b.id !== badgeId) });
+    const def = (league.badgeDefs || []).find(b => b.id === badgeId);
+    persistLeague(appendAuditEntry({ ...league, badgeDefs: (league.badgeDefs || []).filter(b => b.id !== badgeId) }, 'Badge removed', def ? def.name : badgeId));
   };
   const setPlayerBadges = (identityKey, badgeIds) => {
     if (!league || !identityKey) return;
@@ -11383,13 +11539,16 @@ function App() {
   };
   const declareForfeit = (gameId, forfeitBy) => {
     if (!league || !activeSeason) return;
+    const game = activeSeason.games.find(g => g.id === gameId);
     const homeScore = forfeitBy === 'home' ? 0 : 9;
     const awayScore = forfeitBy === 'away' ? 0 : 9;
     const updatedGames = activeSeason.games.map(g => g.id === gameId ? { ...g, awayScore, homeScore, innings: 0, played: true, isForfeit: true, forfeitBy, winnerOverride: null, isOngoing: false, isDelayed: false } : g);
     const { games: afterPlayIn } = advancePlayIn(updatedGames);
     const { games, championTeamId } = advancePlayoffs(afterPlayIn, activeSeason.settings, seedById);
     const seasons = league.seasons.map(s => s.id === activeSeason.id ? withOddsCache({ ...s, games, championTeamId: championTeamId !== undefined ? championTeamId : s.championTeamId }) : s);
-    persistLeague({ ...league, seasons });
+    const homeName = game ? ((teamsById[game.homeTeamId] && teamsById[game.homeTeamId].name) || 'Home') : 'Home';
+    const awayName = game ? ((teamsById[game.awayTeamId] && teamsById[game.awayTeamId].name) || 'Away') : 'Away';
+    persistLeague(appendAuditEntry({ ...league, seasons }, 'Forfeit declared', `${awayName} @ ${homeName} — ${forfeitBy === 'home' ? homeName : awayName} forfeited`));
   };
   // Marks a not-yet-final game as currently in progress — purely informational
   // (doesn't count toward standings/streaks, same as any unplayed game) but
@@ -11429,11 +11588,15 @@ function App() {
   };
   const setWinnerOverride = (gameId, winnerOverride) => {
     if (!league || !activeSeason) return;
+    const game = activeSeason.games.find(g => g.id === gameId);
     const updatedGames = activeSeason.games.map(g => g.id === gameId ? { ...g, winnerOverride } : g);
     const { games: afterPlayIn } = advancePlayIn(updatedGames);
     const { games, championTeamId } = advancePlayoffs(afterPlayIn, activeSeason.settings, seedById);
     const seasons = league.seasons.map(s => s.id === activeSeason.id ? withOddsCache({ ...s, games, championTeamId: championTeamId !== undefined ? championTeamId : s.championTeamId }) : s);
-    persistLeague({ ...league, seasons });
+    const homeName = game ? ((teamsById[game.homeTeamId] && teamsById[game.homeTeamId].name) || 'Home') : 'Home';
+    const awayName = game ? ((teamsById[game.awayTeamId] && teamsById[game.awayTeamId].name) || 'Away') : 'Away';
+    const winnerName = winnerOverride === 'home' ? homeName : winnerOverride === 'away' ? awayName : 'cleared';
+    persistLeague(appendAuditEntry({ ...league, seasons }, 'Game winner overridden', `${awayName} @ ${homeName} — winner set to ${winnerName}`));
   };
   // Swaps which team is "home" vs "away" on a game — purely a relabeling, so
   // scores, live state, forfeit side, and any winner override all swap along
@@ -11490,8 +11653,11 @@ function App() {
   };
   const deleteGame = (gameId) => {
     if (!league || !activeSeason) return;
+    const game = activeSeason.games.find(g => g.id === gameId);
     const seasons = league.seasons.map(s => s.id === activeSeason.id ? { ...s, games: s.games.filter(g => g.id !== gameId) } : s);
-    persistLeague({ ...league, seasons });
+    const homeName = game ? ((teamsById[game.homeTeamId] && teamsById[game.homeTeamId].name) || 'Home') : 'Home';
+    const awayName = game ? ((teamsById[game.awayTeamId] && teamsById[game.awayTeamId].name) || 'Away') : 'Away';
+    persistLeague(appendAuditEntry({ ...league, seasons }, 'Game deleted', game ? `${awayName} @ ${homeName} (${game.date || ''})` : gameId));
   };
   const updateGameNotes = (gameId, notes) => {
     if (!league || !activeSeason) return;
@@ -11527,9 +11693,9 @@ function App() {
   // A short message the Site Owner can post at the top of the Home tab —
   // shown as a dismissible banner to every visitor while active,
   // independent of any one season.
-  const setMaintenanceBanner = (message, active) => {
+  const setMaintenanceBanner = (message, active, startAt, endAt) => {
     if (!league) return;
-    persistLeague({ ...league, maintenanceBanner: { message: (message || '').trim(), active: !!active } });
+    persistLeague({ ...league, maintenanceBanner: { message: (message || '').trim(), active: !!active, startAt: startAt || null, endAt: endAt || null } });
   };
   // Live draft-day entry: appends one pick at a time to the running board
   // and, same as the bulk draft-board importer, stamps draftPick straight
@@ -11698,6 +11864,8 @@ function App() {
       body = <StatLeadersView league={league} season={activeSeason} teamsById={displayTeamsById} onOpenPlayer={onOpenPlayer} leagueLogoUrl={league && league.logoUrl} standings={standings} />;
     } else if (tab === 'awards') {
       body = <AwardsView league={league} season={activeSeason} standings={standings} teamsById={displayTeamsById} addAwardDef={addAwardDef} updateAwardDef={updateAwardDef} removeAwardDef={removeAwardDef} addAwardWinner={addAwardWinner} removeAwardWinnerAt={removeAwardWinnerAt} />;
+    } else if (tab === 'halloffame') {
+      body = <HallOfFameView league={league} addHallOfFameEntry={addHallOfFameEntry} removeHallOfFameEntry={removeHallOfFameEntry} onOpenPlayer={onOpenPlayer} />;
     } else if (tab === 'transactions') {
       body = <TransactionsView season={activeSeason} teamsById={displayTeamsById} onOpenPlayer={onOpenPlayer} onRemoveActivity={removeActivityItem} onDismissAppeal={dismissAppeal} />;
     } else if (tab === 'odds') {
@@ -11771,7 +11939,7 @@ function App() {
             {canGM && <TabBtn active={tab === 'roster'} onClick={() => setTab('roster')} label="GM" />}
             <TabBtn active={tab === 'schedule'} onClick={() => setTab('schedule')} label="Schedule" />
             <TabBtn active={STATS_GROUP.includes(tab)} onClick={() => setTab(STATS_GROUP.includes(tab) ? tab : 'stats')} label="Stats" />
-            <TabBtn active={tab === 'awards'} onClick={() => setTab('awards')} label="Awards" />
+            <TabBtn active={AWARDS_GROUP.includes(tab)} onClick={() => setTab(AWARDS_GROUP.includes(tab) ? tab : 'awards')} label="Awards" />
             <TabBtn active={tab === 'transactions'} onClick={() => setTab('transactions')} label="Transactions" />
             <TabBtn active={EXTRAS_GROUP.includes(tab)} onClick={() => setTab(EXTRAS_GROUP.includes(tab) ? tab : 'extras')} label="Extras" />
             <TabBtn active={tab === 'info'} onClick={() => setTab('info')} label="Info" />
@@ -11785,6 +11953,7 @@ function App() {
           {inSeasonTabs && tab === 'home' && league && <MaintenanceBanner banner={league.maintenanceBanner} />}
           {STATS_GROUP.includes(tab) && <SubNav tab={tab} setTab={setTab} items={[['stats', 'Team Stats'], ['leaders', 'Leaders'], ['graphs', 'Graphs']]} />}
           {EXTRAS_GROUP.includes(tab) && <SubNav tab={tab} setTab={setTab} items={[['extras', 'Fun Stats'], ['odds', 'Odds']]} />}
+          {AWARDS_GROUP.includes(tab) && <SubNav tab={tab} setTab={setTab} items={[['awards', 'Awards'], ['halloffame', 'Hall of Fame']]} />}
           {body}
         </div>
       </main>
