@@ -2843,13 +2843,12 @@ function ChampionBanner({ team }) {
   );
 }
 
-// Board of Directors get this on Home once they're logged in — Site Owner
-// gets the same panel plus a couple of owner-only rows, rather than two
-// separate screens duplicating most of the same "what needs attention"
-// content. Reuses the notifications the header bell already computes
-// (pending trades, suspensions served, open appeals) instead of
-// re-deriving them here.
-function AdminDashboard({ notifications, staleFreeAgentCount, auditLog, settings, season, onViewGM, onViewTransactions, onViewSettings }) {
+// A compact "what needs attention right now" summary — shown to Board of
+// Directors and Site Owner on Home (with a link into the full Admin
+// Dashboard tab), and reused unlinked at the top of that tab itself.
+// Reuses the notifications the header bell already computes (pending
+// trades, suspensions served, open appeals) instead of re-deriving them.
+function AdminDashboard({ notifications, staleFreeAgentCount, settings, season, onViewGM, onViewTransactions, onViewAdmin }) {
   const { hasPermission, role } = useAuth();
   if (!hasPermission('manageRosterMoves')) return null;
   const isSiteOwner = role === 'site_owner';
@@ -2878,17 +2877,9 @@ function AdminDashboard({ notifications, staleFreeAgentCount, auditLog, settings
         {overLimitTeams.length > 0 && (
           <p className="text-xs" style={{ color: NEGATIVE }}>Over the {rosterLimit}-player roster limit: {overLimitTeams.map(m => m.scheduleName).join(', ')}</p>
         )}
-        {isSiteOwner && (
-          <div className="pt-2 space-y-2" style={{ borderTop: `1px solid ${LINE}` }}>
-            <button onClick={onViewSettings} className="text-xs font-bold" style={{ color: PRIMARY }}>Manage admins & site settings →</button>
-            {auditLog && auditLog.length > 0 && (
-              <div className="text-xs space-y-1" style={{ color: CHALK_DIM }}>
-                <div className="font-bold uppercase tracking-wide text-[10px]">Recent admin activity</div>
-                {auditLog.slice().reverse().slice(0, 3).map(a => (
-                  <div key={a.id}>{a.action}{a.detail ? ` — ${a.detail}` : ''}</div>
-                ))}
-              </div>
-            )}
+        {onViewAdmin && (
+          <div className="pt-2" style={{ borderTop: `1px solid ${LINE}` }}>
+            <button onClick={onViewAdmin} className="text-xs font-bold" style={{ color: PRIMARY }}>Open admin dashboard →</button>
           </div>
         )}
       </div>
@@ -2896,8 +2887,56 @@ function AdminDashboard({ notifications, staleFreeAgentCount, auditLog, settings
   );
 }
 
-function HomeView({ season, teamsById, settings, onOpenTeam, h2hMatrix, sport, onStartPlayoffs, onClearPlayoffs, onStartPlayIn, onClearPlayIn, onOpenCompare, news, onViewNews, onOpenPlayer, onViewLeaders, onViewTransactions, notifications, staleFreeAgentCount, auditLog, onViewGM, onViewSettings }) {
-  const dashboard = <AdminDashboard notifications={notifications} staleFreeAgentCount={staleFreeAgentCount} auditLog={auditLog} settings={settings} season={season} onViewGM={onViewGM} onViewTransactions={onViewTransactions} onViewSettings={onViewSettings} />;
+// The full admin tools page — everything that used to be scattered across
+// Home (the summary tiles) and the bottom of Settings (badges, the homepage
+// banner, admin role management, the audit log) lives here instead, one
+// destination for "stuff only an admin needs." Settings keeps league
+// configuration (rules, imports, appearance); this tab keeps day-to-day
+// admin operations and trust-sensitive tools.
+function AdminDashboardView({ league, season, notifications, staleFreeAgentCount, settings, onViewGM, onViewTransactions, onAddBadgeDef, onRemoveBadgeDef, onSetMaintenanceBanner, onLogAudit, onOpenRegistry }) {
+  const { hasPermission, role } = useAuth();
+  if (!hasPermission('manageRosterMoves')) {
+    return <div className="p-4"><Panel><p className="px-4 py-8 text-sm text-center" style={{ color: CHALK_DIM }}>You don't have access to this page.</p></Panel></div>;
+  }
+  const isSiteOwner = role === 'site_owner';
+  const canManageSettings = hasPermission('manageSettings');
+  return (
+    <div className="p-3 space-y-3">
+      <AdminDashboard notifications={notifications} staleFreeAgentCount={staleFreeAgentCount} settings={settings} season={season} onViewGM={onViewGM} onViewTransactions={onViewTransactions} />
+      {isSiteOwner && (
+        <Panel>
+          <SectionTitle>Team registry</SectionTitle>
+          <div className="px-4 pb-3 space-y-2">
+            <p className="text-xs" style={{ color: CHALK_DIM }}>Create brand-new teams for the site-wide registry, or edit any existing team's colors/logo from one place. Site Owner only.</p>
+            <button onClick={onOpenRegistry} className="px-3 py-2 rounded font-bold text-sm" style={{ background: PRIMARY, color: INK }}>Open team registry</button>
+          </div>
+        </Panel>
+      )}
+      {canManageSettings && <HomepageBannerPanel league={league} onSetMaintenanceBanner={onSetMaintenanceBanner} />}
+      <BadgeManagerPanel league={league} onAddBadgeDef={onAddBadgeDef} onRemoveBadgeDef={onRemoveBadgeDef} />
+      <ManageAdminsPanel onLogAudit={onLogAudit} />
+      {isSiteOwner && league && league.auditLog && league.auditLog.length > 0 && (
+        <Panel className="overflow-hidden">
+          <SectionTitle>Audit log</SectionTitle>
+          <div className="px-2 pb-2 max-h-96 overflow-y-auto">
+            {league.auditLog.slice().reverse().slice(0, 100).map(a => (
+              <div key={a.id} className="px-2 py-2 text-xs" style={{ borderTop: `1px solid ${LINE}`, color: CHALK }}>
+                <div className="flex items-center justify-between gap-2">
+                  <span className="font-semibold">{a.action}</span>
+                  <span style={{ color: CHALK_DIM }}>{new Date(a.at).toLocaleString()}</span>
+                </div>
+                {a.detail && <div style={{ color: CHALK_DIM }}>{a.detail}</div>}
+              </div>
+            ))}
+          </div>
+        </Panel>
+      )}
+    </div>
+  );
+}
+
+function HomeView({ season, teamsById, settings, onOpenTeam, h2hMatrix, sport, onStartPlayoffs, onClearPlayoffs, onStartPlayIn, onClearPlayIn, onOpenCompare, news, onViewNews, onOpenPlayer, onViewLeaders, onViewTransactions, notifications, staleFreeAgentCount, onViewGM, onViewAdmin }) {
+  const dashboard = <AdminDashboard notifications={notifications} staleFreeAgentCount={staleFreeAgentCount} settings={settings} season={season} onViewGM={onViewGM} onViewTransactions={onViewTransactions} onViewAdmin={onViewAdmin} />;
   if ((season.games || []).length === 0) {
     return <div className="p-3 space-y-3">{dashboard}<Panel><p className="px-4 py-8 text-sm text-center" style={{ color: CHALK_DIM }}>Import a schedule to see standings and scores here.</p></Panel></div>;
   }
@@ -3734,14 +3773,11 @@ function HomepageBannerPanel({ league, onSetMaintenanceBanner }) {
   );
 }
 
-function SettingsView({ settings, saveSettings, theme, saveTheme, sport, season, teamsById, importGames, addManualGame, generateSchedule, league, onRunKpbImport, onSyncPlayerIdentities, onAddBadgeDef, onRemoveBadgeDef, onOpenRegistry, onLogAudit, onSetMaintenanceBanner }) {
-  const { hasPermission, role } = useAuth();
-  const isSiteOwner = role === 'site_owner';
+function SettingsView({ settings, saveSettings, theme, saveTheme, sport, season, teamsById, importGames, addManualGame, generateSchedule, league, onRunKpbImport, onSyncPlayerIdentities }) {
+  const { hasPermission } = useAuth();
   const canManageSettings = hasPermission('manageSettings');
   const canManageSchedule = hasPermission('manageSchedule');
-  const canManageAdmins = hasPermission('manageAdmins');
   const showImportGroup = canManageSchedule || canManageSettings;
-  const showAdminGroup = isSiteOwner || canManageAdmins;
   return (
     <div className="p-3 space-y-3">
       {canManageSettings && <SettingsGroupHeader label="League rules & format" />}
@@ -3875,38 +3911,8 @@ function SettingsView({ settings, saveSettings, theme, saveTheme, sport, season,
       )}
       {canManageSettings && <KpbImportPanel league={league} onRunImport={onRunKpbImport} />}
       {canManageSettings && <PlayerIdentitySyncPanel onRunSync={onSyncPlayerIdentities} />}
-      {canManageSettings && <SettingsGroupHeader label="Content" />}
-      {canManageSettings && <HomepageBannerPanel league={league} onSetMaintenanceBanner={onSetMaintenanceBanner} />}
-      <BadgeManagerPanel league={league} onAddBadgeDef={onAddBadgeDef} onRemoveBadgeDef={onRemoveBadgeDef} />
       {canManageSettings && <SettingsGroupHeader label="Appearance" />}
       <AppearanceSettings theme={theme} saveTheme={saveTheme} />
-      {showAdminGroup && <SettingsGroupHeader label="Admin access" />}
-      {isSiteOwner && (
-        <Panel>
-          <SectionTitle>Team registry</SectionTitle>
-          <div className="px-4 pb-3 space-y-2">
-            <p className="text-xs" style={{ color: CHALK_DIM }}>Create brand-new teams for the site-wide registry, or edit any existing team's colors/logo from one place. Site Owner only.</p>
-            <button onClick={onOpenRegistry} className="px-3 py-2 rounded font-bold text-sm" style={{ background: PRIMARY, color: INK }}>Open team registry</button>
-          </div>
-        </Panel>
-      )}
-      <ManageAdminsPanel onLogAudit={onLogAudit} />
-      {isSiteOwner && league && league.auditLog && league.auditLog.length > 0 && (
-        <Panel className="overflow-hidden">
-          <SectionTitle>Audit log</SectionTitle>
-          <div className="px-2 pb-2 max-h-72 overflow-y-auto">
-            {league.auditLog.slice().reverse().slice(0, 50).map(a => (
-              <div key={a.id} className="px-2 py-2 text-xs" style={{ borderTop: `1px solid ${LINE}`, color: CHALK }}>
-                <div className="flex items-center justify-between gap-2">
-                  <span className="font-semibold">{a.action}</span>
-                  <span style={{ color: CHALK_DIM }}>{new Date(a.at).toLocaleString()}</span>
-                </div>
-                {a.detail && <div style={{ color: CHALK_DIM }}>{a.detail}</div>}
-              </div>
-            ))}
-          </div>
-        </Panel>
-      )}
     </div>
   );
 }
@@ -7251,16 +7257,21 @@ function PlayerPage({ league, teamsById, playerName, onBack, onOpenTeam, onOpenP
   // render in the dedicated accolades section further down the page.
   const autoBadges = [];
   {
-    const counts = {};
+    const groups = {};
     awards.forEach(a => {
       if (a.isManual) return;
       const key = a.isChampionship ? 'League Champion' : a.name;
-      counts[key] = (counts[key] || 0) + 1;
+      if (!groups[key]) groups[key] = { label: key, count: 0, seasons: [], isChampionship: !!a.isChampionship };
+      groups[key].count += 1;
+      if (a.seasonName) groups[key].seasons.push(a.seasonName);
     });
-    Object.entries(counts).forEach(([label, count]) => autoBadges.push({ key: `award:${label}`, label, count, isChampionship: label === 'League Champion' }));
+    Object.values(groups).forEach(g => autoBadges.push({
+      key: `award:${g.label}`, label: g.label, count: g.count, isChampionship: g.isChampionship,
+      detail: g.seasons.length ? `Won: ${g.seasons.join(', ')}` : '',
+    }));
   }
   const hofEntry = (league.hallOfFame || []).find(e => e.playerName && nameTargets.includes(normName(e.playerName)));
-  if (hofEntry) autoBadges.push({ key: 'hof', label: 'Hall of Fame', count: 0, isHof: true });
+  if (hofEntry) autoBadges.push({ key: 'hof', label: 'Hall of Fame', count: 0, isHof: true, detail: hofEntry.year ? `Inducted — Class of ${hofEntry.year}` : 'Inducted into the Hall of Fame' });
 
   const GameRef = ({ row }) => {
     const opp = teamsById[row.oppTeamId];
@@ -7288,16 +7299,16 @@ function PlayerPage({ league, teamsById, playerName, onBack, onOpenTeam, onOpenP
               {latestTeam ? <button onClick={() => onOpenTeam(latest.teamId)} className="flex items-center gap-1.5 text-sm font-semibold" style={{ color: '#fff' }}><TeamMark team={latestTeam} size={16} /> {latestTeam.name}</button> : <span className="text-sm font-semibold" style={{ color: 'rgba(255,255,255,0.85)' }}>Free Agent</span>}
             </div>
             {(playerBadges.length > 0 || autoBadges.length > 0) && (
-              <div className="flex items-center gap-1.5 mt-2 flex-wrap">
-                {playerBadges.map(b => (
-                  <span key={b.id} title={b.name} className="flex items-center gap-1 px-2 py-0.5 rounded-full text-[11px] font-semibold" style={{ background: 'rgba(0,0,0,0.35)', color: '#fff', border: '1px solid rgba(255,255,255,0.35)' }}>
-                    <span>{b.icon}</span><span>{b.name}</span>
+              <div className="flex items-center gap-2 mt-2.5 flex-wrap">
+                {autoBadges.map(b => (
+                  <span key={b.key} title={b.detail || b.label} className="flex items-center gap-1.5 pl-2 pr-2.5 py-1 rounded-full text-xs font-bold shadow-sm" style={{ background: GOLD, color: '#241a02' }}>
+                    {b.isHof ? <Star size={13} fill="#241a02" /> : b.isChampionship ? <Crown size={13} /> : <AwardIcon size={13} />}
+                    <span>{b.count > 1 ? `${b.count}x ` : ''}{b.label}</span>
                   </span>
                 ))}
-                {autoBadges.map(b => (
-                  <span key={b.key} title={b.isHof ? 'Inducted into the Hall of Fame' : b.label} className="flex items-center gap-1 px-2 py-0.5 rounded-full text-[11px] font-semibold" style={{ background: 'rgba(245,198,75,0.22)', color: GOLD, border: `1px solid ${GOLD}` }}>
-                    {b.isHof ? <Star size={11} /> : b.isChampionship ? <Crown size={11} /> : <AwardIcon size={11} />}
-                    <span>{b.label}{b.count > 1 ? ` ×${b.count}` : ''}</span>
+                {playerBadges.map(b => (
+                  <span key={b.id} title={b.name} className="flex items-center gap-1.5 px-2.5 py-1 rounded-full text-xs font-bold shadow-sm" style={{ background: '#fff', color: '#1a1a1a' }}>
+                    <span>{b.icon}</span><span>{b.name}</span>
                   </span>
                 ))}
               </div>
@@ -7717,8 +7728,15 @@ function PlayerComparePage({ league, teamsById, initialNameA, initialNameB, onBa
   const totalsA = sumPlayerTotals(dataA.gameLog.filter(r => !r.isTournament)), totalsB = sumPlayerTotals(dataB.gameLog.filter(r => !r.isTournament));
   const battingA = computeBattingAdvanced(totalsA), battingB = computeBattingAdvanced(totalsB);
   const pitchingA = computePitchingAdvanced(totalsA), pitchingB = computePitchingAdvanced(totalsB);
-  const latestA = dataA.seasonsInfo[dataA.seasonsInfo.length - 1];
-  const latestB = dataB.seasonsInfo[dataB.seasonsInfo.length - 1];
+  // Same fix as PlayerPage: prefer the entry for the season actually being
+  // viewed (activeSeasonId) over whichever season this identity's record
+  // was most recently created in — otherwise switching the season viewer
+  // to an older season didn't update who's shown as on what team here.
+  const currentEntryFor = (seasonsInfo) => seasonsInfo.length > 0
+    ? (seasonsInfo.find(info => info.season.id === activeSeasonId) || seasonsInfo[seasonsInfo.length - 1])
+    : null;
+  const latestA = currentEntryFor(dataA.seasonsInfo);
+  const latestB = currentEntryFor(dataB.seasonsInfo);
   const teamA = latestA ? teamsById[latestA.teamId] : null;
   const teamB = latestB ? teamsById[latestB.teamId] : null;
   const colorA = teamA ? teamColor(teamA) : PRIMARY, colorB = teamB ? teamColor(teamB) : NEGATIVE;
@@ -11849,7 +11867,7 @@ function App() {
     } else if (!activeSeasonPublic && !isLoggedIn) {
       body = <div className="p-4"><Panel><p className="px-4 py-8 text-sm text-center" style={{ color: CHALK_DIM }}>This season isn't public yet. Check back later, or log in if you're an admin.</p></Panel></div>;
     } else if (tab === 'home') {
-      body = <HomeView season={activeSeason} teamsById={displayTeamsById} settings={activeSeason.settings} onOpenTeam={onOpenTeam} h2hMatrix={h2hMatrix} sport={sport} onStartPlayoffs={startPlayoffs} onClearPlayoffs={clearPlayoffs} onStartPlayIn={startPlayIn} onClearPlayIn={clearPlayIn} onOpenCompare={onOpenCompare} news={league.news || []} onViewNews={() => setTab('news')} onOpenPlayer={onOpenPlayer} onViewLeaders={() => setTab('leaders')} onViewTransactions={() => setTab('transactions')} notifications={notifications} staleFreeAgentCount={staleFreeAgentCount} auditLog={league.auditLog} onViewGM={() => setTab('roster')} onViewSettings={() => setTab('settings')} />;
+      body = <HomeView season={activeSeason} teamsById={displayTeamsById} settings={activeSeason.settings} onOpenTeam={onOpenTeam} h2hMatrix={h2hMatrix} sport={sport} onStartPlayoffs={startPlayoffs} onClearPlayoffs={clearPlayoffs} onStartPlayIn={startPlayIn} onClearPlayIn={clearPlayIn} onOpenCompare={onOpenCompare} news={league.news || []} onViewNews={() => setTab('news')} onOpenPlayer={onOpenPlayer} onViewLeaders={() => setTab('leaders')} onViewTransactions={() => setTab('transactions')} notifications={notifications} staleFreeAgentCount={staleFreeAgentCount} onViewGM={() => setTab('roster')} onViewAdmin={() => setTab('admin')} />;
     } else if (tab === 'standings') {
       body = <StandingsView standings={standings} updateMemberField={updateMemberField} season={activeSeason} settings={activeSeason.settings} movementById={movementById} onOpenTeam={onOpenTeam} />;
     } else if (tab === 'teams' && isLoggedIn) {
@@ -11879,7 +11897,9 @@ function App() {
     } else if (tab === 'info') {
       body = <LeagueInfoView league={league} updateLeagueInfo={updateLeagueInfo} addStaffMember={addStaffMember} updateStaffMember={updateStaffMember} removeStaffMember={removeStaffMember} addLeagueLink={addLeagueLink} updateLeagueLink={updateLeagueLink} removeLeagueLink={removeLeagueLink} onUpdateConstitution={updateConstitution} />;
     } else if (tab === 'settings') {
-      body = <SettingsView settings={activeSeason.settings} saveSettings={saveSettings} theme={theme} saveTheme={saveTheme} sport={sport} season={activeSeason} teamsById={teamsById} importGames={importGames} addManualGame={addManualGame} generateSchedule={generateSchedule} league={league} onRunKpbImport={runKpbImport} onSyncPlayerIdentities={syncPlayerIdentities} onAddBadgeDef={addBadgeDef} onRemoveBadgeDef={removeBadgeDef} onOpenRegistry={openRegistry} onLogAudit={logAudit} onSetMaintenanceBanner={setMaintenanceBanner} />;
+      body = <SettingsView settings={activeSeason.settings} saveSettings={saveSettings} theme={theme} saveTheme={saveTheme} sport={sport} season={activeSeason} teamsById={teamsById} importGames={importGames} addManualGame={addManualGame} generateSchedule={generateSchedule} league={league} onRunKpbImport={runKpbImport} onSyncPlayerIdentities={syncPlayerIdentities} />;
+    } else if (tab === 'admin') {
+      body = <AdminDashboardView league={league} season={activeSeason} notifications={notifications} staleFreeAgentCount={staleFreeAgentCount} settings={activeSeason.settings} onViewGM={() => setTab('roster')} onViewTransactions={() => setTab('transactions')} onAddBadgeDef={addBadgeDef} onRemoveBadgeDef={removeBadgeDef} onSetMaintenanceBanner={setMaintenanceBanner} onLogAudit={logAudit} onOpenRegistry={openRegistry} />;
     } else if (tab === 'team') {
       body = <TeamPage season={activeSeason} settings={activeSeason.settings} team={selectedTeamMerged} standingsRow={selectedStandingsRow} teamsById={displayTeamsById} h2hMatrix={h2hMatrix} championshipCount={selectedTeamId ? (teamChampionshipCounts[selectedTeamId] || 0) : 0} onBack={backFromTeam} onOpenGlobalHistory={(id) => openTeamHistory(id, 'league')} onOpenCompare={onOpenCompare} updatePlayerField={updatePlayerField} removePlayer={removePlayer} addPlayer={addPlayer} addPlayersBulk={addPlayersBulk} tradePlayer={tradePlayer} updateMemberField={updateMemberField} setPlayerSuspended={setPlayerSuspended} setPlayerBanned={setPlayerBanned} onOpenPlayer={onOpenPlayer} onRebrand={rebrandTeam} onClearRebrand={clearRebrand} />;
     } else if (tab === 'compare') {
@@ -11943,6 +11963,7 @@ function App() {
             <TabBtn active={tab === 'transactions'} onClick={() => setTab('transactions')} label="Transactions" />
             <TabBtn active={EXTRAS_GROUP.includes(tab)} onClick={() => setTab(EXTRAS_GROUP.includes(tab) ? tab : 'extras')} label="Extras" />
             <TabBtn active={tab === 'info'} onClick={() => setTab('info')} label="Info" />
+            {hasPermission('manageRosterMoves') && <TabBtn active={tab === 'admin'} onClick={() => setTab('admin')} label="Admin" />}
             {isLoggedIn && <TabBtn active={tab === 'settings'} onClick={() => setTab('settings')} label="Settings" />}
           </nav>
         )}
