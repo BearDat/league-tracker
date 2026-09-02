@@ -16,6 +16,7 @@ import {
 import { supabase } from '../lib/supabaseClient';
 import { AuthProvider, useAuth, ROLE_LABELS, ROLE_PERMISSIONS, ALL_PERMS, PERM_LABELS, PERM_DESCRIPTIONS } from '../lib/AuthContext';
 import LoginControl from './LoginControl';
+import BotReviewPanel, { BotEmojiPanel } from './BotReviewPanel';
 
 // Single league this site serves. Set once you've created your league (see
 // README) — skips the original app's multi-league picker screen entirely.
@@ -3144,7 +3145,7 @@ function MergePlayersPanel({ league, onMergePlayers }) {
   );
 }
 
-function AdminDashboardView({ league, season, notifications, staleFreeAgentCount, settings, onViewGM, onViewTransactions, onAddBadgeDef, onRemoveBadgeDef, onSetMaintenanceBanner, onSetEmergencyBanner, onAddChangelogEntry, onRemoveChangelogEntry, onMergePlayers, onLogAudit, onOpenRegistry }) {
+function AdminDashboardView({ league, season, teamsById, notifications, staleFreeAgentCount, settings, onViewGM, onViewTransactions, onAddBadgeDef, onRemoveBadgeDef, onSetMaintenanceBanner, onSetEmergencyBanner, onAddChangelogEntry, onRemoveChangelogEntry, onMergePlayers, onLogAudit, onOpenRegistry, applyPending }) {
   const { hasPermission, role } = useAuth();
   if (!hasPermission('manageRosterMoves')) {
     return <div className="p-4"><Panel><p className="px-4 py-8 text-sm text-center" style={{ color: CHALK_DIM }}>You don't have access to this page.</p></Panel></div>;
@@ -3155,6 +3156,7 @@ function AdminDashboardView({ league, season, notifications, staleFreeAgentCount
     <div className="p-3 space-y-3">
       <AdminDashboard notifications={notifications} staleFreeAgentCount={staleFreeAgentCount} settings={settings} season={season} onViewGM={onViewGM} onViewTransactions={onViewTransactions} />
       <ActivePresencePanel presence={league && league.presence} />
+      <BotReviewPanel applyPending={applyPending} onLogAudit={onLogAudit} />
       {isSiteOwner && (
         <Panel>
           <SectionTitle>Team registry</SectionTitle>
@@ -3167,6 +3169,7 @@ function AdminDashboardView({ league, season, notifications, staleFreeAgentCount
       {canManageSettings && <HomepageBannerPanel league={league} onSetMaintenanceBanner={onSetMaintenanceBanner} />}
       {canManageSettings && <EmergencyBannerPanel league={league} onSetEmergencyBanner={onSetEmergencyBanner} />}
       {canManageSettings && <ChangelogPanel league={league} onAddChangelogEntry={onAddChangelogEntry} onRemoveChangelogEntry={onRemoveChangelogEntry} />}
+      <BotEmojiPanel teamsById={teamsById} season={season} />
       {isSiteOwner && <RolePermissionSimulator />}
       {isSiteOwner && <MergePlayersPanel league={league} onMergePlayers={onMergePlayers} />}
       <BadgeManagerPanel league={league} onAddBadgeDef={onAddBadgeDef} onRemoveBadgeDef={onRemoveBadgeDef} />
@@ -13002,6 +13005,64 @@ function App() {
     const seasons = league.seasons.map(s => s.id === activeSeason.id ? { ...s, games: s.games.map(g => g.id === gameId ? { ...g, gameTimeUTC } : g) } : s);
     persistLeague({ ...league, seasons });
   };
+  const applyPending = (kind, item) => {
+    if (!league || !activeSeason) return { ok: false, error: 'No active season is loaded.' };
+    if (!item) return { ok: false, error: 'That review item has nothing to apply.' };
+    const ownerOf = (playerId) => (activeSeason.members || []).find(m => (m.roster || []).some(p => p.id === playerId));
+    const gameById = (gameId) => (activeSeason.games || []).find(g => g.id === gameId);
+
+    if (kind === 'final_score') {
+      const game = gameById(item.gameId);
+      if (!game) return { ok: false, error: 'That game is no longer on the schedule.' };
+      if (game.played) return { ok: false, error: 'That game has already been scored.' };
+      saveScore(item.gameId, { awayScore: item.awayScore, homeScore: item.homeScore, innings: item.innings });
+      return { ok: true };
+    }
+    if (kind === 'game_time') {
+      if (!gameById(item.gameId)) return { ok: false, error: 'That game is no longer on the schedule.' };
+      updateGameTime(item.gameId, item.gameTimeUTC);
+      return { ok: true };
+    }
+    if (kind === 'trade') {
+      const [a, b] = item.sides || [];
+      if (!a || !b) return { ok: false, error: 'That trade does not have two sides.' };
+      for (const side of item.sides) {
+        for (const playerId of side.playerIds || []) {
+          const owner = ownerOf(playerId);
+          if (!owner) return { ok: false, error: 'One of those players is no longer on a roster.' };
+          if (owner.teamId === side.teamId) return { ok: false, error: 'One of those players is already on the receiving team.' };
+        }
+      }
+      tradePlayers(a.teamId, b.teamId, b.playerIds, a.playerIds);
+      return { ok: true };
+    }
+    if (kind === 'sign') {
+      if (item.playerId) {
+        if (ownerOf(item.playerId)) return { ok: false, error: 'That player is already on a roster.' };
+        signFreeAgent(item.teamId, item.playerId);
+      } else {
+        addPlayer(item.teamId, item.playerName, item.starLevel);
+      }
+      return { ok: true };
+    }
+    if (kind === 'release') {
+      const owner = ownerOf(item.playerId);
+      if (!owner) return { ok: false, error: 'That player is not on a roster.' };
+      removePlayer(owner.teamId, item.playerId);
+      return { ok: true };
+    }
+    if (kind === 'suspend' || kind === 'unsuspend') {
+      const owner = ownerOf(item.playerId);
+      if (!owner) return { ok: false, error: 'That player is not on a roster.' };
+      setPlayerSuspended(owner.teamId, item.playerId, kind === 'suspend', item.reason, item.games);
+      return { ok: true };
+    }
+    if (kind === 'ban' || kind === 'unban') {
+      setPlayerBanned(item.playerId, kind === 'ban', item.reason);
+      return { ok: true };
+    }
+    return { ok: false, error: `The site does not know how to apply "${kind}".` };
+  };
   const saveGamePlayerStats = (gameId, side, entries) => {
     if (!league || !activeSeason) return;
     const seasons = league.seasons.map(s => s.id === activeSeason.id ? { ...s, games: s.games.map(g => g.id === gameId ? { ...g, playerStats: { ...(g.playerStats || {}), [side]: entries } } : g) } : s);
@@ -13231,7 +13292,7 @@ function App() {
     } else if (tab === 'settings') {
       body = <SettingsView settings={activeSeason.settings} saveSettings={saveSettings} theme={theme} saveTheme={saveTheme} sport={sport} season={activeSeason} teamsById={teamsById} importGames={importGames} addManualGame={addManualGame} generateSchedule={generateSchedule} league={league} onRunKpbImport={runKpbImport} onSyncPlayerIdentities={syncPlayerIdentities} />;
     } else if (tab === 'admin') {
-      body = <AdminDashboardView league={league} season={activeSeason} notifications={notifications} staleFreeAgentCount={staleFreeAgentCount} settings={activeSeason.settings} onViewGM={() => setTab('roster')} onViewTransactions={() => setTab('transactions')} onAddBadgeDef={addBadgeDef} onRemoveBadgeDef={removeBadgeDef} onSetMaintenanceBanner={setMaintenanceBanner} onSetEmergencyBanner={setEmergencyBanner} onAddChangelogEntry={addChangelogEntry} onRemoveChangelogEntry={removeChangelogEntry} onMergePlayers={mergePlayers} onLogAudit={logAudit} onOpenRegistry={openRegistry} />;
+      body = <AdminDashboardView league={league} season={activeSeason} teamsById={teamsById} applyPending={applyPending} notifications={notifications} staleFreeAgentCount={staleFreeAgentCount} settings={activeSeason.settings} onViewGM={() => setTab('roster')} onViewTransactions={() => setTab('transactions')} onAddBadgeDef={addBadgeDef} onRemoveBadgeDef={removeBadgeDef} onSetMaintenanceBanner={setMaintenanceBanner} onSetEmergencyBanner={setEmergencyBanner} onAddChangelogEntry={addChangelogEntry} onRemoveChangelogEntry={removeChangelogEntry} onMergePlayers={mergePlayers} onLogAudit={logAudit} onOpenRegistry={openRegistry} />;
     } else if (tab === 'team') {
       body = <TeamPage season={activeSeason} settings={activeSeason.settings} team={selectedTeamMerged} standingsRow={selectedStandingsRow} teamsById={displayTeamsById} h2hMatrix={h2hMatrix} championshipCount={selectedTeamId ? (teamChampionshipCounts[selectedTeamId] || 0) : 0} onBack={backFromTeam} onOpenGlobalHistory={(id) => openTeamHistory(id, 'league')} onOpenCompare={onOpenCompare} updatePlayerField={updatePlayerField} removePlayer={removePlayer} addPlayer={addPlayer} addPlayersBulk={addPlayersBulk} tradePlayer={tradePlayer} updateMemberField={updateMemberField} setPlayerSuspended={setPlayerSuspended} setPlayerBanned={setPlayerBanned} onOpenPlayer={onOpenPlayer} onRebrand={rebrandTeam} onClearRebrand={clearRebrand} />;
     } else if (tab === 'compare') {

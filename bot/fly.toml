@@ -1,0 +1,11 @@
+app = "kpb-bot"
+primary_region = "iad"
+
+[build]
+
+[env]
+  LOG_LEVEL = "info"
+
+[[vm]]
+  size = "shared-cpu-1x"
+  memory = "256mb"
