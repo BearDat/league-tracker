@@ -1,19 +1,12 @@
+'use client';
+
 import React from 'react';
-import { notFound } from 'next/navigation';
-import { getLeagueContext } from '../../../../lib/league-server';
+import { useParams } from 'next/navigation';
+import { useSeason, usePageTitle } from '../../../../lib/LeagueContext';
 import { computeStandings, decorateGame } from '../../../../lib/domain/standings';
 import { teamSlug } from '../../../../lib/domain/core';
 import GameRow from '../../../../components/site/GameRow';
-import { TeamMark, SectionHead, EmptyNote, pct, signed } from '../../../../components/site/primitives';
-
-export const dynamic = 'force-dynamic';
-
-export async function generateMetadata({ params }) {
-  const { slug } = await params;
-  const ctx = await getLeagueContext();
-  const team = ctx && ctx.teams ? ctx.teams.find(t => t.slug === slug) : null;
-  return { title: team ? team.displayName : 'Team' };
-}
+import { TeamMark, SectionHead, EmptyNote, PlayerLink, pct, signed } from '../../../../components/site/primitives';
 
 function Stat({ label, value, tone }) {
   return (
@@ -33,15 +26,20 @@ function SplitRow({ label, value }) {
   );
 }
 
-export default async function TeamPage({ params }) {
-  const { slug } = await params;
-  const ctx = await getLeagueContext();
-  if (!ctx || !ctx.season) return <EmptyNote>No season is published yet.</EmptyNote>;
-  const { season, teamsById } = ctx;
+export default function TeamPage() {
+  const { slug } = useParams();
+  const ctx = useSeason();
+  const team = ctx
+    ? computeStandings(ctx.season, ctx.teamsById).active
+      .map(t => ({ ...t, slug: teamSlug(t.displayName) }))
+      .find(t => t.slug === slug)
+    : null;
+  usePageTitle(team ? team.displayName : 'Team');
 
-  const standings = computeStandings(season, teamsById).active.map(t => ({ ...t, slug: teamSlug(t.displayName) }));
-  const team = standings.find(t => t.slug === slug);
-  if (!team) notFound();
+  if (!ctx) return <EmptyNote>No season is published yet.</EmptyNote>;
+  const { season, teamsById } = ctx;
+  const standings = computeStandings(season, teamsById).active;
+  if (!team) return <EmptyNote>No team on this season has that name.</EmptyNote>;
 
   const games = (season.games || [])
     .filter(g => !g.isBye && (g.homeTeamId === team.id || g.awayTeamId === team.id))
@@ -111,7 +109,7 @@ export default async function TeamPage({ params }) {
                   <tbody>
                     {roster.map(p => (
                       <tr key={p.id} className="border-b border-rule last:border-b-0">
-                        <td className="px-3 py-2 text-sm">{p.name}</td>
+                        <td className="px-3 py-2 text-sm"><PlayerLink name={p.name} /></td>
                         <td className="px-3 py-2 text-sm stat text-right text-ink-soft">
                           {typeof p.starLevel === 'number' ? p.starLevel : 'R'}
                         </td>

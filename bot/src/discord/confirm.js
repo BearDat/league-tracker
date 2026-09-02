@@ -23,6 +23,7 @@ const KIND_LABELS = {
   unsuspend: 'Suspension lifted',
   ban: 'Ban',
   unban: 'Ban lifted',
+  awards: 'Season awards',
   unparsed: 'Unrecognized line',
 };
 
@@ -48,6 +49,8 @@ export function buildReviewEmbed(resolved, context) {
   if (d.player) details.push(`**Player** ${d.player}`);
   if (d.reason) details.push(`**Reason** ${d.reason}`);
   if (d.when) details.push(`**Time** ${d.when}`);
+  if (d.season) details.push(`**Season** ${d.season}`);
+  if (d.awards) d.awards.forEach(a => details.push(a));
   if (details.length > 0) embed.addFields({ name: 'Parsed as', value: truncate(details.join('\n'), 1024) });
 
   embed.addFields({

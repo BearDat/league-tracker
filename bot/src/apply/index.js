@@ -213,6 +213,22 @@ export function applyBan(league, item, nameFor) {
   return { league: appendAudit(next, banned ? 'Player banned by bot' : 'Ban lifted by bot', summary), summary };
 }
 
+export function applyAwards(league, item) {
+  const known = league.awardDefs || [];
+  const awardDefs = item.newAwardDefs.length > 0 ? [...known, ...item.newAwardDefs] : known;
+  const withDefs = { ...league, awardDefs };
+  const next = replaceSeason(withDefs, item.seasonId, season => ({ ...season, awardWinners: item.awardWinners }));
+
+  const { awards, winners, previousAwards, previousWinners } = item.counts;
+  const headline = `${item.seasonName} awards — ${awards} award${awards === 1 ? '' : 's'}, ${winners} winner${winners === 1 ? '' : 's'}`;
+  const replaced = previousWinners > 0
+    ? ` (replaced ${previousAwards} award${previousAwards === 1 ? '' : 's'}, ${previousWinners} winner${previousWinners === 1 ? '' : 's'})`
+    : '';
+  const summary = [`${headline}${replaced}`, ...item.roll, ...item.notes].join('\n');
+
+  return { league: appendAudit(next, 'Awards recorded by bot', headline), summary };
+}
+
 export const APPLIERS = {
   final_score: applyFinalScore,
   game_time: applyGameTime,
@@ -223,6 +239,7 @@ export const APPLIERS = {
   unsuspend: applySuspension,
   ban: applyBan,
   unban: applyBan,
+  awards: applyAwards,
 };
 
 export { findRosterPlayer };

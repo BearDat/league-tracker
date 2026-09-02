@@ -17,6 +17,7 @@ function buildChannelMap() {
     transactions: opt('CHANNEL_TRANSACTIONS'),
     suspensions: opt('CHANNEL_SUSPENSIONS'),
     game_times: opt('CHANNEL_GAME_TIMES'),
+    awards: opt('CHANNEL_AWARDS'),
   };
   for (const [kind, id] of Object.entries(named)) {
     if (id) map.set(id, kind);

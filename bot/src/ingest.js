@@ -58,6 +58,7 @@ const ctxFor = (lg) => ({
   aliases,
   learn: false,
   nameFor,
+  directoryForSeason: (target) => (target.id === getActiveSeason(lg).id ? directory : loadTeamDirectory(target)),
 });
 
 const content = readFileSync(file, 'utf8');

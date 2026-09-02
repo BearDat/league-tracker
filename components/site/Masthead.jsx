@@ -4,6 +4,8 @@ import React from 'react';
 import Link from 'next/link';
 import { usePathname } from 'next/navigation';
 import ThemeToggle from './ThemeToggle';
+import { useLeague } from '../../lib/LeagueContext';
+import { isPostseason } from '../../lib/domain/playoffs';
 
 const BASE_NAV = [
   { href: '/', label: 'Home', exact: true },
@@ -11,10 +13,19 @@ const BASE_NAV = [
   { href: '/standings', label: 'Standings' },
   { href: '/schedule', label: 'Schedule' },
   { href: '/teams', label: 'Teams' },
+  { href: '/stats', label: 'Stats' },
+  { href: '/awards', label: 'Awards' },
+  { href: '/hall-of-fame', label: 'Hall of Fame' },
+  { href: '/history', label: 'History' },
 ];
 
-export default function Masthead({ leagueName, seasonName, postseason }) {
+export default function Masthead() {
   const pathname = usePathname();
+  const { snapshot } = useLeague();
+  const leagueName = (snapshot && snapshot.name) || 'League';
+  const season = snapshot && (snapshot.seasons || []).find(s => s.id === snapshot.activeSeasonId);
+  const postseason = !!(season && isPostseason(season));
+
   const nav = postseason
     ? [...BASE_NAV.slice(0, 2), { href: '/playoffs', label: 'Playoffs' }, ...BASE_NAV.slice(2)]
     : BASE_NAV;
@@ -37,7 +48,7 @@ export default function Masthead({ leagueName, seasonName, postseason }) {
                 Postseason
               </span>
             )}
-            {seasonName && <span className="hidden md:block eyebrow text-white/55">{seasonName}</span>}
+            {season && <span className="hidden md:block eyebrow text-white/55">{season.name}</span>}
             <ThemeToggle />
             <Link
               href="/classic"

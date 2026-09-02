@@ -25,10 +25,11 @@ export async function buildContext({ learn = true } = {}) {
     aliases,
     learn,
     nameFor: (teamId) => byId.get(teamId) || 'Unknown team',
+    directoryForSeason: (target) => (target.id === season.id ? directory : loadTeamDirectory(target)),
   };
 }
 
-function precheck(kind, item, season) {
+function precheck(kind, item, season, league) {
   if (kind === 'final_score') {
     const game = (season.games || []).find(g => g.id === item.gameId);
     if (!game) {
@@ -64,6 +65,10 @@ function precheck(kind, item, season) {
     }
     return null;
   }
+  if (kind === 'awards') {
+    if (!(league.seasons || []).some(s => s.id === item.seasonId)) return 'that season is no longer in the league';
+    return null;
+  }
   if (kind === 'sign') {
     const rostered = (season.members || []).some(m => (m.roster || []).some(p => p.id === item.playerId));
     if (item.playerId && rostered) return 'that player was already signed by someone else';
@@ -79,7 +84,7 @@ export async function applyResolved(resolved, ctx) {
   let summary = '';
   await mutateLeague(league => {
     const season = getActiveSeason(league);
-    blocked = precheck(resolved.kind, resolved.item, season);
+    blocked = precheck(resolved.kind, resolved.item, season, league);
     if (blocked) return null;
     const result = applier(league, resolved.item, ctx.nameFor);
     summary = result.summary;
@@ -152,7 +157,7 @@ export async function processMessage(client, message, kind, { force = false } = 
     guildId: message.guildId,
     authorTag: message.author ? message.author.tag : null,
     rawText: content,
-    announce: false,
+    announce: kind === 'awards',
   };
 
   const outcomes = [];

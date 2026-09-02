@@ -1,6 +1,8 @@
+'use client';
+
 import React from 'react';
 import Link from 'next/link';
-import { getLeagueContext } from '../../lib/league-server';
+import { useSeason } from '../../lib/LeagueContext';
 import { computeStandings, recentResults, upcomingGames } from '../../lib/domain/standings';
 import { teamSlug } from '../../lib/domain/core';
 import { buildBracket } from '../../lib/domain/playoffs';
@@ -9,14 +11,10 @@ import StandingsTable from '../../components/site/StandingsTable';
 import GameRow from '../../components/site/GameRow';
 import { SectionHead, EmptyNote, TeamMark } from '../../components/site/primitives';
 
-export const dynamic = 'force-dynamic';
-
-export default async function HomePage() {
-  const ctx = await getLeagueContext();
-  if (!ctx || !ctx.season) {
-    return <EmptyNote>No season is published yet.</EmptyNote>;
-  }
-  const { season, teamsById, league } = ctx;
+export default function HomePage() {
+  const ctx = useSeason();
+  if (!ctx) return <EmptyNote>No season is published yet.</EmptyNote>;
+  const { season, teamsById, snapshot } = ctx;
   const standings = computeStandings(season, teamsById).active.map(t => ({ ...t, slug: teamSlug(t.displayName) }));
   const recent = recentResults(season, teamsById, 6);
   const upcoming = upcomingGames(season, teamsById, 6);
@@ -84,21 +82,21 @@ export default async function HomePage() {
           )}
         </div>
 
-        {league && league.info && league.info.description && (
+        {snapshot.info && snapshot.info.description && (
           <div className="mt-8">
             <SectionHead title="About" />
             <div className="card px-3 py-3">
-              <p className="text-sm text-ink-soft whitespace-pre-line">{league.info.description}</p>
-              {league.info.discordUrl && (
-                <Link
-                  href={league.info.discordUrl}
-                  className="inline-block mt-3 eyebrow bg-navy text-white px-3 py-2"
-                >
-                  Join the Discord
-                </Link>
-              )}
+              <p className="text-sm text-ink-soft whitespace-pre-line">{snapshot.info.description}</p>
             </div>
           </div>
+        )}
+        {snapshot.info && snapshot.info.discordUrl && (
+          <Link
+            href={snapshot.info.discordUrl}
+            className="inline-block mt-4 eyebrow bg-navy text-white px-3 py-2"
+          >
+            Join the Discord
+          </Link>
         )}
       </aside>
     </div>

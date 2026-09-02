@@ -1,6 +1,7 @@
-import { resolveWithLearning } from './teams.js';
+import { resolveWithLearning, resolveEmoji } from './teams.js';
 import { findScheduledGame, orientScores, describeGame, planPlayoffContinuation } from './games.js';
-import { findRosterPlayer, findPlayerFuzzy, rosterStarTotal, gameWinner } from '../league/core.js';
+import { findRosterPlayer, findPlayerFuzzy, rosterStarTotal, gameWinner, uid } from '../league/core.js';
+import { normalizeName } from '../parsers/util.js';
 
 function lowResult(kind, reasons, display, partial) {
   return { kind, confidence: 'low', reasons, display, item: partial || null };
@@ -307,6 +308,127 @@ async function resolveDiscipline(parsed, ctx) {
   };
 }
 
+function findSeasonByNumber(league, number) {
+  const seasons = (league && league.seasons) || [];
+  const wanted = `season${number}`;
+  const exact = seasons.filter(s => normalizeName(s.name) === wanted);
+  if (exact.length > 0) return exact;
+  return seasons.filter(s => {
+    const key = normalizeName(s.name);
+    return key.endsWith(wanted) || key === `s${number}`;
+  });
+}
+
+function awardKey(name) {
+  return normalizeName(name).replace(/s$/, '');
+}
+
+function findSeasonPlayer(season, name) {
+  const target = normalizeName(name);
+  if (!target) return null;
+  for (const member of season.members || []) {
+    for (const player of member.roster || []) {
+      if (normalizeName(player.name) === target) return { player, teamId: member.teamId };
+    }
+  }
+  for (const player of season.freeAgents || []) {
+    if (normalizeName(player.name) === target) return { player, teamId: null };
+  }
+  return null;
+}
+
+async function resolveAwards(parsed, ctx) {
+  const reasons = [];
+  const display = {
+    line: `Season ${parsed.seasonNumber} awards`,
+    season: `Season ${parsed.seasonNumber}`,
+    awards: parsed.awards.map(a => `${a.name} — ${a.winners.map(w => w.player).join(', ')}`),
+  };
+
+  const seasons = findSeasonByNumber(ctx.league, parsed.seasonNumber);
+  if (seasons.length !== 1) {
+    return lowResult('awards', [seasons.length === 0
+      ? `no season in this league is named "Season ${parsed.seasonNumber}"`
+      : `"Season ${parsed.seasonNumber}" matches ${seasons.length} seasons`], display);
+  }
+  const target = seasons[0];
+  display.season = target.name;
+
+  const directory = ctx.directoryForSeason ? await ctx.directoryForSeason(target) : ctx.directory;
+  const teamNameFor = new Map(directory.map(t => [t.teamId, t.name]));
+
+  const knownDefs = (ctx.league.awardDefs || []).map(d => ({ ...d, key: awardKey(d.name) }));
+  const newAwardDefs = [];
+  const awardWinners = {};
+  const roll = [];
+  const unmatched = [];
+  const conflicts = [];
+
+  parsed.awards.forEach(award => {
+    const key = awardKey(award.name);
+    let def = knownDefs.find(d => d.key === key) || newAwardDefs.find(d => awardKey(d.name) === key);
+    if (!def) {
+      def = { id: uid('award'), name: award.name, description: '' };
+      newAwardDefs.push(def);
+    }
+
+    const list = awardWinners[def.id] || (awardWinners[def.id] = []);
+    const named = [];
+    roll.push({ name: def.name, names: named });
+    award.winners.forEach(winner => {
+      const emoji = winner.emojiId ? resolveEmoji(winner.emojiId, winner.emojiName, directory, ctx.aliases) : null;
+      const emojiTeamId = emoji && emoji.confidence === 'high' ? emoji.teamId : null;
+      const hit = findSeasonPlayer(target, winner.player);
+
+      if (!hit) {
+        unmatched.push(winner.player);
+        named.push(winner.player);
+        list.push({ type: 'player', playerId: null, name: winner.player, teamId: emojiTeamId });
+        return;
+      }
+      if (emojiTeamId && hit.teamId && emojiTeamId !== hit.teamId) {
+        conflicts.push(`${hit.player.name} (post ${teamNameFor.get(emojiTeamId)}, ${target.name} roster ${teamNameFor.get(hit.teamId)})`);
+      }
+      named.push(hit.player.name);
+      list.push({ type: 'player', playerId: hit.player.id, teamId: hit.teamId });
+    });
+  });
+
+  if (parsed.orphans.length > 0) {
+    reasons.push(`${parsed.orphans.length} name${parsed.orphans.length === 1 ? '' : 's'} sat under no award heading: ${parsed.orphans.map(o => o.player).join(', ')}`);
+  }
+
+  const previous = target.awardWinners || {};
+  const notes = [];
+  if (newAwardDefs.length > 0) notes.push(`created awards: ${newAwardDefs.map(d => d.name).join(', ')}`);
+  const unique = (list) => [...new Set(list)];
+  if (unmatched.length > 0) notes.push(`not on the ${target.name} roster, saved by name: ${unique(unmatched).join(', ')}`);
+  if (conflicts.length > 0) notes.push(`emoji/roster disagree: ${unique(conflicts).join('; ')}`);
+  notes.forEach(n => display.awards.push(n));
+
+  const winnerCount = Object.values(awardWinners).reduce((n, list) => n + list.length, 0);
+  return {
+    kind: 'awards',
+    confidence: reasons.length === 0 ? 'high' : 'low',
+    reasons,
+    display,
+    item: {
+      seasonId: target.id,
+      seasonName: target.name,
+      newAwardDefs,
+      awardWinners,
+      roll: roll.map(r => `${r.name}: ${r.names.join(', ')}`),
+      notes,
+      counts: {
+        awards: Object.keys(awardWinners).length,
+        winners: winnerCount,
+        previousAwards: Object.keys(previous).length,
+        previousWinners: Object.values(previous).reduce((n, w) => n + (Array.isArray(w) ? w.length : 1), 0),
+      },
+    },
+  };
+}
+
 const RESOLVERS = {
   final_score: resolveFinalScore,
   game_time: resolveGameTime,
@@ -317,6 +439,7 @@ const RESOLVERS = {
   unsuspend: resolveDiscipline,
   ban: resolveDiscipline,
   unban: resolveDiscipline,
+  awards: resolveAwards,
 };
 
 export async function resolveParsed(parsed, ctx) {

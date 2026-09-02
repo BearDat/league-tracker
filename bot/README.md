@@ -124,6 +124,69 @@ the site's own timezone handling). A time without a date assumes today in
 Eastern and is always queued rather than applied. Send real examples from the
 channel and this parser should be rewritten around them.
 
+### `awards`
+
+```
+<:KPB:135…> KPB SEASON 4 AWARDS <:KPB:135…>
+MOTY - <:BrooklynBears:135…> kobbiemainoolover486
+
+Silver Sluggers:
+<:MiamiSharks:135…> aceelordd
+<:DenverWhitecaps:135…> CadeHitsBombs
+
+Batting Title: <:MiamiSharks:135…> aceelordd
+
+**__Miscellaneous Awards:__**
+Broken Glove: <:MiamiSharks:135…> El_capitan283
+```
+
+Unlike the other parsers this one reads the whole message at once rather than a
+line at a time, because an awards post is stateful: a heading sets the context
+for the lines under it. A `SEASON n AWARDS` line starts a block, and one message
+can carry several blocks — posting S4 and S3 together produces two independent
+writes.
+
+Inside a block a line is read one of three ways:
+
+- **Starts with an emoji** — a winner belonging to whichever heading is open.
+- **`Label: winner` or `Label - winner`** — a one-line award. The label is
+  everything before the first `:` or ` - ` that precedes the first emoji, so a
+  username containing either character is safe.
+- **`Label:` with nothing after it** — opens a heading that collects the emoji
+  lines beneath it, which is how `Silver Sluggers:` picks up its eight names.
+
+A heading that collects nothing was a divider rather than an award, so
+`**__Miscellaneous Awards:__**` is discarded once the `Broken Glove:` line under
+it turns out to carry its own label. Surrounding `**` and `__` are stripped, but
+single underscores are left alone because usernames like `El_capitan283` and
+`F_xther` need them.
+
+The header's season number decides where the awards go: `SEASON 4 AWARDS` writes
+to the season named "Season 4", not to whatever season is active. If no season
+has that name the whole post is held for review rather than guessed at.
+Re-posting is how you correct a mistake — the post is the source of truth for
+that season, so applying it **replaces** that season's award winners outright
+instead of appending to them.
+
+Award names are matched against `league.awardDefs` with a plural allowance, so
+`Silver Sluggers` finds the existing `Silver Slugger`. Anything still unknown
+gets an award created for it, and the confirmation DM lists what it created so a
+typo is visible. Awards genuinely do change season to season; nothing has to be
+registered in advance.
+
+Winners are matched by **name** against the named season's rosters, not by the
+emoji. Emoji drift badly across seasons: the S4 post has `ZachWaxer` under
+`<:PittsburghStallions:…>`, a team that did not exist in S4, and the S3 post has
+`CadeHitsBombs` under `<:PortlandStags:…>` when the S3 roster has him on
+Pittsburgh. So the roster wins and the disagreement is reported. The emoji is
+still used as a fallback team for a winner on no roster at all, and those
+winners are stored by name, the same shape the site already uses for a
+free-agent winner.
+
+Because an awards post is a bulk write over a whole season, it always DMs a
+summary of what it did — the full roll of winners, plus any awards it created,
+names it could not match, and emoji it disagreed with.
+
 ## Emoji to team mapping
 
 Team emoji are not one-to-one with teams: Toronto Tigers posts under two
@@ -198,6 +261,7 @@ regenerates the cache on its next visit to the Odds tab.
 node src/dryrun.js final_scores samples/final-scores.txt
 node src/dryrun.js transactions samples/transactions.txt
 node src/dryrun.js suspensions samples/suspensions.txt
+node src/dryrun.js awards samples/awards.txt
 ```
 
 Prints the parse as JSON and writes nothing. Add `--resolve` to also match
@@ -241,6 +305,8 @@ close the row, so it does not matter which you use.
   fixing it on the site.
 - Per-player box score stats are not read from these channels; the site's OCR
   import still handles those.
+- An awards post names winners but not the team each won it for; the team stored
+  is the one the player's roster entry sat on that season.
 - A trade involving three or more teams parses, but the checksum assumes each
   player comes from one of the other listed sides.
 - The site's own saves are still last-write-wins. The bot writes with

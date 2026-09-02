@@ -1,6 +1,10 @@
+'use client';
+
 import React from 'react';
 import Link from 'next/link';
 import { teamSlug } from '../../lib/domain/core';
+import { playerSlug } from '../../lib/domain/awards';
+import { usePlayerSlugs } from '../../lib/LeagueContext';
 
 function logoSrc(team) {
   if (!team || !team.logoUrl) return null;
@@ -45,6 +49,31 @@ export function TeamLink({ team, children, className = '' }) {
   return (
     <Link href={`/teams/${slug}`} className={`hover:text-brick ${className}`}>
       {children || team.name || team.displayName}
+    </Link>
+  );
+}
+
+const DISCORD_EMOJI_RE = /<a?:([A-Za-z0-9_~]+):\d+>/g;
+
+export function cleanDiscordText(text) {
+  return String(text == null ? '' : text)
+    .replace(DISCORD_EMOJI_RE, '')
+    .replace(/[*_]{2,}/g, '')
+    .split(/\r?\n/)
+    .map(line => line.replace(/[ \t]+/g, ' ').trim())
+    .join('\n')
+    .replace(/\n{3,}/g, '\n\n')
+    .trim();
+}
+
+export function PlayerLink({ name, slug, className = '' }) {
+  const known = usePlayerSlugs();
+  if (!name) return <span className={className}>Unknown player</span>;
+  const target = slug || playerSlug(name);
+  if (!known || !known.has(target)) return <span className={className}>{name}</span>;
+  return (
+    <Link href={`/players/${target}`} className={`hover:text-brick ${className}`}>
+      {name}
     </Link>
   );
 }

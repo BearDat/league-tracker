@@ -1,16 +1,16 @@
+'use client';
+
 import React from 'react';
-import { getLeagueContext } from '../../../lib/league-server';
+import { useSeason, usePageTitle } from '../../../lib/LeagueContext';
 import { buildBracket } from '../../../lib/domain/playoffs';
 import Bracket from '../../../components/site/Bracket';
 import GameRow from '../../../components/site/GameRow';
 import { TeamMark, SectionHead, EmptyNote } from '../../../components/site/primitives';
 
-export const dynamic = 'force-dynamic';
-export const metadata = { title: 'Playoffs' };
-
-export default async function PlayoffsPage() {
-  const ctx = await getLeagueContext();
-  if (!ctx || !ctx.season) return <EmptyNote>No season is published yet.</EmptyNote>;
+export default function PlayoffsPage() {
+  usePageTitle('Playoffs');
+  const ctx = useSeason();
+  if (!ctx) return <EmptyNote>No season is published yet.</EmptyNote>;
   const { season, teamsById } = ctx;
   const bracket = buildBracket(season, teamsById);
 

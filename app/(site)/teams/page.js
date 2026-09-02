@@ -1,16 +1,16 @@
+'use client';
+
 import React from 'react';
 import Link from 'next/link';
-import { getLeagueContext } from '../../../lib/league-server';
+import { useSeason, usePageTitle } from '../../../lib/LeagueContext';
 import { computeStandings } from '../../../lib/domain/standings';
 import { teamSlug } from '../../../lib/domain/core';
 import { TeamMark, SectionHead, EmptyNote, pct } from '../../../components/site/primitives';
 
-export const dynamic = 'force-dynamic';
-export const metadata = { title: 'Teams' };
-
-export default async function TeamsPage() {
-  const ctx = await getLeagueContext();
-  if (!ctx || !ctx.season) return <EmptyNote>No season is published yet.</EmptyNote>;
+export default function TeamsPage() {
+  usePageTitle('Teams');
+  const ctx = useSeason();
+  if (!ctx) return <EmptyNote>No season is published yet.</EmptyNote>;
   const { season, teamsById } = ctx;
   const ranked = computeStandings(season, teamsById).active.map(t => ({ ...t, slug: teamSlug(t.displayName) }));
   const rows = ranked.slice().sort((a, b) => a.displayName.localeCompare(b.displayName));
