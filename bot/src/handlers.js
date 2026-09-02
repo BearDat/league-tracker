@@ -158,7 +158,7 @@ export async function processMessage(client, message, kind, { force = false } = 
   const outcomes = [];
   for (const parsed of parsedRows) {
     const resolved = await resolveParsed(parsed, ctx);
-    if (resolved.kind === 'unparsed' && parsedRows.length > 1) {
+    if (resolved.kind === 'skip' || (resolved.kind === 'unparsed' && parsedRows.length > 1)) {
       outcomes.push('skipped');
       continue;
     }

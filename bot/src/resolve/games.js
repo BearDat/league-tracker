@@ -6,6 +6,25 @@ function involvesBoth(game, aId, bId) {
   return ids.includes(aId) && ids.includes(bId);
 }
 
+export function describeExisting(season, aId, bId) {
+  return (season.games || [])
+    .filter(g => involvesBoth(g, aId, bId))
+    .map(g => ({
+      id: g.id,
+      date: g.date || null,
+      played: !!g.played,
+      isBye: !!g.isBye,
+      isPlayoff: !!g.isPlayoff,
+      isPlayIn: !!g.isPlayIn,
+      playoffRound: g.playoffRound == null ? null : g.playoffRound,
+      bracketSlot: g.bracketSlot == null ? null : g.bracketSlot,
+      seriesGame: g.seriesGame == null ? null : g.seriesGame,
+      home: g.homeTeamId,
+      away: g.awayTeamId,
+      score: g.played ? `${g.awayScore}-${g.homeScore}` : null,
+    }));
+}
+
 export function planPlayoffContinuation(season, aId, bId) {
   const settings = season.settings || {};
   const between = (season.games || []).filter(g => g.isPlayoff && !g.isBye && involvesBoth(g, aId, bId));

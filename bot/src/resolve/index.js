@@ -1,5 +1,5 @@
 import { resolveWithLearning } from './teams.js';
-import { findScheduledGame, orientScores, describeGame } from './games.js';
+import { findScheduledGame, orientScores, describeGame, planPlayoffContinuation } from './games.js';
 import { findRosterPlayer, findPlayerFuzzy, rosterStarTotal, gameWinner } from '../league/core.js';
 
 function lowResult(kind, reasons, display, partial) {
@@ -44,7 +44,7 @@ async function resolveFinalScore(parsed, ctx) {
   if (left.teamId === right.teamId) {
     return lowResult('final_score', ['both emoji resolved to the same team'], display);
   }
-  if (!parsed.isFinal) reasons.push('line is not marked final (no F or F/N)');
+  if (parsed.forfeitHint) reasons.push('line says FFT — confirm whether this was a forfeit before I record it');
 
   let found = findScheduledGame(ctx.season, left.teamId, right.teamId);
   let newGame = null;
@@ -87,6 +87,7 @@ async function resolveFinalScore(parsed, ctx) {
     awayScore: oriented.awayScore,
     innings: parsed.innings,
     notes: parsed.notes.join(' — ') || null,
+    newGame,
   };
   return { kind: 'final_score', confidence: reasons.length === 0 ? 'high' : 'low', reasons, display, item };
 }
@@ -319,6 +320,9 @@ const RESOLVERS = {
 };
 
 export async function resolveParsed(parsed, ctx) {
+  if (!parsed.ok && parsed.skip) {
+    return { kind: 'skip', confidence: 'skip', reasons: [parsed.error], display: { line: parsed.raw }, item: null };
+  }
   if (!parsed.ok) {
     return { kind: 'unparsed', confidence: 'low', reasons: [parsed.error], display: { line: parsed.raw }, item: null };
   }

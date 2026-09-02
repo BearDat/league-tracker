@@ -170,3 +170,36 @@ test('game time: eastern clock time with explicit date', () => {
   assert.equal(d.getUTCDate(), 15);
   assert.equal(d.getUTCHours(), 0);
 });
+
+test('FFT is treated as a final marker with innings', () => {
+  const [r] = parseFinalScores(`${CHI} 1 - 12 ${ARI} FFT/5 (Leonatus CG, 2 HR 5 RBI game, ${ARI} leads series 2-1)`);
+  assert.equal(r.ok, true);
+  assert.equal(r.marker, 'FFT');
+  assert.equal(r.forfeitHint, true);
+  assert.equal(r.innings, 5);
+  assert.equal(r.series[0].type, 'leads');
+});
+
+test('a line with no final marker is skipped, not queued', () => {
+  const line = `${LAR} 9 - 8 ${ANA} in the top of the 7th inning with 2 outs, runners on 2nd and 3rd`;
+  const [r] = parseFinalScores(line);
+  assert.equal(r.ok, false);
+  assert.equal(r.skip, true);
+  assert.match(r.error, /not marked final/);
+});
+
+test('series-tied note outside the parens is read', () => {
+  const [r] = parseFinalScores(`${CHI} 9 - 8 ${ARI} F/11 (LeDrumDaGoat go ahead bunt! C3baehr 5/5 2 hr game!) Series is tied 2-2.`);
+  assert.equal(r.ok, true);
+  assert.equal(r.innings, 11);
+  assert.equal(r.series.length, 1);
+  assert.equal(r.series[0].type, 'tied');
+  assert.equal(r.series[0].wins, 2);
+  assert.equal(r.series[0].losses, 2);
+  assert.deepEqual(r.notes, ['LeDrumDaGoat go ahead bunt! C3baehr 5/5 2 hr game!']);
+});
+
+test('an inline score inside prose does not become a result', () => {
+  const [r] = parseFinalScores(`${LAR} - ${ANA} will be finished tomorrow (August 29)`);
+  assert.equal(r.ok, false);
+});

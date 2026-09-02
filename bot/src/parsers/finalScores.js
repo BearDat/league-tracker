@@ -3,7 +3,7 @@ import { extractEmojis, splitHeadAndGroups, contentLines, EMOJI_RE } from './uti
 const EMOJI_RE_SOURCE = EMOJI_RE.source;
 
 const SCORE_RE = /(\d{1,3})\s*[-–—]\s*(\d{1,3})/;
-const FINAL_RE = /\bF(?:INAL)?\s*(?:\/\s*(\d{1,2}))?\b/i;
+const FINAL_RE = /\b(FFT|FINAL|F)\s*(?:\/\s*(\d{1,2}))?(?![A-Za-z])/i;
 
 function residualOf(groupText, matchIndex) {
   const before = groupText.slice(0, matchIndex);
@@ -58,7 +58,11 @@ export function parseFinalScoreLine(line) {
   if (leftEmoji.id === rightEmoji.id) return { ok: false, error: 'both sides use the same emoji' };
 
   const finalMatch = head.match(FINAL_RE);
-  const innings = finalMatch && finalMatch[1] ? Number(finalMatch[1]) : null;
+  if (!finalMatch) {
+    return { ok: false, skip: true, error: 'not marked final (no F, F/N or FFT/N)' };
+  }
+  const marker = finalMatch[1].toUpperCase();
+  const innings = finalMatch[2] ? Number(finalMatch[2]) : null;
 
   const series = [];
   const notes = [];
@@ -81,7 +85,9 @@ export function parseFinalScoreLine(line) {
     kind: 'final_score',
     left: { emojiId: leftEmoji.id, emojiName: leftEmoji.name, score: Number(scoreMatch[1]) },
     right: { emojiId: rightEmoji.id, emojiName: rightEmoji.name, score: Number(scoreMatch[2]) },
-    isFinal: !!finalMatch,
+    isFinal: true,
+    marker,
+    forfeitHint: marker === 'FFT',
     innings,
     series,
     notes,
@@ -94,6 +100,7 @@ export function parseFinalScores(content) {
   contentLines(content).forEach(line => {
     const parsed = parseFinalScoreLine(line);
     if (parsed.ok) results.push(parsed);
+    else if (parsed.skip) results.push({ ok: false, skip: true, error: parsed.error, raw: line });
     else results.push({ ok: false, error: parsed.error, raw: line });
   });
   return results;
