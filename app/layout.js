@@ -1,21 +1,31 @@
-import { Oswald, Inter } from 'next/font/google';
+import { Archivo, IBM_Plex_Sans } from 'next/font/google';
 import './globals.css';
 
-// Oswald for headlines/scores (the condensed, all-caps sports-broadcast
-// look), Inter for body copy — same pairing broadcast-style league sites
-// like CBL.ca use. Exposed as CSS variables so plain CSS/inline styles can
-// reach them without every component importing the font module.
-const oswald = Oswald({ subsets: ['latin'], weight: ['500', '600', '700'], variable: '--font-heading', display: 'swap' });
-const inter = Inter({ subsets: ['latin'], weight: ['400', '500', '600', '700'], variable: '--font-body', display: 'swap' });
+const display = Archivo({
+  subsets: ['latin'],
+  weight: ['600', '700', '800'],
+  variable: '--font-display',
+  display: 'swap',
+});
+
+const sans = IBM_Plex_Sans({
+  subsets: ['latin'],
+  weight: ['400', '500', '600'],
+  variable: '--font-sans',
+  display: 'swap',
+});
 
 export const metadata = {
-  title: 'League Tracker',
-  description: 'Standings, schedule, playoffs, stats, and odds.',
+  title: {
+    default: 'KPB',
+    template: '%s · KPB',
+  },
+  description: 'Standings, scores, schedule and statistics for the KPB league.',
 };
 
 export default function RootLayout({ children }) {
   return (
-    <html lang="en" className={`${oswald.variable} ${inter.variable}`}>
+    <html lang="en" className={`${display.variable} ${sans.variable}`}>
       <body>{children}</body>
     </html>
   );

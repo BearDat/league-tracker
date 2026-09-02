@@ -2,21 +2,98 @@
 @tailwind components;
 @tailwind utilities;
 
-html,
-body {
-  margin: 0;
-  padding: 0;
+@layer base {
+  * {
+    box-sizing: border-box;
+  }
+
+  html,
+  body {
+    margin: 0;
+    padding: 0;
+  }
+
+  body {
+    background: theme('colors.paper.well');
+    color: theme('colors.ink.DEFAULT');
+    font-family: theme('fontFamily.sans');
+    font-size: 15px;
+    line-height: 1.45;
+    -webkit-font-smoothing: antialiased;
+    text-rendering: optimizeLegibility;
+  }
+
+  h1,
+  h2,
+  h3,
+  h4 {
+    font-family: theme('fontFamily.display');
+    font-weight: 700;
+    letter-spacing: -0.015em;
+    margin: 0;
+  }
+
+  a {
+    color: inherit;
+    text-decoration: none;
+  }
+
+  table {
+    border-collapse: collapse;
+    width: 100%;
+  }
+}
+
+@layer components {
+  .eyebrow {
+    font-family: theme('fontFamily.display');
+    font-size: 0.6875rem;
+    font-weight: 700;
+    letter-spacing: 0.11em;
+    text-transform: uppercase;
+    color: theme('colors.ink.mute');
+  }
+
+  .headline {
+    font-family: theme('fontFamily.display');
+    font-weight: 800;
+    letter-spacing: -0.025em;
+    line-height: 1.05;
+  }
+
+  .stat {
+    font-variant-numeric: tabular-nums;
+    font-feature-settings: 'tnum' 1;
+  }
+
+  .card {
+    background: theme('colors.paper.DEFAULT');
+    border: 1px solid theme('colors.rule.DEFAULT');
+  }
+
+  .row-rule > * + * {
+    border-top: 1px solid theme('colors.rule.DEFAULT');
+  }
+
+  .link-underline {
+    text-decoration: underline;
+    text-underline-offset: 2px;
+    text-decoration-thickness: 1px;
+    text-decoration-color: theme('colors.rule.strong');
+  }
+
+  .link-underline:hover {
+    text-decoration-color: theme('colors.brick.DEFAULT');
+  }
+}
+
+.classic-shell {
+  min-height: 100vh;
   background: var(--lt-ink, #0a0a0a);
   color: var(--lt-chalk, #f5f5f5);
   font-family: var(--font-body), ui-sans-serif, system-ui, sans-serif;
 }
 
-* {
-  box-sizing: border-box;
-}
-
-/* Condensed sports-broadcast headline face — used for section titles, hero
-   text, and big display numbers throughout the site. */
-.font-head {
+.classic-shell .font-head {
   font-family: var(--font-heading), ui-sans-serif, system-ui, sans-serif;
 }
