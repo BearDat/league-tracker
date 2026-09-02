@@ -5,7 +5,7 @@ import Bracket from '../../../components/site/Bracket';
 import GameRow from '../../../components/site/GameRow';
 import { TeamMark, SectionHead, EmptyNote } from '../../../components/site/primitives';
 
-export const revalidate = 60;
+export const dynamic = 'force-dynamic';
 export const metadata = { title: 'Playoffs' };
 
 export default async function PlayoffsPage() {

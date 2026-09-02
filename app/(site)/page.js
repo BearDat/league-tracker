@@ -9,7 +9,7 @@ import StandingsTable from '../../components/site/StandingsTable';
 import GameRow from '../../components/site/GameRow';
 import { SectionHead, EmptyNote, TeamMark } from '../../components/site/primitives';
 
-export const revalidate = 60;
+export const dynamic = 'force-dynamic';
 
 export default async function HomePage() {
   const ctx = await getLeagueContext();

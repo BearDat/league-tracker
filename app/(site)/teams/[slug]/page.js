@@ -6,7 +6,7 @@ import { teamSlug } from '../../../../lib/domain/core';
 import GameRow from '../../../../components/site/GameRow';
 import { TeamMark, SectionHead, EmptyNote, pct, signed } from '../../../../components/site/primitives';
 
-export const revalidate = 60;
+export const dynamic = 'force-dynamic';
 
 export async function generateMetadata({ params }) {
   const { slug } = await params;

@@ -5,7 +5,7 @@ import { teamSlug } from '../../../lib/domain/core';
 import StandingsTable from '../../../components/site/StandingsTable';
 import { SectionHead, EmptyNote } from '../../../components/site/primitives';
 
-export const revalidate = 60;
+export const dynamic = 'force-dynamic';
 export const metadata = { title: 'Standings' };
 
 export default async function StandingsPage() {

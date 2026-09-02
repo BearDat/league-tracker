@@ -5,7 +5,7 @@ import { computeStandings } from '../../../lib/domain/standings';
 import { teamSlug } from '../../../lib/domain/core';
 import { TeamMark, SectionHead, EmptyNote, pct } from '../../../components/site/primitives';
 
-export const revalidate = 60;
+export const dynamic = 'force-dynamic';
 export const metadata = { title: 'Teams' };
 
 export default async function TeamsPage() {

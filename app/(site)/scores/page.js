@@ -4,7 +4,7 @@ import { decorateGame } from '../../../lib/domain/standings';
 import GameRow from '../../../components/site/GameRow';
 import { SectionHead, EmptyNote, formatGameDate } from '../../../components/site/primitives';
 
-export const revalidate = 60;
+export const dynamic = 'force-dynamic';
 export const metadata = { title: 'Scores' };
 
 function groupKey(game) {
