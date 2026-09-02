@@ -31,7 +31,16 @@ export async function buildContext({ learn = true } = {}) {
 function precheck(kind, item, season) {
   if (kind === 'final_score') {
     const game = (season.games || []).find(g => g.id === item.gameId);
-    if (!game) return 'that game is no longer on the schedule';
+    if (!game) {
+      if (!item.newGame) return 'that game is no longer on the schedule';
+      const slotGames = (season.games || []).filter(g => g.isPlayoff
+        && g.playoffRound === item.newGame.playoffRound
+        && g.bracketSlot === item.newGame.bracketSlot);
+      if (slotGames.some(g => (g.seriesGame || 1) === item.newGame.seriesGame)) {
+        return 'someone already added that series game';
+      }
+      return null;
+    }
     if (game.played) return 'that game was already scored by someone else';
     return null;
   }

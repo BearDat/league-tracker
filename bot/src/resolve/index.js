@@ -46,11 +46,20 @@ async function resolveFinalScore(parsed, ctx) {
   }
   if (!parsed.isFinal) reasons.push('line is not marked final (no F or F/N)');
 
-  const found = findScheduledGame(ctx.season, left.teamId, right.teamId);
+  let found = findScheduledGame(ctx.season, left.teamId, right.teamId);
+  let newGame = null;
   if (!found.game) {
-    return lowResult('final_score', [...reasons, found.reason], display, {
-      teams: { leftTeamId: left.teamId, rightTeamId: right.teamId },
-    });
+    const plan = planPlayoffContinuation(ctx.season, left.teamId, right.teamId);
+    if (plan && plan.game) {
+      newGame = plan.game;
+      found = { game: plan.game, candidates: [plan.game], confidence: 'high', reason: null };
+      display.created = `Game ${plan.nextGameNum} of a best-of-${plan.seriesLength} in Playoffs R${plan.round}, not on the schedule yet, so I will add it`;
+    } else {
+      const why = plan && plan.blocked ? plan.blocked : found.reason;
+      return lowResult('final_score', [...reasons, why], display, {
+        teams: { leftTeamId: left.teamId, rightTeamId: right.teamId },
+      });
+    }
   }
   if (found.confidence !== 'high') reasons.push(found.reason);
 

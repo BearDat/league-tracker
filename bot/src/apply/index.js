@@ -16,7 +16,10 @@ export function applyFinalScore(league, item, nameFor) {
   const seasonId = activeSeasonId(league);
   let summary = '';
   const next = replaceSeason(league, seasonId, season => {
-    const updatedGames = (season.games || []).map(g => (g.id === item.gameId
+    const baseGames = item.newGame && !(season.games || []).some(g => g.id === item.newGame.id)
+      ? [...(season.games || []), item.newGame]
+      : (season.games || []);
+    const updatedGames = baseGames.map(g => (g.id === item.gameId
       ? {
         ...g,
         homeScore: item.homeScore,

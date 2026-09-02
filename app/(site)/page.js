@@ -3,9 +3,11 @@ import Link from 'next/link';
 import { getLeagueContext } from '../../lib/league-server';
 import { computeStandings, recentResults, upcomingGames } from '../../lib/domain/standings';
 import { teamSlug } from '../../lib/domain/core';
+import { buildBracket } from '../../lib/domain/playoffs';
+import Bracket from '../../components/site/Bracket';
 import StandingsTable from '../../components/site/StandingsTable';
 import GameRow from '../../components/site/GameRow';
-import { SectionHead, EmptyNote } from '../../components/site/primitives';
+import { SectionHead, EmptyNote, TeamMark } from '../../components/site/primitives';
 
 export const revalidate = 60;
 
@@ -19,16 +21,37 @@ export default async function HomePage() {
   const recent = recentResults(season, teamsById, 6);
   const upcoming = upcomingGames(season, teamsById, 6);
   const playoffSpots = (season.settings && season.settings.playoffSpots) || null;
+  const bracket = buildBracket(season, teamsById);
 
   return (
     <div className="grid grid-cols-1 lg:grid-cols-[1fr_19rem] gap-8">
       <div className="min-w-0">
+        {bracket.active && (
+          <section className="mb-8">
+            <SectionHead title={bracket.champion ? 'Champion' : 'Postseason'} href="/playoffs" linkLabel="Full bracket" />
+            {bracket.champion ? (
+              <div className="card overflow-hidden animate-fade-up">
+                <div className="brand-rule" />
+                <div className="flex items-center gap-4 p-4 bg-brand-soft">
+                  <TeamMark team={bracket.champion} size={48} />
+                  <div className="min-w-0">
+                    <p className="eyebrow text-ink-mute">{season.name} champion</p>
+                    <p className="headline text-2xl truncate">{bracket.champion.name}</p>
+                  </div>
+                </div>
+              </div>
+            ) : (
+              <Bracket bracket={bracket} compact />
+            )}
+          </section>
+        )}
+
         <section className="mb-8">
           <SectionHead title="Latest results" href="/scores" linkLabel="All scores" />
           {recent.length === 0 ? (
             <EmptyNote>No games have been played yet.</EmptyNote>
           ) : (
-            <div className="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-3 gap-px bg-rule border border-rule">
+            <div className="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-3 gap-px bg-rule border border-rule stagger">
               {recent.map(g => (
                 <div key={g.id} className="bg-paper">
                   <GameRow game={g} />

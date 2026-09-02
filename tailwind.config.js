@@ -1,5 +1,8 @@
 /** @type {import('tailwindcss').Config} */
+const v = (name) => `rgb(var(${name}) / <alpha-value>)`;
+
 module.exports = {
+  darkMode: 'class',
   content: [
     './app/**/*.{js,jsx}',
     './components/**/*.{js,jsx}',
@@ -8,31 +11,34 @@ module.exports = {
     extend: {
       colors: {
         ink: {
-          DEFAULT: '#12161C',
-          soft: '#39414F',
-          mute: '#6B7583',
-          faint: '#98A1AD',
+          DEFAULT: v('--c-text'),
+          soft: v('--c-text-soft'),
+          mute: v('--c-text-mute'),
+          faint: v('--c-text-faint'),
         },
         paper: {
-          DEFAULT: '#FFFFFF',
-          well: '#F5F6F8',
-          sunk: '#EAEDF1',
+          DEFAULT: v('--c-surface'),
+          well: v('--c-bg'),
+          sunk: v('--c-surface-2'),
         },
         rule: {
-          DEFAULT: '#DFE3E8',
-          strong: '#C2C9D2',
+          DEFAULT: v('--c-line'),
+          strong: v('--c-line-strong'),
         },
         navy: {
-          DEFAULT: '#0C2340',
-          deep: '#07182C',
-          line: '#1D3557',
+          DEFAULT: v('--c-masthead'),
+          deep: v('--c-masthead-deep'),
+          line: v('--c-masthead-line'),
         },
         brick: {
-          DEFAULT: '#C8102E',
-          deep: '#9E0C24',
+          DEFAULT: v('--c-accent'),
+          deep: v('--c-accent-deep'),
         },
-        win: '#0F7A4F',
-        loss: '#B22234',
+        azure: {
+          DEFAULT: v('--c-accent-2'),
+        },
+        win: v('--c-win'),
+        loss: v('--c-loss'),
       },
       fontFamily: {
         display: ['var(--font-display)', 'Archivo', 'Helvetica Neue', 'Arial', 'sans-serif'],
@@ -51,8 +57,31 @@ module.exports = {
       maxWidth: {
         shell: '1180px',
       },
-      spacing: {
-        rail: '19rem',
+      backgroundImage: {
+        brand: 'linear-gradient(90deg, #F49AC8 0%, #C79AE2 50%, #8FA9EE 100%)',
+        'brand-soft': 'linear-gradient(135deg, rgb(244 154 200 / 0.16) 0%, rgb(143 169 238 / 0.16) 100%)',
+      },
+      keyframes: {
+        'fade-up': {
+          from: { opacity: '0', transform: 'translateY(6px)' },
+          to: { opacity: '1', transform: 'none' },
+        },
+        'slide-in': {
+          from: { opacity: '0', transform: 'translateX(-4px)' },
+          to: { opacity: '1', transform: 'none' },
+        },
+        'pulse-dot': {
+          '0%, 100%': { opacity: '1' },
+          '50%': { opacity: '0.35' },
+        },
+      },
+      animation: {
+        'fade-up': 'fade-up 0.32s cubic-bezier(0.22, 1, 0.36, 1) both',
+        'slide-in': 'slide-in 0.24s ease-out both',
+        'pulse-dot': 'pulse-dot 1.8s ease-in-out infinite',
+      },
+      transitionTimingFunction: {
+        out: 'cubic-bezier(0.22, 1, 0.36, 1)',
       },
     },
   },

@@ -41,7 +41,28 @@ export function splitHeadAndGroups(line) {
   if (depth > 0 && start >= 0) {
     groups.push({ text: line.slice(start + 1), start, end: line.length });
   }
-  return { head: line.slice(0, headEnd).trim(), groups };
+
+  const covered = new Array(line.length).fill(false);
+  groups.forEach(g => {
+    for (let i = g.start; i <= Math.min(g.end, line.length - 1); i += 1) covered[i] = true;
+  });
+  const loose = [];
+  let buffer = '';
+  for (let i = headEnd; i < line.length; i += 1) {
+    if (covered[i]) {
+      if (buffer.trim()) loose.push(buffer);
+      buffer = '';
+    } else {
+      buffer += line[i];
+    }
+  }
+  if (buffer.trim()) loose.push(buffer);
+
+  return {
+    head: line.slice(0, headEnd).trim(),
+    groups,
+    loose: loose.map(s => s.replace(/[()]/g, ' ').replace(/\s+/g, ' ').trim()).filter(Boolean),
+  };
 }
 
 export function trailingGroups(text) {

@@ -1,6 +1,83 @@
+import { gameWinner, uid } from '../league/core.js';
+import { getSeriesLength, seriesWinsNeeded } from '../league/playoffs.js';
+
 function involvesBoth(game, aId, bId) {
   const ids = [game.homeTeamId, game.awayTeamId];
   return ids.includes(aId) && ids.includes(bId);
+}
+
+export function planPlayoffContinuation(season, aId, bId) {
+  const settings = season.settings || {};
+  const between = (season.games || []).filter(g => g.isPlayoff && !g.isBye && involvesBoth(g, aId, bId));
+  if (between.length === 0) return null;
+
+  const groups = new Map();
+  between.forEach(g => {
+    const key = `${g.playoffRound || 0}:${g.bracketSlot == null ? 'x' : g.bracketSlot}`;
+    if (!groups.has(key)) groups.set(key, []);
+    groups.get(key).push(g);
+  });
+
+  let series = null;
+  groups.forEach(list => {
+    if (!series || (list[0].playoffRound || 0) > (series[0].playoffRound || 0)) series = list;
+  });
+  if (!series) return null;
+
+  const round = series[0].playoffRound;
+  const slot = series[0].bracketSlot;
+  const seriesLength = getSeriesLength(settings, round);
+  const winsNeeded = seriesWinsNeeded(seriesLength);
+
+  const wins = {};
+  series.forEach(g => {
+    if (!g.played) return;
+    const w = gameWinner(g);
+    const wid = w === 'home' ? g.homeTeamId : w === 'away' ? g.awayTeamId : null;
+    if (wid != null) wins[wid] = (wins[wid] || 0) + 1;
+  });
+  if ((wins[aId] || 0) >= winsNeeded || (wins[bId] || 0) >= winsNeeded) {
+    return { blocked: 'that series is already decided' };
+  }
+
+  const gamesPlayed = series.filter(g => g.played).length;
+  if (gamesPlayed >= seriesLength) {
+    return { blocked: `that series already has all ${seriesLength} games` };
+  }
+
+  const nextGameNum = gamesPlayed + 1;
+  if (series.some(g => (g.seriesGame || 1) === nextGameNum && !g.played)) return null;
+
+  const ordered = series.slice().sort((a, b) => (a.seriesGame || 1) - (b.seriesGame || 1));
+  const higherSeedId = ordered[0].higherSeedId || ordered[0].homeTeamId;
+  const lowerSeedId = higherSeedId === aId ? bId : aId;
+  const hostId = nextGameNum % 2 === 1 ? higherSeedId : lowerSeedId;
+  const awayId = hostId === higherSeedId ? lowerSeedId : higherSeedId;
+
+  return {
+    game: {
+      id: uid('g'),
+      date: `Playoffs R${round}`,
+      isPlayoff: true,
+      playoffRound: round,
+      bracketSlot: slot,
+      seriesGame: nextGameNum,
+      higherSeedId,
+      homeTeamId: hostId,
+      awayTeamId: awayId,
+      awayScheduleName: null,
+      homeScheduleName: null,
+      awayScore: null,
+      homeScore: null,
+      innings: null,
+      played: false,
+    },
+    round,
+    slot,
+    nextGameNum,
+    seriesLength,
+    wins,
+  };
 }
 
 export function findScheduledGame(season, aId, bId) {

@@ -29,19 +29,17 @@ function parseSeriesNote(groupText) {
   if (won) {
     return { note: { type: 'wins', emojiId, wins: Number(won[1]), losses: Number(won[2]) }, residual: residualOf(groupText, won.index) };
   }
-  const advance = groupText.match(/\badvances?\b/i);
-  if (advance) {
-    return { note: { type: 'advance', emojiId, label: groupText.trim() }, residual: residualOf(groupText, advance.index) };
+  if (/\badvanc/i.test(groupText)) {
+    return { note: { type: 'advance', emojiId, label: groupText.trim() }, residual: '' };
   }
-  const eliminated = groupText.match(/\belimin/i);
-  if (eliminated) {
-    return { note: { type: 'eliminated', emojiId, label: groupText.trim() }, residual: residualOf(groupText, eliminated.index) };
+  if (/\belimin/i.test(groupText)) {
+    return { note: { type: 'eliminated', emojiId, label: groupText.trim() }, residual: '' };
   }
   return null;
 }
 
 export function parseFinalScoreLine(line) {
-  const { head, groups } = splitHeadAndGroups(line);
+  const { head, groups, loose } = splitHeadAndGroups(line);
   const scoreMatch = head.match(SCORE_RE);
   if (!scoreMatch) return { ok: false, error: 'no score found' };
 
@@ -64,15 +62,19 @@ export function parseFinalScoreLine(line) {
 
   const series = [];
   const notes = [];
-  groups.forEach(g => {
-    const parsed = parseSeriesNote(g.text);
+  const consider = (text) => {
+    const trimmed = String(text || '').trim();
+    if (!trimmed) return;
+    const parsed = parseSeriesNote(trimmed);
     if (parsed) {
       series.push(parsed.note);
       if (parsed.residual) notes.push(parsed.residual);
     } else {
-      notes.push(g.text.trim());
+      notes.push(trimmed);
     }
-  });
+  };
+  groups.forEach(g => consider(g.text));
+  (loose || []).forEach(consider);
 
   return {
     ok: true,
