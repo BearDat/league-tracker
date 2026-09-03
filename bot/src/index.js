@@ -6,6 +6,8 @@ import { processMessage, buildContext, applyResolved, reprocessPending } from '.
 import { getPending, closePending } from './queue.js';
 import { learnEmojiAlias } from './resolve/teams.js';
 import { notifyFailure } from './discord/confirm.js';
+import { COMMANDS } from './commands/definitions.js';
+import { runCommand, autocompleteChoices } from './commands/handlers.js';
 
 setLogLevel(config.logLevel);
 
@@ -91,8 +93,24 @@ async function backfillChannel(channelId, kind) {
   await setCursor(channelId, ordered[ordered.length - 1].id);
 }
 
+async function registerCommands(c) {
+  try {
+    if (config.guildId) {
+      const guild = await c.guilds.fetch(config.guildId);
+      await guild.commands.set(COMMANDS);
+      log.info('slash commands registered to guild', { guildId: config.guildId, count: COMMANDS.length });
+    } else {
+      await c.application.commands.set(COMMANDS);
+      log.info('slash commands registered globally', { count: COMMANDS.length });
+    }
+  } catch (e) {
+    log.error('slash command registration failed', { error: e.message });
+  }
+}
+
 client.once(Events.ClientReady, async (c) => {
   log.info('connected', { tag: c.user.tag, channels: [...config.channels.entries()] });
+  await registerCommands(c);
   try {
     await buildContext();
     log.info('league data reachable');
@@ -125,6 +143,38 @@ async function respond(interaction, text) {
 }
 
 client.on(Events.InteractionCreate, async (interaction) => {
+  if (interaction.isAutocomplete()) {
+    try {
+      const focused = interaction.options.getFocused(true);
+      const choices = await autocompleteChoices(interaction.commandName, focused.name, focused.value);
+      await interaction.respond(choices);
+    } catch (e) {
+      log.error('autocomplete failed', { error: e.message });
+      try { await interaction.respond([]); } catch (ignored) { /* interaction expired */ }
+    }
+    return;
+  }
+
+  if (interaction.isChatInputCommand()) {
+    try {
+      await interaction.deferReply();
+      const result = await runCommand(interaction.commandName, (name) => {
+        const opt = interaction.options.get(name);
+        return opt ? opt.value : null;
+      });
+      if (typeof result === 'string') await interaction.editReply({ content: result });
+      else await interaction.editReply({ embeds: [result] });
+    } catch (e) {
+      log.error('slash command failed', { command: interaction.commandName, error: e.message, stack: e.stack });
+      const text = 'Something went wrong looking that up — try again in a moment.';
+      try {
+        if (interaction.deferred || interaction.replied) await interaction.editReply({ content: text });
+        else await interaction.reply({ content: text, ephemeral: true });
+      } catch (ignored) { /* interaction expired */ }
+    }
+    return;
+  }
+
   if (!interaction.isButton() && !interaction.isStringSelectMenu()) return;
   if (interaction.user.id !== config.adminUserId) {
     await interaction.reply({ content: 'These buttons are not for you.', ephemeral: true });

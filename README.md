@@ -35,3 +35,31 @@ The one thing to keep in mind when adding a page: put derived logic in
 either side of the wire. Anything that needs the raw league blob — admin
 writes, anything with images — belongs in `/classic`, which still talks to
 Supabase directly.
+
+## Admin
+
+`/admin` is the staff surface on the new site: the bot review queue and emoji
+mappings, score and schedule editing, awards and Hall of Fame, hand-entered stat
+lines, and news. Tabs appear according to the role on the account, using the
+same permission names `lib/AuthContext.jsx` already defines.
+
+Two things make it different from the rest of the site. It loads the **raw**
+league blob rather than the snapshot, because the snapshot deliberately drops
+fields no public page reads (odds caches, audit log, embedded images) and
+writing back from it would destroy them. And every save goes through
+`lib/leagueWrite.js`, which is compare-and-swap: read the row with its
+`updated_at`, write only if it has not moved, retry a few times, and surface a
+conflict rather than clobbering. That is the same contract the Discord bot uses.
+After a successful write the public snapshot is rebuilt immediately via
+`/api/league-snapshot?fresh=1` instead of waiting out the 60 second cache.
+
+Mutations live in `lib/domain/mutations.js` and `lib/domain/applyPending.js` as
+plain `(league) => league` functions, so the retry loop can re-apply them
+against fresh data. `lib/domain/advance.js` holds the playoff-advancement code
+extracted from the classic app, so both admin surfaces advance a bracket
+identically.
+
+The classic app at `/classic` still exists and still works, but nothing links to
+it any more. Reach it by typing the URL when you need something the new panels
+do not cover yet: season settings, divisions, imports, roster moves, badges,
+banners, and admin management.

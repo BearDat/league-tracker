@@ -29,7 +29,7 @@ export default function UpdatedStamp({ leagueName }) {
       {mounted && (
         <button
           type="button"
-          onClick={refresh}
+          onClick={() => refresh({})}
           className="eyebrow text-ink-faint hover:text-brick inline-flex items-center gap-1.5"
           title={staleSince ? 'Last refresh failed — click to try again' : 'Refreshes on its own every 60 seconds'}
         >

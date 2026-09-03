@@ -22,7 +22,6 @@ function writeCache(snapshot) {
   try {
     sessionStorage.setItem(CACHE_KEY, JSON.stringify(snapshot));
   } catch (e) {
-    /* quota or private mode — the in-memory copy still serves this session */
   }
 }
 
@@ -44,11 +43,11 @@ export function LeagueProvider({ initial, children }) {
     if (cached) setSnapshot(cached);
   }, [snapshot]);
 
-  const refresh = useCallback(async () => {
+  const refresh = useCallback(async ({ fresh = false } = {}) => {
     lastFetch.current = Date.now();
     setRefreshing(true);
     try {
-      const res = await fetch('/api/league-snapshot', { cache: 'no-store' });
+      const res = await fetch(`/api/league-snapshot${fresh ? '?fresh=1' : ''}`, { cache: 'no-store' });
       if (!res.ok) throw new Error(`snapshot request failed (${res.status})`);
       const next = await res.json();
       if (!active.current) return;
@@ -66,7 +65,7 @@ export function LeagueProvider({ initial, children }) {
     const due = () => Date.now() - lastFetch.current >= REFRESH_MS;
     const tick = () => {
       if (document.hidden || !due()) return;
-      refresh();
+      refresh({});
     };
     const timer = setInterval(tick, 5000);
     const onWake = () => { if (!document.hidden) tick(); };

@@ -20,7 +20,7 @@ export default function Shell({ children }) {
       <footer className="border-t border-rule bg-paper mt-8">
         <div className="mx-auto max-w-shell px-4 py-6 flex flex-wrap items-center justify-between gap-3">
           <UpdatedStamp leagueName={leagueName} />
-          <Link href="/classic" className="eyebrow text-ink-mute hover:text-brick">
+          <Link href="/admin" className="eyebrow text-ink-mute hover:text-brick">
             Admin
           </Link>
         </div>

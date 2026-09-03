@@ -13,6 +13,8 @@ const BASE_NAV = [
   { href: '/standings', label: 'Standings' },
   { href: '/schedule', label: 'Schedule' },
   { href: '/teams', label: 'Teams' },
+  { href: '/transactions', label: 'Transactions' },
+  { href: '/news', label: 'News' },
   { href: '/stats', label: 'Stats' },
   { href: '/awards', label: 'Awards' },
   { href: '/hall-of-fame', label: 'Hall of Fame' },
@@ -51,7 +53,7 @@ export default function Masthead() {
             {season && <span className="hidden md:block eyebrow text-white/55">{season.name}</span>}
             <ThemeToggle />
             <Link
-              href="/classic"
+              href="/admin"
               className="eyebrow text-white/70 hover:text-white border border-white/25 px-2.5 py-1.5 leading-none transition-colors"
             >
               Admin
