@@ -121,7 +121,7 @@ function GameRow({ game, season, teams, saving, onSave, onClear, onForfeit, onTi
             <button
               type="button"
               disabled={saving}
-              onClick={() => onClear(game.id)}
+              onClick={() => { if (confirm(`Clear the result for ${awayName} @ ${homeName}?`)) onClear(game.id); }}
               className="eyebrow border border-loss text-loss px-2.5 py-1.5 disabled:opacity-40"
             >
               Clear result

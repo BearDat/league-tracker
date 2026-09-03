@@ -210,7 +210,7 @@ export default function StatsPanel() {
                 <button
                   type="button"
                   disabled={saving}
-                  onClick={() => mutate(removeStatLine(season.id, line.id))}
+                  onClick={() => { if (confirm(`Remove the stat line for ${nameOf(line.playerId)}?`)) mutate(removeStatLine(season.id, line.id)); }}
                   className="eyebrow text-loss hover:underline disabled:opacity-40"
                 >
                   Remove

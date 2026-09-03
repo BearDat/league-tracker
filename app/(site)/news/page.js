@@ -2,6 +2,7 @@
 
 import React from 'react';
 import { useLeague, usePageTitle } from '../../../lib/LeagueContext';
+import MediaGallery from '../../../components/site/MediaGallery';
 import { SectionHead, EmptyNote, cleanDiscordText } from '../../../components/site/primitives';
 
 function postDate(at) {
@@ -48,6 +49,7 @@ export default function NewsPage() {
                 {post.body && (
                   <p className="text-sm text-ink-soft whitespace-pre-line mt-3">{cleanDiscordText(post.body)}</p>
                 )}
+                <MediaGallery media={post.media} heroUrl={post.imageUrl} />
               </div>
             </article>
           ))}

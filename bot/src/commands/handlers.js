@@ -208,10 +208,16 @@ async function handleNews() {
   if (!ctx) return 'No league is configured for this bot yet.';
   const posts = [...(ctx.league.news || [])].sort((a, b) => (b.at || 0) - (a.at || 0)).slice(0, 5);
   if (posts.length === 0) return 'Nothing has been posted yet.';
-  return embed('League news', null, posts.map(p => ({
-    name: truncate(p.title || 'Untitled', 250),
-    value: truncate(`${p.author ? `${p.author} · ` : ''}<t:${Math.round((p.at || Date.now()) / 1000)}:d>\n${p.body || ''}`, 1024),
-  })));
+  return embed('League news', null, posts.map(p => {
+    const clips = (p.media || []).length;
+    const meta = [p.author, `<t:${Math.round((p.at || Date.now()) / 1000)}:d>`, clips ? `${clips} attached` : null]
+      .filter(Boolean).join(' · ');
+    return {
+      name: truncate(p.title || 'Untitled', 250),
+      value: truncate(`${meta}
+${p.body || ''}`, 1024),
+    };
+  }));
 }
 
 function handleHelp() {

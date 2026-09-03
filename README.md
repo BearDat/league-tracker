@@ -63,3 +63,29 @@ The classic app at `/classic` still exists and still works, but nothing links to
 it any more. Reach it by typing the URL when you need something the new panels
 do not cover yet: season settings, divisions, imports, roster moves, badges,
 banners, and admin management.
+
+
+## News media
+
+News images and highlight clips live in a Supabase Storage bucket called
+`media`, not in the league blob. The blob only carries the URL.
+
+That split matters: media used to be base64 data URIs inside the league JSON,
+which meant two news images accounted for more than half of a 1.58 MB blob, and
+every unrelated write — a bot score, an admin save — rewrote all of it under
+compare-and-swap. Video was impossible outright.
+
+**Run `supabase/storage.sql` once in the SQL editor before uploading anything.**
+The bucket itself already exists, but `storage.objects` has row-level security
+on with no policies by default, so an upload from the browser is rejected until
+that file adds them. The admin panel says exactly that if it hits the case.
+
+Uploads go straight from the browser to Storage rather than through a Next.js
+route, because serverless request bodies are capped at a few megabytes and a
+highlight clip is far larger than that. The bucket is capped at 50 MB per file
+and limited to image and video MIME types.
+
+Each post keeps a hero `imageUrl` — what the home page and news cards show —
+plus a `media` array of everything attached. Uploaded files and pasted links
+share that array; YouTube and Streamable links are converted to embeds, and any
+other link renders as a plain link rather than an iframe from an arbitrary host.

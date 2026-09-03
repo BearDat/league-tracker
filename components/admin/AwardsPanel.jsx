@@ -119,7 +119,7 @@ function HallOfFame() {
               <button
                 type="button"
                 disabled={saving}
-                onClick={() => mutate(removeHallOfFameEntry(e.id))}
+                onClick={() => { if (confirm(`Remove ${e.name} from the Hall of Fame?`)) mutate(removeHallOfFameEntry(e.id)); }}
                 className="eyebrow text-loss hover:underline disabled:opacity-40"
               >
                 Remove
@@ -204,7 +204,7 @@ export default function AwardsPanel() {
                       <button
                         type="button"
                         disabled={saving}
-                        onClick={() => mutate(removeAwardDef(def.id))}
+                        onClick={() => { if (confirm(`Delete the ${def.name} award? Winners recorded for it in every season are removed too.`)) mutate(removeAwardDef(def.id)); }}
                         className="eyebrow text-loss hover:underline disabled:opacity-40"
                       >
                         Delete

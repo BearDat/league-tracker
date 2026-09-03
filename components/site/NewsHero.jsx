@@ -2,6 +2,7 @@
 
 import React from 'react';
 import Link from 'next/link';
+import MediaGallery from './MediaGallery';
 import { SectionHead, cleanDiscordText } from './primitives';
 
 function postDate(at) {
@@ -40,6 +41,7 @@ export default function NewsHero({ posts }) {
           {lead.body && (
             <p className="text-sm text-ink-soft whitespace-pre-line mt-2.5">{cleanDiscordText(lead.body)}</p>
           )}
+          <MediaGallery media={lead.media} heroUrl={lead.imageUrl} />
         </div>
       </article>
 
@@ -48,6 +50,9 @@ export default function NewsHero({ posts }) {
           {rest.map(post => (
             <Link key={post.id} href="/news" className="flex items-baseline gap-3 px-3 py-2.5 hover:bg-paper-well">
               <span className="text-sm font-medium flex-1 min-w-0 truncate hover:text-brick">{post.title}</span>
+              {(post.media || []).length > 0 && (
+                <span className="eyebrow text-ink-faint whitespace-nowrap">{post.media.length} clip{post.media.length === 1 ? '' : 's'}</span>
+              )}
               <span className="text-tiny text-ink-faint whitespace-nowrap">{postDate(post.at)}</span>
             </Link>
           ))}
