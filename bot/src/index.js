@@ -95,16 +95,30 @@ async function backfillChannel(channelId, kind) {
 
 async function registerCommands(c) {
   try {
-    if (config.guildId) {
-      const guild = await c.guilds.fetch(config.guildId);
-      await guild.commands.set(COMMANDS);
-      log.info('slash commands registered to guild', { guildId: config.guildId, count: COMMANDS.length });
-    } else {
-      await c.application.commands.set(COMMANDS);
-      log.info('slash commands registered globally', { count: COMMANDS.length });
-    }
+    const existing = await c.application.commands.fetch();
+    const stale = [...existing.values()].filter(cmd => !COMMANDS.some(x => x.name === cmd.name));
+    await c.application.commands.set(COMMANDS);
+    log.info('slash commands registered globally', {
+      count: COMMANDS.length,
+      replaced: stale.map(cmd => cmd.name),
+    });
   } catch (e) {
-    log.error('slash command registration failed', { error: e.message });
+    log.error('global slash command registration failed', { error: e.message });
+    return;
+  }
+
+  if (!config.guildId) return;
+  try {
+    const guild = await c.guilds.fetch(config.guildId);
+    const guildCommands = await guild.commands.fetch();
+    if (guildCommands.size === 0) return;
+    await guild.commands.set([]);
+    log.info('cleared guild-scoped commands now served globally', {
+      guildId: config.guildId,
+      cleared: guildCommands.size,
+    });
+  } catch (e) {
+    log.error('could not clear guild-scoped commands', { guildId: config.guildId, error: e.message });
   }
 }
 

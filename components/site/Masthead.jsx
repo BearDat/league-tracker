@@ -37,10 +37,14 @@ export default function Masthead() {
     <header className="bg-navy text-white">
       <div className="mx-auto max-w-shell px-4">
         <div className="flex items-center justify-between h-16">
-          <Link href="/" className="flex items-baseline gap-3 group">
-            <span className="font-display font-extrabold text-3xl tracking-tighter leading-none transition-opacity group-hover:opacity-80">
-              KPB
-            </span>
+          <Link href="/" className="flex items-center gap-3 group">
+            <img
+              src="/KPB_Logo_1.png"
+              alt={leagueName}
+              width={66}
+              height={40}
+              className="h-10 w-auto transition-opacity group-hover:opacity-80"
+            />
             <span className="hidden sm:block eyebrow text-white/55 leading-none">{leagueName}</span>
           </Link>
           <div className="flex items-center gap-3">
