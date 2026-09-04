@@ -1992,10 +1992,26 @@ function migrateShape(lg) {
 /* ==================================================================== */
 /* Storage helpers                                                       */
 /* ==================================================================== */
+let leagueStamp = null;
+
+async function saveLeagueChecked(key, value) {
+  const stamp = new Date().toISOString();
+  let query = supabase.from('kv_store').update({ value, updated_at: stamp }).eq('key', key);
+  query = leagueStamp === null || leagueStamp === undefined
+    ? query.is('updated_at', null)
+    : query.eq('updated_at', leagueStamp);
+  const { data, error } = await query.select('key');
+  if (error) throw error;
+  if (!data || data.length === 0) return false;
+  leagueStamp = stamp;
+  return true;
+}
+
 async function storGet(key, attempt = 0) {
   try {
-    const { data, error } = await supabase.from('kv_store').select('value').eq('key', key).maybeSingle();
+    const { data, error } = await supabase.from('kv_store').select('value, updated_at').eq('key', key).maybeSingle();
     if (error) throw error;
+    if (data && key.startsWith('league:')) leagueStamp = data.updated_at;
     return data ? data.value : null;
   } catch (e) {
     if (attempt < 1) return storGet(key, attempt + 1);
@@ -2022,7 +2038,21 @@ async function storDelete(key) {
 async function loadList(key) { const raw = await storGet(key); if (!raw) return []; try { return JSON.parse(raw); } catch (e) { return []; } }
 async function saveList(key, list) { await storSet(key, JSON.stringify(list)); }
 async function loadObj(key) { const raw = await storGet(key); if (!raw) return null; try { return JSON.parse(raw); } catch (e) { return null; } }
-async function saveObj(key, obj) { return storSet(key, JSON.stringify(obj)); }
+async function saveObj(key, obj) {
+  if (key.startsWith('league:')) {
+    const ok = await saveLeagueChecked(key, JSON.stringify(obj));
+    if (!ok) throw new LeagueRowConflict();
+    return true;
+  }
+  return storSet(key, JSON.stringify(obj));
+}
+
+class LeagueRowConflict extends Error {
+  constructor() {
+    super('The league was changed somewhere else while this tab was open.');
+    this.name = 'LeagueRowConflict';
+  }
+}
 
 /* ==================================================================== */
 /* Small UI atoms                                                        */
@@ -11151,24 +11181,15 @@ function App() {
   const queueSave = useCallback((key, obj) => {
     setSaveStatus('saving');
     const prevQ = saveQueuesRef.current[key] || Promise.resolve();
-    const q = prevQ.then(() => saveObj(key, obj)).then(ok => { setSaveStatus(ok ? 'saved' : 'error'); return ok; }).catch(() => { setSaveStatus('error'); });
+    const q = prevQ
+      .then(() => saveObj(key, obj))
+      .then(ok => { setSaveStatus(ok ? 'saved' : 'error'); return ok; })
+      .catch((e) => { setSaveStatus(e && e.name === 'LeagueRowConflict' ? 'conflict' : 'error'); });
     saveQueuesRef.current[key] = q;
     return q;
   }, []);
   const flushAllQueues = useCallback(async () => { await Promise.all(Object.values(saveQueuesRef.current)); }, []);
 
-  useEffect(() => {
-    const flush = () => {
-      const lg = leagueRef.current;
-      if (!lg) return;
-      try { storSet(`league:${lg.id}`, JSON.stringify(lg)); } catch (e) { /* best effort */ }
-    };
-    const onVis = () => { if (document.visibilityState === 'hidden') flush(); };
-    document.addEventListener('visibilitychange', onVis);
-    window.addEventListener('pagehide', flush);
-    window.addEventListener('beforeunload', flush);
-    return () => { document.removeEventListener('visibilitychange', onVis); window.removeEventListener('pagehide', flush); window.removeEventListener('beforeunload', flush); };
-  }, []);
 
   const refreshTeamsById = useCallback(async (ids) => {
     const uniq = [...new Set(ids)];
@@ -13175,7 +13196,9 @@ function App() {
             <button onClick={() => setTab('seasons')} className="p-1.5 rounded flex-shrink-0" style={{ color: PRIMARY }}><Layers size={18} /></button>
           )}
           {screen === 'league' && isLoggedIn && (
-            saveStatus === 'error' ? (
+            saveStatus === 'conflict' ? (
+              <button onClick={() => window.location.reload()} className="text-[10px] font-bold underline flex-shrink-0" style={{ color: NEGATIVE }}>Changed elsewhere — Reload</button>
+            ) : saveStatus === 'error' ? (
               <button onClick={retrySave} className="text-[10px] font-bold underline flex-shrink-0 hidden sm:inline" style={{ color: NEGATIVE }}>Save failed — Retry</button>
             ) : (
               <span className="text-[10px] font-semibold flex-shrink-0 hidden sm:inline" style={{ color: CHALK_DIM }}>

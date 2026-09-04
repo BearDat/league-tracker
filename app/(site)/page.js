@@ -9,7 +9,7 @@ import { buildBracket } from '../../lib/domain/playoffs';
 import Bracket from '../../components/site/Bracket';
 import StandingsTable from '../../components/site/StandingsTable';
 import GameRow from '../../components/site/GameRow';
-import NewsHero from '../../components/site/NewsHero';
+import NewsCarousel from '../../components/site/NewsCarousel';
 import TransactionRail from '../../components/site/TransactionRail';
 import { SectionHead, EmptyNote, TeamMark } from '../../components/site/primitives';
 
@@ -22,12 +22,12 @@ export default function HomePage() {
   const upcoming = upcomingGames(season, teamsById, 6);
   const playoffSpots = (season.settings && season.settings.playoffSpots) || null;
   const bracket = buildBracket(season, teamsById);
-  const news = [...(snapshot.news || [])].sort((a, b) => (b.at || 0) - (a.at || 0)).slice(0, 4);
+  const news = [...(snapshot.news || [])].sort((a, b) => (b.at || 0) - (a.at || 0)).slice(0, 5);
 
   return (
     <div className="grid grid-cols-1 lg:grid-cols-[1fr_19rem] gap-8">
       <div className="min-w-0">
-        <NewsHero posts={news} />
+        <NewsCarousel posts={news} />
 
         {bracket.active && (
           <section className="mb-8">

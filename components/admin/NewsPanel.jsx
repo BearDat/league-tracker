@@ -4,8 +4,9 @@ import React, { useRef, useState } from 'react';
 import { useAdminLeague } from '../../lib/AdminLeagueContext';
 import {
   addNewsPost, updateNewsPost, removeNewsPost, newNewsPostId,
-  attachNewsMedia, detachNewsMedia, setNewsHero,
+  attachNewsMedia, detachNewsMedia, setNewsHero, setNewsBlocks,
 } from '../../lib/domain/mutations';
+import BlockEditor from './BlockEditor';
 import { uploadNewsMedia, deleteStoredMedia } from '../../lib/mediaUpload';
 import { classifyLink, formatBytes, ACCEPTED_UPLOAD, MAX_UPLOAD_BYTES } from '../../lib/media';
 import { MediaItem } from '../site/MediaGallery';
@@ -158,10 +159,10 @@ function MediaManager({ post }) {
   );
 }
 
-function EditRow({ post, saving, onSave, onRemove }) {
+function EditRow({ post, saving, onSave, onRemove, onBlocks }) {
   const [editing, setEditing] = useState(false);
   const [title, setTitle] = useState(post.title || '');
-  const [body, setBody] = useState(post.body || '');
+  const [summary, setSummary] = useState(post.summary || '');
   const [author, setAuthor] = useState(post.author || '');
   const count = (post.media || []).length;
 
@@ -195,19 +196,21 @@ function EditRow({ post, saving, onSave, onRemove }) {
             className="w-full bg-paper-well border border-rule px-2 py-1.5 text-sm" />
           <input value={author} onChange={e => setAuthor(e.target.value)} placeholder="Author"
             className="w-full bg-paper-well border border-rule px-2 py-1.5 text-sm" />
-          <textarea value={body} onChange={e => setBody(e.target.value)} rows={5} placeholder="Body"
+          <textarea value={summary} onChange={e => setSummary(e.target.value)} rows={2}
+            placeholder="Short description shown on cards and the home page (optional)"
             className="w-full bg-paper-well border border-rule px-2 py-1.5 text-sm resize-y" />
           <button
             type="button"
             disabled={saving || !title.trim()}
-            onClick={() => onSave(post.id, { title: title.trim(), body, author: author.trim() })}
+            onClick={() => onSave(post.id, { title: title.trim(), author: author.trim(), summary: summary.trim() })}
             className="eyebrow bg-navy text-white px-3 py-2 disabled:opacity-40"
           >
-            Save text
+            Save details
           </button>
         </div>
       )}
 
+      {editing && <BlockEditor post={post} saving={saving} onSave={blocks => onBlocks(post.id, blocks)} />}
       {editing && <MediaManager post={post} />}
     </div>
   );
@@ -224,7 +227,7 @@ export default function NewsPanel() {
 
   const publish = async () => {
     const id = newNewsPostId();
-    const result = await mutate(addNewsPost({ id, title, body, author }));
+    const result = await mutate(addNewsPost({ id, title, summary: body, author }));
     if (result.ok) { setTitle(''); setBody(''); setAuthor(''); }
   };
 
@@ -246,7 +249,8 @@ export default function NewsPanel() {
             className="w-full bg-paper-well border border-rule px-2 py-1.5 text-sm" />
           <input value={author} onChange={e => setAuthor(e.target.value)} placeholder="Author (optional)"
             className="w-full bg-paper-well border border-rule px-2 py-1.5 text-sm" />
-          <textarea value={body} onChange={e => setBody(e.target.value)} rows={6} placeholder="Body"
+          <textarea value={body} onChange={e => setBody(e.target.value)} rows={3}
+            placeholder="Short description shown on cards (optional)"
             className="w-full bg-paper-well border border-rule px-2 py-1.5 text-sm resize-y" />
           <button
             type="button"
@@ -257,7 +261,7 @@ export default function NewsPanel() {
             Publish
           </button>
           <p className="text-tiny text-ink-faint">
-            Publish first, then open Edit on the post to attach images and highlight clips.
+            Publish first, then open Edit to write the article body and attach images and clips.
           </p>
         </div>
       </section>
@@ -277,6 +281,7 @@ export default function NewsPanel() {
                 post={post}
                 saving={saving}
                 onSave={(id, patch) => mutate(updateNewsPost(id, patch))}
+                onBlocks={(id, blocks) => mutate(setNewsBlocks(id, blocks))}
                 onRemove={remove}
               />
             ))}

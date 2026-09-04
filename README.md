@@ -89,3 +89,30 @@ Each post keeps a hero `imageUrl` — what the home page and news cards show —
 plus a `media` array of everything attached. Uploaded files and pasted links
 share that array; YouTube and Streamable links are converted to embeds, and any
 other link renders as a plain link rather than an iframe from an arbitrary host.
+
+
+## Article bodies
+
+A news post's body is an ordered list of blocks in `post.blocks`, not HTML:
+paragraph, heading, subheading, large text, quote, bullet list, numbered list,
+and media. A media block just points at an entry in `post.media`, which is what
+lets a clip or photo sit between two paragraphs rather than being listed at the
+bottom.
+
+No HTML is ever stored, so nothing on a public page is rendered from markup a
+browser produced. Inline emphasis is a small marker syntax the toolbar writes
+for you (`**bold**`, `*italic*`, `__underline__`, `[label](url)`), parsed in
+`lib/domain/richtext.js` into React elements. Links are restricted to http and
+https, and only YouTube and Streamable are ever put in an iframe.
+
+Posts written before blocks existed still render: `normalizeBlocks` splits a
+legacy `body` string on blank lines into paragraphs, so nothing needs migrating.
+
+## A note on concurrent writes
+
+`/classic` used to write its whole in-memory league blob to Supabase as a blind
+upsert whenever the tab was hidden, which silently reverted anything saved
+elsewhere since that tab loaded. That flush is gone, and the classic app now
+writes with the same compare-and-swap the bot and `/admin` use: a save from a
+stale tab is rejected and the header offers **Changed elsewhere — Reload**
+instead of overwriting.
